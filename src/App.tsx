@@ -1,0 +1,2773 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Smartphone, 
+  Bike, 
+  ShoppingBag, 
+  Zap, 
+  User as UserIcon, 
+  List, 
+  Navigation, 
+  CheckCircle, 
+  Power,
+  ChevronRight,
+  MapPin,
+  Clock,
+  LogOut,
+  BarChart3,
+  Search,
+  ArrowRight,
+  Globe,
+  ShieldAlert,
+  QrCode,
+  Link2,
+  Gift,
+  Radar,
+  WifiOff
+} from 'lucide-react';
+import { 
+  ResponsiveContainer, 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  Tooltip,
+  CartesianGrid
+} from 'recharts';
+import { Toaster, toast } from 'sonner';
+import { Map, Marker } from 'pigeon-maps';
+import { getSupabase, isSupabaseMocked } from './lib/supabase';
+import { User } from '@supabase/supabase-js';
+import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection } from './types';
+import { cn, getEstimatedMinutes } from './lib/utils';
+import { QRScanner } from './components/QRScanner';
+import { AppMapBackground } from './components/AppMapBackground';
+
+// --- Components ---
+
+
+// --- Utilities ---
+
+const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries > 0 && error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Network'))) {
+      console.warn(`Fetch failure, retrying in ${delay}ms... (${retries} attempts left)`);
+      await new Promise(res => setTimeout(res, delay));
+      return fetchWithRetry(fn, retries - 1, delay);
+    }
+    throw error;
+  }
+};
+
+const StatusBadge = ({ status }: { status: DeliveryStatus }) => {
+  const styles: Record<DeliveryStatus, string> = {
+    finding_rider: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+    accepted: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+    picked_up: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
+    delivered: 'bg-[#39FF14]/10 text-[#39FF14] border-[#39FF14]/20',
+    cancelled: 'bg-red-500/10 text-red-500 border-red-500/20',
+  };
+  return (
+    <span className={cn("text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border italic", styles[status])}>
+      {status.replace('_', ' ')}
+    </span>
+  );
+};
+
+const TelemetryData = ({ label, value, unit }: { label: string, value: string | number, unit?: string }) => (
+  <div className="flex flex-col">
+    <span className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] mb-1">{label}</span>
+    <div className="flex items-baseline gap-1">
+      <span className="text-2xl font-mono font-bold text-[#F0F0F0] tabular-nums tracking-tighter">{value}</span>
+      {unit && <span className="text-[10px] text-zinc-400 font-bold uppercase">{unit}</span>}
+    </div>
+  </div>
+);
+
+const BentoCard = ({ children, className, glow = false, ...props }: { children: React.ReactNode, className?: string, glow?: boolean } & React.HTMLAttributes<HTMLDivElement>) => (
+  <div {...props} className={cn(
+    "bg-[#0D0D0D] border border-zinc-800 rounded-3xl p-6 relative overflow-hidden group transition-all",
+    glow && "shadow-[0_0_40px_rgba(57,255,20,0.1)] border-[#39FF14]/20",
+    className
+  )}>
+    {glow && <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#39FF14]/5 rounded-full blur-3xl" />}
+    <div className="relative z-10">{children}</div>
+  </div>
+);
+
+const SwipeButton = ({ label, onComplete, color = "#39FF14" }: { label: string, onComplete: () => void, color?: string }) => {
+  const [isComplete, setIsComplete] = useState(false);
+
+  return (
+    <div className="relative h-20 bg-zinc-900/50 border-2 border-zinc-800 rounded-2xl overflow-hidden p-1.5 select-none">
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <span className="text-xs font-black uppercase italic tracking-[0.3em] text-zinc-600">
+          {label}
+        </span>
+      </div>
+      <motion.div
+        drag="x"
+        dragConstraints={{ left: 0, right: 260 }}
+        dragElastic={0.1}
+        onDragEnd={(_, info) => {
+          if (info.offset.x > 200) {
+            setIsComplete(true);
+            onComplete();
+          }
+        }}
+        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square bg-[#39FF14] rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_0_20px_rgba(57,255,20,0.4)]"
+        style={{ backgroundColor: isComplete ? '#fff' : color }}
+      >
+        <ArrowRight className="w-8 h-8 text-black" />
+      </motion.div>
+    </div>
+  );
+};
+
+// --- Auth Views ---
+
+const AuthView = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [vehicleType, setVehicleType] = useState<UserVehicle>('Road');
+  const [loading, setLoading] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      if (isSignUp) {
+        const { error } = await getSupabase().auth.signUp({ 
+          email, 
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+              phone: phone,
+              vehicle_type: vehicleType
+            }
+          }
+        });
+        if (error) throw error;
+        toast.success('Unit Registered. Verification cycle initiated.');
+      } else {
+        const { error } = await getSupabase().auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Auth failure';
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    try {
+      const { error: authError } = await getSupabase().auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin }
+      });
+      if (authError) throw authError;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Google Auth Failed';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-6 text-[#F0F0F0] font-body">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900/50 via-black to-black" />
+      
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="w-full max-w-xl relative z-10"
+      >
+        <div className="text-center mb-10">
+          <div className="inline-flex p-4 bg-zinc-900 rounded-3xl border border-zinc-800 mb-6 neon-glow">
+            <Bike className="w-10 h-10 text-[#39FF14]" />
+          </div>
+          <h1 className="text-3xl font-headline font-black tracking-tighter italic uppercase leading-none">
+            Local<span className="text-[#39FF14]">Eats</span><br/>
+            <span className="text-lg opacity-50">{isSignUp ? 'Registry Uplink' : 'Rider Hub'}</span>
+          </h1>
+        </div>
+
+        <BentoCard className="border-zinc-800/50 p-6">
+          <form onSubmit={handleAuth} className="space-y-4">
+            {isSignUp && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4"
+              >
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Full Legal Name</label>
+                  <input 
+                    type="text" 
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all"
+                    placeholder="John Doe"
+                    required={isSignUp}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Mobile Uplink</label>
+                  <input 
+                    type="tel" 
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all font-mono"
+                    placeholder="+27 00 000 0000"
+                    required={isSignUp}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Vehicle Type</label>
+                  <select 
+                    value={vehicleType}
+                    onChange={(e) => setVehicleType(e.target.value as UserVehicle)}
+                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all appearance-none text-[#39FF14] font-bold"
+                  >
+                    <option value="Road">Road Bike</option>
+                    <option value="MTB">Mountain Bike</option>
+                    <option value="E-Bike">Electric/E-Bike</option>
+                    <option value="Motor">Motorbike</option>
+                  </select>
+                </div>
+              </motion.div>
+            )}
+
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Registry Email</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all font-mono"
+                placeholder="rider@localeats.io"
+                required
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Secure Password</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all font-mono"
+                placeholder="••••••••"
+                required
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              disabled={loading}
+              className={cn(
+                "w-full py-4 bg-[#39FF14] text-black font-black uppercase italic tracking-widest rounded-xl transition-all active:scale-95 shadow-[0_0_20px_rgba(57,255,20,0.2)] mt-4",
+                loading && "opacity-50"
+              )}
+            >
+              {loading ? 'SYNCING...' : isSignUp ? 'VALIDATE & REGISTER' : 'UPLINK & LOGIN'}
+            </button>
+            {!isSignUp && (
+              <p className="mt-4 text-[10px] text-zinc-600 text-center uppercase tracking-tighter italic">
+                Registry credentials required for initial protocol. Use "Map your profile" below for new units.
+              </p>
+            )}
+          </form>
+
+          <div className="relative my-8">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-zinc-800"></div>
+            </div>
+            <div className="relative flex justify-center text-[10px] uppercase font-black tracking-widest">
+              <span className="bg-[#0D0D0D] px-4 text-zinc-600">Secure Protocol</span>
+            </div>
+          </div>
+
+          <button 
+            onClick={signInWithGoogle}
+            className="w-full py-4 bg-zinc-900 border border-zinc-800 text-[#F0F0F0] font-black uppercase italic tracking-widest rounded-xl flex items-center justify-center gap-3 active:scale-95 transition-all"
+          >
+            <Globe className="w-5 h-5 text-[#39FF14]" />
+            Google Uplink
+          </button>
+          
+          <button 
+            onClick={() => setIsSignUp(!isSignUp)}
+            className="w-full mt-6 text-[10px] font-bold text-zinc-500 uppercase tracking-widest hover:text-white transition-colors"
+          >
+            {isSignUp ? 'Already mapped? Log in' : 'New rider? Map your profile'}
+          </button>
+        </BentoCard>
+      </motion.div>
+    </div>
+  );
+};
+
+// --- Main App Views ---
+
+const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, history, onToggleOnline, setView }: { 
+  profile: RiderProfile, 
+  availableCount: number,
+  todayEarnings: number,
+  totalDeliveries: number,
+  history: DeliveryOrder[],
+  onToggleOnline: () => void,
+  setView: (view: AppView) => void
+}) => {
+  return (
+    <div className="p-6 space-y-6">
+      {profile.verification_status !== 'verified' && (
+        <BentoCard className="bg-orange-500/10 border-orange-500/20 text-orange-500 py-4">
+          <div className="flex items-center gap-3">
+            <ShieldAlert className="w-5 h-5 shrink-0" />
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">Status: Verification Pending</span>
+              <span className="text-xs font-bold leading-tight text-white/80 italic">Fleet HQ is reviewing your registry uplink. Access restricted.</span>
+            </div>
+          </div>
+        </BentoCard>
+      )}
+
+      {/* Power Toggle */}
+      <button 
+        onClick={onToggleOnline}
+        className={cn(
+          "w-full p-6 rounded-3xl border-2 flex items-center justify-between transition-all active:scale-[0.98]",
+          profile.is_online 
+            ? "bg-[#39FF14]/10 border-[#39FF14] shadow-[0_0_30px_rgba(57,255,20,0.1)]" 
+            : "bg-zinc-900/50 border-zinc-800 text-zinc-500"
+        )}
+      >
+        <div className="flex flex-col items-start gap-1">
+          <span className={cn("text-2xl font-black italic tracking-tighter uppercase", profile.is_online ? "text-[#39FF14]" : "text-zinc-600")}>
+            {profile.is_online ? 'SYSTEM ONLINE' : 'SYSTEM STANDBY'}
+          </span>
+          <span className="text-[10px] font-black uppercase tracking-widest opacity-60">
+            {profile.is_online ? 'SYNCING LOCAL MISSIONS' : 'READY FOR ACTIVATION'}
+          </span>
+        </div>
+        <div className={cn(
+          "p-4 rounded-2xl transition-all",
+          profile.is_online ? "bg-[#39FF14] text-black" : "bg-zinc-800 text-zinc-600"
+        )}>
+          <Power className="w-8 h-8" />
+        </div>
+      </button>
+
+      {/* Bento Stats */}
+      <div className="grid grid-cols-2 gap-4">
+        <BentoCard className="col-span-2" glow>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#39FF14]">Fleet Performance</span>
+            <Zap className="w-4 h-4 text-[#39FF14]" />
+          </div>
+          <div className="grid grid-cols-2 gap-8">
+            <TelemetryData label="Today's Yield" value={`R${Number(todayEarnings || 0).toFixed(2)}`} />
+            <TelemetryData label="Daily Units" value={totalDeliveries} />
+          </div>
+          <div className="mt-6 flex items-baseline gap-2">
+            <span className="text-4xl font-headline font-black italic text-white uppercase tracking-tighter">{profile.active_points}</span>
+            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Active Pts</span>
+          </div>
+        </BentoCard>
+
+        <BentoCard>
+          <div className="flex flex-col gap-2">
+            <Bike className="w-5 h-5 text-orange-500" />
+            <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Vehicle Rig</span>
+            <span className="text-sm font-black italic text-zinc-200 uppercase">{profile.vehicle_type}</span>
+          </div>
+        </BentoCard>
+
+        <BentoCard>
+          <div className="flex flex-col gap-2">
+            <List className="w-5 h-5 text-blue-500" />
+            <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Missions Near</span>
+            <span className="text-sm font-black italic text-zinc-200 uppercase">{availableCount} Units</span>
+          </div>
+        </BentoCard>
+      </div>
+
+      {/* Quick Mission Preview */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between px-2">
+          <h2 className="text-sm font-black italic uppercase tracking-widest flex items-center gap-2">
+            <Clock className="w-4 h-4 text-zinc-500" /> Recent Logs
+          </h2>
+          <button onClick={() => setView('log')} className="text-[10px] font-black uppercase tracking-tighter text-[#39FF14]">View All</button>
+        </div>
+        <div className="space-y-2">
+          {history.length === 0 ? (
+            <p className="text-[10px] text-zinc-600 italic px-2 py-4">No recent activity logged.</p>
+          ) : (
+            history.slice(0, 3).map(order => (
+              <BentoCard key={order.id} className="p-4 border-zinc-800/30 bg-zinc-900/20">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-zinc-800 rounded-lg">
+                      <ShoppingBag className="w-4 h-4 text-zinc-500" />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-zinc-200">{order.restaurant_name}</span>
+                      <div className="flex items-center gap-2">
+                        {order.merchant_rating && <StarRating rating={order.merchant_rating} />}
+                        <span className="text-[9px] text-zinc-500 font-mono">
+                          {new Date(order.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {order.delivery_status.toUpperCase()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-sm font-black italic text-[#39FF14]">R{Number(order.delivery_fee || 0).toFixed(2)}</span>
+                </div>
+              </BentoCard>
+            ))
+          )}
+        </div>
+      </section>
+    </div>
+  );
+};
+
+const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], onAccept: (id: string) => void, isOnline: boolean }) => {
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+
+  return (
+    <div className="p-6 space-y-6 pb-32">
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h2 className="text-2xl font-headline font-black italic uppercase italic tracking-tighter text-white">Live Missions</h2>
+          <p className="text-[10px] text-[#39FF14] font-black uppercase tracking-[0.3em]">Sector Alpha-12 Scan</p>
+        </div>
+        <div className="bg-[#39FF14]/10 border border-[#39FF14]/30 px-3 py-1 rounded-full">
+          <span className="text-[10px] font-black text-[#39FF14] animate-pulse">{orders.length} ACTIVE</span>
+        </div>
+      </div>
+
+      {confirmId && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-6"
+        >
+          <BentoCard className="w-full max-w-sm border-[#39FF14]/30">
+            <ShieldAlert className="w-12 h-12 text-[#39FF14] mb-4 mx-auto" />
+            <h3 className="text-xl font-black italic uppercase text-center text-white mb-2">Confirm Mission</h3>
+            <p className="text-xs text-zinc-500 text-center mb-6 leading-relaxed">
+              Accepting this mission indicates you are ready to initiate the delivery vector. 
+              Unauthorized aborts may impact your reliability rating.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => {
+                  onAccept(confirmId);
+                  setConfirmId(null);
+                }}
+                className="w-full py-4 bg-[#39FF14] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
+              >
+                Accept Mission
+              </button>
+              <button 
+                onClick={() => setConfirmId(null)}
+                className="w-full py-4 bg-zinc-900 border border-zinc-800 text-zinc-500 font-bold uppercase tracking-widest rounded-xl active:scale-95 transition-all"
+              >
+                Abort Connection
+              </button>
+            </div>
+          </BentoCard>
+        </motion.div>
+      )}
+
+      {orders.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
+          {isOnline ? (
+            <Radar className="w-12 h-12 mb-4 text-[#39FF14] animate-[spin_3s_linear_infinite] opacity-50" />
+          ) : (
+            <WifiOff className="w-12 h-12 mb-4 text-red-500" />
+          )}
+          <p className="text-xs font-black uppercase tracking-widest text-zinc-500 max-w-[250px] leading-relaxed">
+            {isOnline ? "SCANNING SECTOR [ALPHA]... NO UNASSIGNED SIGNALS DETECTED." : "SIGNAL LOST - GO ONLINE TO SCAN FOR MISSIONS."}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {orders.map(order => (
+            <motion.div 
+              key={order.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="relative"
+            >
+              <BentoCard className="border-l-4 border-l-orange-500" glow={order.delivery_fee > 50}>
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <div className="mb-2">
+                       <StatusBadge status={order.delivery_status} />
+                    </div>
+                    <h3 className="text-xl font-black italic text-white uppercase tracking-tight leading-none mb-1">
+                      {order.restaurant_name || 'Merchant-X'}
+                    </h3>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2 text-zinc-500 w-full">
+                        <MapPin className="w-3 h-3 text-[#39FF14] shrink-0" />
+                        <span className="text-[10px] font-bold truncate flex-1 min-w-0">{order.address}, {order.city}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-zinc-500">
+                        <Navigation className="w-3 h-3 text-orange-500" />
+                        <span className="text-[10px] font-mono font-bold text-orange-500/80">{Number(order.distance_km || 0).toFixed(1)} KM DISTANCE</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-mono font-bold text-[#39FF14]">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
+                    <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Est. Payout</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div className="bg-zinc-800/20 p-4 rounded-2xl border border-zinc-800/50">
+                    <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Package</span>
+                    {order.items && order.items.length > 0 ? (
+                      <div className="space-y-0.5">
+                        {order.items.slice(0, 2).map((item, idx) => (
+                          <span key={idx} className="text-sm font-mono font-bold text-zinc-200 block truncate">{item}</span>
+                        ))}
+                        {order.items.length > 2 && (
+                          <span className="text-[8px] text-zinc-500 font-bold">+{order.items.length - 2} MORE ITEMS</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-sm font-mono font-bold text-zinc-200 truncate">{order.product_name || "Assorted Items"}</span>
+                    )}
+                  </div>
+                  <div className="bg-zinc-800/20 p-4 rounded-2xl border border-zinc-800/50">
+                    <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Value</span>
+                    <span className="text-sm font-mono font-bold text-[#39FF14]">R{Number(order.total_price || 0).toFixed(2)}</span>
+                  </div>
+                </div>
+
+                <SwipeButton 
+                  label="Swipe to Accept Mission" 
+                  onComplete={() => setConfirmId(order.id)} 
+                />
+              </BentoCard>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ActiveMissionView = ({ orders, onUpdateStatus }: { 
+  orders: DeliveryOrder[], 
+  onUpdateStatus: (id: string, status: DeliveryStatus) => void 
+}) => {
+  const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  const displayOrders = useMemo(() => {
+    if (sortMethod === 'optimized') {
+      return [...orders].sort((a, b) => (a.distance_km || 0) - (b.distance_km || 0));
+    }
+    return orders;
+  }, [orders, sortMethod]);
+
+  // Adjust activeIndex if orders change
+  const currentOrder = useMemo(() => {
+    const targetIdx = activeIndex >= displayOrders.length ? 0 : activeIndex;
+    return displayOrders[targetIdx] || displayOrders[0];
+  }, [displayOrders, activeIndex]);
+
+  if (!currentOrder) return null;
+
+  const isPickedUp = currentOrder.delivery_status === 'picked_up';
+  const targetAddress = `${currentOrder.address}, ${currentOrder.city}`;
+
+  const optimizeRoute = () => {
+    setSortMethod('optimized');
+    setActiveIndex(0);
+    toast.success('Vector sequence optimized for range efficiency.');
+  };
+
+  return (
+    <div className="h-[calc(100vh-100px)] flex flex-col pt-20 pointer-events-none">
+      {/* Multi-Order Selector */}
+      {displayOrders.length > 1 && (
+        <div className="bg-black/40 backdrop-blur-md border-b border-zinc-900 p-2 flex gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
+          {displayOrders.map((o, idx) => (
+            <button
+              key={o.id}
+              onClick={() => setActiveIndex(idx)}
+              className={cn(
+                "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border shrink-0",
+                activeIndex === idx 
+                  ? "bg-[#39FF14] text-black border-[#39FF14]" 
+                  : "bg-zinc-900 text-zinc-500 border-zinc-800"
+              )}
+            >
+              Order #{o.id.slice(-4)} {o.delivery_status === 'picked_up' ? '• DROP' : '• PICK'}
+            </button>
+          ))}
+          <button 
+            onClick={optimizeRoute}
+            className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-zinc-800 text-[#39FF14] border border-zinc-700 whitespace-nowrap flex items-center gap-2"
+          >
+            <Zap className="w-3 h-3" /> Optimize
+          </button>
+        </div>
+      )}
+
+      {/* Map Area placeholder (transparent) */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* Multi-stop Preview */}
+        {displayOrders.length > 1 && (
+          <div className="absolute bottom-6 left-6 right-6 pointer-events-none">
+            <div className="flex justify-center gap-1">
+              {displayOrders.map((_, i) => (
+                <div 
+                  key={i}
+                  className={cn(
+                    "h-1 rounded-full transition-all",
+                    i === activeIndex ? "bg-[#39FF14] w-8" : "bg-zinc-700 w-4"
+                  )} 
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-black/95 backdrop-blur-3xl p-6 border-t-2 border-[#39FF14]/30 pb-12 pointer-events-auto shadow-[0_-20px_60px_rgba(0,0,0,0.8)]">
+        <div className="flex items-center justify-between mb-8 px-2">
+          <div className="flex items-center gap-4 flex-1 min-w-0 mr-4">
+            <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-2xl shrink-0 shadow-[0_0_15px_rgba(57,255,20,0.1)]">
+              <MapPin className="w-6 h-6 text-[#39FF14]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[9px] font-black text-[#39FF14] uppercase tracking-[0.4em] mb-1">Drop-Off Protocol</p>
+              <p className="text-lg font-headline font-black italic text-white uppercase truncate w-full tracking-tighter">{targetAddress}</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest font-mono mb-1">SIGNAL ETA</p>
+            <p className="text-2xl font-mono font-bold text-white tracking-tighter shadow-sm">
+              {Math.floor(currentOrder.distance_km * 2)}:15
+            </p>
+          </div>
+        </div>
+
+        <SwipeButton 
+          label={isPickedUp ? "Slide to Complete Mission" : "Slide to Confirm Pickup"}
+          onComplete={() => onUpdateStatus(currentOrder.id, isPickedUp ? 'delivered' : 'picked_up')}
+          color={isPickedUp ? "#39FF14" : "#f58220"}
+        />
+      </div>
+    </div>
+  );
+};
+
+const StarRating = ({ rating }: { rating: number }) => (
+  <div className="flex gap-0.5">
+    {Array.from({ length: 5 }).map((_, i) => (
+      <Zap key={i} className={cn("w-2 h-2", i < rating ? "text-[#39FF14] fill-[#39FF14]" : "text-zinc-800")} />
+    ))}
+  </div>
+);
+
+const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
+  const chartData = useMemo(() => {
+    // Generate dummy 7 day data based on history or seeds
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return Array.from({ length: 7 }, (_, i) => ({
+      name: days[i],
+      yield: 100 + (i * 25) // Deterministic value based on index
+    }));
+  }, []);
+
+  return (
+    <div className="p-6 space-y-8 pb-32">
+      <div className="mb-8">
+        <h2 className="text-2xl font-headline font-black italic uppercase tracking-tighter text-white">Telemetry</h2>
+        <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em]">Operational Logs • Last 7 Phases</p>
+      </div>
+
+      <BentoCard className="h-64 border-zinc-800/50">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData}>
+            <defs>
+              <linearGradient id="colorYield" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#39FF14" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#39FF14" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1f1f1f" />
+            <XAxis 
+              dataKey="name" 
+              axisLine={false} 
+              tickLine={false} 
+              tick={{ fill: '#444', fontSize: 10, fontWeight: 'bold' }} 
+            />
+            <Tooltip 
+              contentStyle={{ backgroundColor: '#0D0D0D', border: '1px solid #333', borderRadius: '12px', fontSize: '10px' }}
+              itemStyle={{ color: '#39FF14', fontWeight: 'black' }}
+            />
+            <Area 
+              type="monotone" 
+              dataKey="yield" 
+              stroke="#39FF14" 
+              strokeWidth={3}
+              fillOpacity={1} 
+              fill="url(#colorYield)" 
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </BentoCard>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Mission Archive</h3>
+          <Search className="w-4 h-4 text-zinc-600" />
+        </div>
+        
+        {history.length === 0 ? (
+          <div className="py-20 text-center opacity-20 italic text-sm">No archive data synced.</div>
+        ) : (
+          history.map(item => (
+            <BentoCard key={item.id} className="p-4 bg-zinc-900/10 border-zinc-800/40">
+              <div className="flex items-center justify-between">
+                <div className="flex items-start gap-4 flex-1 min-w-0 mr-4">
+                  <div className="p-2 bg-zinc-800 rounded-lg shrink-0">
+                    <CheckCircle className="w-4 h-4 text-[#39FF14]" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-black italic text-zinc-200 uppercase truncate w-full">{item.restaurant_name}</h4>
+                    <p className="text-[9px] text-zinc-500 font-mono truncate w-full">{item.address}, {item.city}</p>
+                    {item.merchant_rating && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <StarRating rating={item.merchant_rating} />
+                        {item.merchant_feedback && <span className="text-[8px] text-zinc-400 font-bold italic truncate max-w-[150px]">"{item.merchant_feedback}"</span>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-base font-black italic text-[#39FF14]">R{Number(item.delivery_fee || 0).toFixed(2)}</span>
+                  <p className="text-[8px] text-zinc-600 font-mono">CODE-{item.id.slice(-4).toUpperCase()}</p>
+                </div>
+              </div>
+            </BentoCard>
+          ))
+        )}
+      </div>
+    </div>
+  );
+};
+
+const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingChange: (r: number) => void }) => (
+  <div className="flex gap-2">
+    {Array.from({ length: 5 }).map((_, i) => (
+      <button 
+        key={i} 
+        onClick={() => onRatingChange(i + 1)}
+        className="focus:outline-none"
+      >
+        <Zap 
+          className={cn(
+            "w-8 h-8 transition-all", 
+            i < rating ? "text-[#39FF14] fill-[#39FF14] scale-110" : "text-zinc-800 hover:text-zinc-700"
+          )} 
+        />
+      </button>
+    ))}
+  </div>
+);
+
+const RiderTrackingMap = ({ 
+  riderCoords, 
+  shopCoords = [-33.918861, 18.423300], // Example Cape Town City Center
+  orderCoords 
+}: { 
+  riderCoords: [number, number], 
+  shopCoords?: [number, number],
+  orderCoords?: [number, number] 
+}) => {
+  return (
+    <div className="w-full h-56 bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-200/10 relative group mb-6 shadow-2xl">
+      <Map 
+        height={224} 
+        center={riderCoords} 
+        zoom={14}
+        mouseEvents={false}
+        touchEvents={false}
+      >
+        {orderCoords && (
+          <Marker width={25} anchor={orderCoords} color="#39FF14" />
+        )}
+        <Marker width={25} anchor={shopCoords} color="#f58220" />
+        <Marker width={30} anchor={riderCoords}>
+          <div className="relative">
+            <div className="absolute -top-4 -left-4 w-12 h-12 bg-[#39FF14]/20 rounded-full animate-ping" />
+            <div className="bg-[#39FF14] p-2 rounded-full shadow-lg border-2 border-[#050505] relative z-10 scale-110">
+              <Bike className="w-4 h-4 text-black" />
+            </div>
+          </div>
+        </Marker>
+      </Map>
+      <div className="absolute top-4 left-4 flex gap-2 pointer-events-none">
+        <div className="bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-black uppercase text-[#39FF14] border border-[#39FF14]/20 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 bg-[#39FF14] rounded-full animate-pulse" />
+          Live Vector
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
+  const [orders, setOrders] = useState<DeliveryOrder[]>([]);
+  const [activeRiders, setActiveRiders] = useState<RiderProfile[]>([]);
+  const [ratingOrder, setRatingOrder] = useState<DeliveryOrder | null>(null);
+  const [rating, setRating] = useState(5);
+  const [feedback, setFeedback] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'orders' | 'marketing' | 'coupons' | 'payments' | 'insights' | 'riders' | 'settings'>('orders');
+  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
+  const [riderSimCoords, setRiderSimCoords] = useState<[number, number]>([-33.922861, 18.421300]);
+
+  // Simulation effect for mock mode
+  useEffect(() => {
+    if (!isSupabaseMocked()) return;
+    const interval = setInterval(() => {
+      setRiderSimCoords(prev => [
+        prev[0] + (Math.random() - 0.5) * 0.001,
+        prev[1] + (Math.random() - 0.5) * 0.001
+      ]);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        if (isSupabaseMocked()) {
+          // Generate mock data for preview
+          setOrders([
+            {
+              id: 'mock-1',
+              customer_name: 'Sarah Jenkins',
+              address: '42 Greenway Blvd, Sandton',
+              status: 'preparing',
+              delivery_status: 'finding_rider',
+              product_name: 'Big Double Burger Meal',
+              total_price: 125,
+              created_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
+              phone: '082 555 0123'
+            },
+            {
+              id: 'mock-2',
+              customer_name: 'Marcus Thabo',
+              address: 'Unit 12, Skyview Apts',
+              status: 'pending',
+              delivery_status: 'finding_rider',
+              product_name: 'Chicken Wings (12pc)',
+              total_price: 89,
+              created_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
+              phone: '071 222 9988'
+            },
+            {
+              id: 'mock-3',
+              customer_name: 'Aisha Kahn',
+              address: '15 Rose Street, Cape Town',
+              status: 'ready',
+              delivery_status: 'accepted',
+              product_name: 'Vegetarian Platter',
+              total_price: 145,
+              created_at: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
+              phone: '066 333 4455',
+              rider: { name: 'Dumisani', current_latitude: -33.9, current_longitude: 18.4 } as unknown as RiderProfile,
+              rider_dist_to_shop: 2.1
+            }
+          ] as unknown as DeliveryOrder[]);
+
+          setActiveRiders([
+            { id: 'r1', name: 'Rider Thabo', is_online: true },
+            { id: 'r2', name: 'Rider Sipho', is_online: true },
+            { id: 'r3', name: 'Rider Lerato', is_online: true }
+          ] as RiderProfile[]);
+          return;
+        }
+
+        const { data: ordersData, error: ordersError } = await getSupabase()
+          .from('orders')
+          .select('*, rider:rider_profiles(name, current_latitude, current_longitude)')
+          .order('created_at', { ascending: false });
+        
+        if (ordersError) throw ordersError;
+        if (ordersData) {
+          const fetchedOrders = ordersData as unknown as DeliveryOrder[];
+          
+          // Backwards-Compatible Cleanup: wipe finding_rider from completed orders
+          const stuckIds = fetchedOrders
+            .filter(o => o.status === 'completed' && o.delivery_status === 'finding_rider')
+            .map(o => o.id);
+            
+          if (stuckIds.length > 0) {
+            getSupabase().from('orders').update({ delivery_status: null }).in('id', stuckIds).then(() => {
+              console.log('Cleaned up stuck orders:', stuckIds.length);
+            });
+            // Immediately clean locally to reflect
+            fetchedOrders.forEach(o => {
+              if (stuckIds.includes(o.id)) o.delivery_status = null as unknown as DeliveryStatus;
+            });
+          }
+          
+          setOrders(fetchedOrders);
+        }
+
+        const { data: ridersData, error: ridersError } = await getSupabase()
+          .from('rider_profiles')
+          .select('*')
+          .eq('is_online', true);
+        
+        if (ridersError) throw ridersError;
+        if (ridersData) setActiveRiders(ridersData as RiderProfile[]);
+      } catch (_e) {
+        console.error('Fetch error:', _e);
+        toast.error('Local Grid sync failed. Using offline cache.');
+        // Fallback to minimal mock if real fetch fails
+        setOrders(prev => {
+           if (prev.length === 0) {
+              return [{ id: 'err-1', customer_name: 'Network Fallback', address: 'Mode: Offline', status: 'pending', product_name: 'Retry connection...', created_at: new Date().toISOString() }] as unknown as DeliveryOrder[];
+           }
+           return prev;
+        });
+      }
+    };
+
+    fetchData();
+    if (isSupabaseMocked()) return;
+    
+    const channel = getSupabase()
+      .channel('merchant_updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_profiles' }, () => {
+        fetchData();
+      })
+      .subscribe();
+    
+    return () => { channel.unsubscribe(); };
+  }, []);
+
+  const handleUpdateStatus = async (id: string, status: string) => {
+    try {
+      if (isSupabaseMocked()) {
+        setOrders(prev => prev.map(o => {
+          if (o.id === id) {
+            return {
+              ...o, 
+              status: status as DeliveryStatus, 
+              ...(status === 'completed' ? { delivery_status: null as unknown as DeliveryStatus } : {})
+            };
+          }
+          return o;
+        }));
+        toast.success(`Order protocol updated: ${status.toUpperCase()}`);
+        return;
+      }
+      
+      const payload: Record<string, unknown> = { status };
+      if (status === 'completed') {
+        payload.delivery_status = null;
+      }
+      
+      await getSupabase().from('orders').update(payload).eq('id', id);
+      toast.success(`Order protocol updated: ${status.toUpperCase()}`);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Keep these for future feature expansion or internal use
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleRequestRider = async (id: string) => {
+    try {
+      await getSupabase().from('orders').update({ delivery_status: 'finding_rider' }).eq('id', id);
+      toast.success('Rider request broadcasted to Sector Alpha.');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSubmitRating = async () => {
+    if (!ratingOrder) return;
+    setLoading(true);
+    try {
+      await getSupabase()
+        .from('orders')
+        .update({ 
+          merchant_rating: rating, 
+          merchant_feedback: feedback 
+        })
+        .eq('id', ratingOrder.id);
+      
+      toast.success('Mission feedback synced with Fleet Headquarters.');
+      setRatingOrder(null);
+      setRating(5);
+      setFeedback('');
+    } catch {
+      toast.error('Feedback upload failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const activeOrders = orders.filter(o => ['pending', 'preparing', 'ready'].includes(o.status));
+  const completedCount = orders.filter(o => o.status === 'completed').length;
+  const preparingCount = orders.filter(o => o.status === 'preparing').length;
+  const readyCount = orders.filter(o => o.status === 'ready').length;
+  const newCount = orders.filter(o => o.status === 'pending').length;
+
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="bg-[#F8F9FA] min-h-screen text-zinc-900 font-sans pb-32">
+      {/* Top Navigation Bar */}
+      <header className="bg-white border-b border-zinc-200 h-16 flex items-center justify-between px-6 sticky top-0 z-50">
+        <div className="flex items-center gap-8">
+           <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-[#f58220] rounded-xl flex items-center justify-center">
+                 <ShoppingBag className="w-5 h-5 text-white" />
+              </div>
+              <h1 className="text-xl font-headline font-black italic uppercase tracking-tighter">
+                Local<span className="text-[#f58220]">Eats</span>
+              </h1>
+           </div>
+           
+           <nav className="hidden md:flex items-center gap-6">
+              {['Dashboard', 'Menu', 'Orders', 'Marketing', 'Coupons', 'Payments', 'Insights', 'Riders', 'Settings'].map(tab => (
+                <button 
+                  key={tab}
+                  onClick={() => setActiveTab(tab.toLowerCase() as 'dashboard' | 'menu' | 'orders' | 'marketing' | 'coupons' | 'payments' | 'insights' | 'riders' | 'settings')}
+                  className={cn(
+                    "text-xs font-bold uppercase tracking-widest transition-colors",
+                    activeTab === tab.toLowerCase() ? "text-[#f58220]" : "text-zinc-500 hover:text-zinc-800"
+                  )}
+                >
+                  {tab}
+                </button>
+              ))}
+           </nav>
+        </div>
+
+        <div className="flex items-center gap-4">
+           <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-full">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              <span className="text-[10px] font-black uppercase text-green-700">Accepting Orders</span>
+           </div>
+           <button onClick={onSwitchRole} className="p-2 text-zinc-400 hover:text-zinc-600">
+              <LogOut className="w-5 h-5" />
+           </button>
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <div className="max-w-7xl mx-auto p-6 md:p-8">
+        {activeTab === 'marketing' ? (
+           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="flex flex-col gap-1">
+                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Marketing <span className="text-[#f58220]">Vector</span></h2>
+                <p className="text-zinc-500 text-sm">Boost your visibility and customer loyalty across the LocalEats grid.</p>
+             </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm col-span-2">
+                   <div className="flex justify-between items-start mb-8">
+                      <div>
+                         <h3 className="text-lg font-bold">Grid Boost Campaigns</h3>
+                         <p className="text-xs text-zinc-400">Target specific clusters to increase order volume.</p>
+                      </div>
+                      <button className="bg-zinc-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest">New Campaign</button>
+                   </div>
+
+                   <div className="space-y-4">
+                      {[
+                        { title: 'Lunch Rush Blitz', status: 'Active', reach: '2,450 users', conversion: '12.4%', spend: 'R450.00' },
+                        { title: 'Dinner Wave Pro', status: 'Scheduled', reach: '--', conversion: '--', spend: 'R800.00' }
+                      ].map(campaign => (
+                         <div key={campaign.title} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                            <div className="flex items-center gap-4">
+                               <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center">
+                                  <Zap className="w-5 h-5 text-orange-500" />
+                               </div>
+                               <div>
+                                  <p className="text-sm font-bold text-zinc-800">{campaign.title}</p>
+                                  <div className="flex gap-3 mt-0.5">
+                                     <span className="text-[8px] font-black uppercase text-green-600">{campaign.status}</span>
+                                     <span className="text-[8px] font-mono text-zinc-400">Reach: {campaign.reach}</span>
+                                  </div>
+                               </div>
+                            </div>
+                            <div className="text-right">
+                               <p className="text-xs font-black text-zinc-900">{campaign.spend}</p>
+                               <p className="text-[8px] font-mono text-zinc-400">Conv: {campaign.conversion}</p>
+                            </div>
+                         </div>
+                      ))}
+                   </div>
+                </BentoCard>
+
+                <div className="space-y-6">
+                   <BentoCard className="bg-[#f58220] p-6 text-white text-center">
+                      <Gift className="w-10 h-10 mx-auto mb-4" />
+                      <h3 className="text-lg font-black uppercase italic leading-none mb-2">Loyalty Multiplier</h3>
+                      <p className="text-[10px] opacity-80 font-medium mb-6">Users earn 2x tokens when ordering from your shop this weekend.</p>
+                      <button className="w-full bg-white text-[#f58220] py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl">Extend Period</button>
+                   </BentoCard>
+
+                   <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
+                      <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-widest mb-4">Top Customers</h4>
+                      <div className="space-y-4">
+                         {['Sarah J.', 'Marcus T.', 'Aisha K.'].map((name, i) => (
+                            <div key={name} className="flex items-center justify-between">
+                               <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-[10px] font-bold">{i+1}</div>
+                                  <span className="text-xs font-medium">{name}</span>
+                               </div>
+                               <span className="text-[10px] font-mono text-[#f58220]">{12 - i} Orders</span>
+                            </div>
+                         ))}
+                      </div>
+                   </BentoCard>
+                </div>
+             </div>
+           </div>
+        ) : activeTab === 'coupons' ? (
+           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="flex flex-col gap-1">
+                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Coupon <span className="text-[#f58220]">Forge</span></h2>
+                <p className="text-zinc-500 text-sm">Issue high-impact discount codes to drive customer retention.</p>
+             </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <BentoCard className="bg-white border-zinc-200 p-8 shadow-sm">
+                   <h3 className="text-lg font-bold mb-6">Create New Voucher</h3>
+                   <div className="space-y-4">
+                      <div>
+                         <label className="text-[10px] font-black uppercase text-zinc-400 mb-1 block">Voucher Code</label>
+                         <input type="text" placeholder="e.g. GRID20" className="w-full bg-zinc-50 border border-zinc-100 p-3 rounded-xl font-mono text-sm focus:ring-2 focus:ring-[#f58220] outline-none" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                         <div>
+                            <label className="text-[10px] font-black uppercase text-zinc-400 mb-1 block">Discount Type</label>
+                            <select className="w-full bg-zinc-50 border border-zinc-100 p-3 rounded-xl text-sm outline-none">
+                               <option>Percentage (%)</option>
+                               <option>Fixed Amount (R)</option>
+                            </select>
+                         </div>
+                         <div>
+                            <label className="text-[10px] font-black uppercase text-zinc-400 mb-1 block">Value</label>
+                            <input type="number" placeholder="20" className="w-full bg-zinc-50 border border-zinc-100 p-3 rounded-xl text-sm outline-none" />
+                         </div>
+                      </div>
+                      <button className="w-full bg-zinc-900 text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest mt-4">Forge Coupon</button>
+                   </div>
+                </BentoCard>
+
+                <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
+                   <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400 mb-6">Active Vouchers</h3>
+                   <div className="space-y-3">
+                      {[
+                        { code: 'FIRSTORDER', type: '30%', used: 142, limit: 500 },
+                        { code: 'WEEKENDBLAST', type: 'R50', used: 89, limit: 100 },
+                        { code: 'LUNCH10', type: '10%', used: 450, limit: '∞' }
+                      ].map(coupon => (
+                         <div key={coupon.code} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 flex items-center justify-between">
+                            <div>
+                               <p className="text-sm font-black font-mono text-zinc-800">{coupon.code}</p>
+                               <p className="text-[8px] font-bold text-[#f58220] uppercase">{coupon.type} OFF</p>
+                            </div>
+                            <div className="text-right">
+                               <p className="text-xs font-black text-zinc-900">{coupon.used} / {coupon.limit} uses</p>
+                               <div className="w-24 h-1.5 bg-zinc-200 rounded-full mt-1 overflow-hidden">
+                                  <div className="h-full bg-[#f58220]" style={{ width: typeof coupon.limit === 'number' ? `${(coupon.used / coupon.limit) * 100}%` : '40%' }} />
+                               </div>
+                            </div>
+                         </div>
+                      ))}
+                   </div>
+                </BentoCard>
+             </div>
+           </div>
+        ) : (
+          <div className="flex flex-col md:flex-row gap-8">
+          
+          {/* Left Column: Orders Queue */}
+          <div className="flex-1 space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-2xl font-bold flex items-center gap-3">
+                Active Queue <span className="text-zinc-400 text-sm font-medium">{activeOrders.length} Orders</span>
+              </h2>
+              <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-xl">
+                 <button className="px-3 py-1.5 bg-white shadow-sm rounded-lg text-[10px] font-black uppercase tracking-widest text-[#f58220]">Date ↓</button>
+                 <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Price</button>
+                 <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Order ID</button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {activeOrders.map(order => {
+                const createdAt = new Date(order.created_at);
+                const diffSecs = Math.floor((now - createdAt.getTime()) / 1000);
+                const isOverdue = diffSecs > 1800; // 30 mins
+
+                return (
+                  <motion.div 
+                    key={order.id}
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden"
+                  >
+                    {isOverdue && (
+                       <div className="absolute top-0 left-0 right-0 bg-red-500 text-white text-[8px] font-black uppercase tracking-widest py-1 px-4 text-center">
+                          OVERDUE ({Math.floor(diffSecs / 60)}m)
+                       </div>
+                    )}
+                    
+                    <div className="flex justify-between items-start mb-4 mt-2">
+                       <div className="flex flex-col gap-1">
+                          <span className="text-[8px] font-mono text-zinc-400 uppercase">#LE-{order.id.slice(0, 8).toUpperCase()}</span>
+                          <h3 className="text-lg font-black text-zinc-800">{order.customer_name || 'Debug Customer'}</h3>
+                       </div>
+                       <div className="flex flex-col items-end gap-1">
+                          <div className={cn(
+                            "px-3 py-1 rounded-full text-[9px] font-black uppercase flex items-center gap-1.5",
+                            order.status === 'preparing' ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"
+                          )}>
+                             <div className="w-1.5 h-1.5 bg-current rounded-full" />
+                             {order.status}
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <span className="text-[10px] font-mono text-zinc-400 flex items-center gap-1">
+                               <Clock className="w-3 h-3" /> {createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            <span className="text-[9px] font-bold text-[#f58220] uppercase tracking-wider">
+                              {diffSecs < 60 ? 'Just now' : `${Math.floor(diffSecs / 60)}m ago`}
+                            </span>
+                          </div>
+                       </div>
+                    </div>
+
+                    <div className="space-y-1 mb-6">
+                       <div className="flex items-center gap-1.5 text-zinc-500">
+                          <Smartphone className="w-3 h-3" />
+                          <span className="text-xs font-medium font-mono">{order.phone || '000 000 0000'}</span>
+                       </div>
+                       <div className="flex items-center gap-1.5 text-zinc-500">
+                          <MapPin className="w-3 h-3" />
+                          <span className="text-xs font-medium truncate">{order.address || '123 Default St, Default City'}</span>
+                       </div>
+                    </div>
+
+                    {order.rider && (
+                       <div className="flex items-center gap-3 mb-6 p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+                          <div className="w-10 h-10 rounded-xl bg-zinc-200 flex items-center justify-center flex-shrink-0">
+                             <Bike className="w-5 h-5 text-zinc-500" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                             <p className="text-[8px] font-black uppercase text-zinc-400 leading-none mb-1">Assigned Vector</p>
+                             <p className="text-sm font-black text-zinc-800 truncate">{order.rider.name}</p>
+                          </div>
+                          <div className="flex gap-2">
+                             <button className="w-8 h-8 flex items-center justify-center bg-white border border-zinc-200 rounded-lg shadow-sm text-zinc-600">
+                                <Smartphone className="w-4 h-4" />
+                             </button>
+                             <button 
+                               onClick={() => setTrackingOrderId(trackingOrderId === order.id ? null : order.id)}
+                               className={cn(
+                                 "w-8 h-8 flex items-center justify-center rounded-lg shadow-sm transition-all",
+                                 trackingOrderId === order.id ? "bg-[#39FF14] text-black border-[#39FF14]" : "bg-white border border-zinc-200 text-zinc-600"
+                               )}
+                             >
+                                <MapPin className="w-4 h-4" />
+                             </button>
+                          </div>
+                       </div>
+                    )}
+
+                    {trackingOrderId === order.id && order.rider && (
+                       <RiderTrackingMap 
+                         riderCoords={
+                           isSupabaseMocked() 
+                             ? riderSimCoords 
+                             : [order.rider.current_latitude || -33.9188, order.rider.current_longitude || 18.4233]
+                         }
+                         orderCoords={[-33.9158, 18.4203]} // Mock customer location
+                       />
+                    )}
+
+                    <div className="flex items-center justify-between py-3 border-y border-zinc-100 mb-6 font-mono">
+                       <div className="flex flex-col">
+                          <span className="text-xs font-bold text-zinc-800">{order.product_name || 'Test Burger (Debug)'}</span>
+                          {order.status !== 'completed' && (
+                             <div className="mt-1 flex flex-col gap-0.5">
+                                {order.rider ? (
+                                   <span className="text-[8px] text-green-600 font-black uppercase tracking-widest flex items-center gap-1">
+                                      <Bike className="w-2.5 h-2.5" /> Rider arriving in ~{ getEstimatedMinutes(order.rider_dist_to_shop || 2.4) }m
+                                   </span>
+                                ) : (
+                                   <span className="text-[8px] text-orange-500 font-black uppercase tracking-widest flex items-center gap-1">
+                                      <Search className="w-2.5 h-2.5 animate-pulse" /> Dispatching nearest rider...
+                                   </span>
+                                )}
+                                <span className="text-[8px] text-zinc-400 font-black uppercase tracking-widest flex items-center gap-1">
+                                   <Clock className="w-2.5 h-2.5" /> Est. Delivery: {(createdAt.getHours() + 1) % 24}:{(createdAt.getMinutes() + 35) % 60}
+                                </span>
+                             </div>
+                          )}
+                       </div>
+                       <span className="text-xs font-black text-zinc-900">R {order.total_price || '55.00'}</span>
+                    </div>
+
+                    <div className="grid grid-cols-6 gap-2">
+                       <button 
+                        onClick={() => handleUpdateStatus(order.id, order.status === 'pending' ? 'preparing' : 'ready')}
+                        className="col-span-3 py-4 rounded-xl bg-[#f58220] text-white text-xs font-black uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-orange-500/20"
+                       >
+                         {order.status === 'pending' ? 'Begin Prep' : 'Mark as Ready'}
+                       </button>
+                       <button className="col-span-1 p-4 bg-zinc-100 rounded-xl flex items-center justify-center hover:bg-zinc-200 transition-colors">
+                          <List className="w-5 h-5 text-zinc-500" />
+                       </button>
+                       <button className="col-span-1 p-4 bg-zinc-100 rounded-xl flex items-center justify-center hover:bg-zinc-200 transition-colors">
+                          <Smartphone className="w-5 h-5 text-zinc-500" />
+                       </button>
+                       <button className="col-span-1 p-4 bg-red-50 rounded-xl flex items-center justify-center hover:bg-red-100 transition-colors">
+                          <ShieldAlert className="w-5 h-5 text-red-400" />
+                       </button>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right Column: Insights */}
+          <aside className="w-full md:w-80 space-y-6">
+            <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm text-zinc-900">
+               <h3 className="text-lg font-bold mb-6">Status Overview</h3>
+               <div className="space-y-4">
+                  {[
+                    { label: 'New Orders', count: newCount, color: 'bg-blue-500' },
+                    { label: 'Preparing', count: preparingCount, color: 'bg-orange-500' },
+                    { label: 'Ready for Pickup', count: readyCount, color: 'bg-green-500' },
+                    { label: 'Completed', count: completedCount, color: 'bg-zinc-300' },
+                  ].map(stat => (
+                    <div key={stat.label} className="flex justify-between items-center">
+                       <div className="flex items-center gap-3">
+                          <div className={cn("w-1.5 h-1.5 rounded-full", stat.color)} />
+                          <span className="text-xs font-medium text-zinc-600">{stat.label}</span>
+                       </div>
+                       <span className="text-sm font-black font-mono">{stat.count}</span>
+                    </div>
+                  ))}
+               </div>
+               
+               <div className="mt-8 pt-6 border-t border-zinc-100">
+                  <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mb-1">Avg. Prep Time</p>
+                  <p className="text-3xl font-black italic color-zinc-900 tracking-tighter">16m 42s</p>
+               </div>
+            </BentoCard>
+
+            <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm text-zinc-900">
+               <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-500">Live Riders</h3>
+                  <div className="flex items-center gap-1.5">
+                     <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                     <span className="text-[10px] font-black text-green-600 uppercase">{activeRiders.length} Online</span>
+                  </div>
+               </div>
+               <div className="space-y-3">
+                   {activeRiders.slice(0, 4).map(rider => (
+                     <div key={rider.id} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                           <div className="w-6 h-6 rounded-lg bg-zinc-100 flex items-center justify-center">
+                              <Bike className="w-3 h-3 text-zinc-500" />
+                           </div>
+                           <span className="text-xs font-bold text-zinc-700">{rider.name}</span>
+                        </div>
+                        <span className="text-[8px] font-mono text-zinc-400">2.4 KM</span>
+                     </div>
+                   ))}
+               </div>
+            </BentoCard>
+
+            {/* Hidden rating triggers or menu logic could go here */}
+            {ratingOrder && (
+              <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+                <BentoCard className="bg-white p-6 max-w-sm w-full font-sans">
+                  <h3 className="text-xl font-bold mb-4">Rate Rider</h3>
+                  <div className="space-y-4">
+                    <StarRatingInput rating={rating} onRatingChange={setRating} />
+                    <textarea 
+                      value={feedback}
+                      onChange={(e) => setFeedback(e.target.value)}
+                      className="w-full border p-2 rounded text-zinc-900"
+                      placeholder="Comment..."
+                    />
+                    <div className="flex gap-2">
+                       <button onClick={handleSubmitRating} disabled={loading} className="flex-1 bg-[#f58220] text-white py-2 rounded font-bold">
+                         {loading ? 'Submitting...' : 'Submit'}
+                       </button>
+                       <button onClick={() => setRatingOrder(null)} className="flex-1 bg-zinc-100 py-2 rounded font-bold">Cancel</button>
+                    </div>
+                  </div>
+                </BentoCard>
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
+      </div>
+    </div>
+  );
+};
+
+const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onSwitchRole }: { 
+  profile: RiderProfile, 
+  connections: ShopConnection[],
+  now: number,
+  onUpdateVehicle: (v: UserVehicle) => void,
+  onLogout: () => void,
+  onPair: () => void,
+  onSwitchRole: () => void
+}) => {
+  return (
+    <div className="p-6 space-y-8 pb-32">
+      <div className="flex flex-col items-center py-8 text-center">
+        <div className="relative mb-6">
+          <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-zinc-800 flex items-center justify-center p-1 glow">
+            {profile.photo_url ? (
+              <img src={profile.photo_url} className="w-full h-full object-cover rounded-2xl" alt="Profile" />
+            ) : (
+              <div className="text-4xl font-headline font-black italic text-[#39FF14]">{profile.name[0]}</div>
+            )}
+          </div>
+          <div className="absolute -bottom-2 -right-2 bg-[#39FF14] text-black text-[9px] font-black italic px-2 py-0.5 rounded-full shadow-lg">
+            lvl 42
+          </div>
+        </div>
+        <h2 className="text-3xl font-headline font-black italic text-white uppercase tracking-tighter leading-none">{profile.name}</h2>
+        <div className="mt-2 flex items-center gap-2">
+           <StarRating rating={Math.round(profile.rating || 5)} />
+           <span className="text-[10px] font-mono text-zinc-500 font-bold">{Number(profile.rating || 5.0).toFixed(1)}</span>
+        </div>
+        <div className="flex flex-col items-center mt-2">
+          <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{profile.full_name}</p>
+          <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{profile.phone}</p>
+        </div>
+        <div className="mt-4 px-3 py-1 rounded-full border border-zinc-800 bg-zinc-900/50">
+           <span className={cn(
+             "text-[8px] font-black uppercase tracking-[0.3em]",
+             profile.verification_status === 'verified' ? "text-[#39FF14]" : "text-orange-500"
+           )}>
+             Status: {profile.verification_status}
+           </span>
+        </div>
+      </div>
+
+      <section className="space-y-4">
+        <div className="flex items-center justify-between px-2">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600">Active Uplinks</h3>
+          <button 
+            onClick={onPair}
+            className="text-[10px] font-black uppercase text-[#39FF14] border border-[#39FF14]/20 px-3 py-1 rounded-full bg-[#39FF14]/5"
+          >
+            + Connect New
+          </button>
+        </div>
+        
+        {connections.length === 0 ? (
+          <BentoCard className="p-8 border-dashed border-zinc-800 bg-transparent text-center opacity-40">
+            <Link2 className="w-8 h-8 mx-auto mb-3 text-zinc-600" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">No active merchant connections</p>
+          </BentoCard>
+        ) : (
+          <div className="space-y-2">
+            {connections.map(conn => {
+              const timeLeft = new Date(conn.expires_at).getTime() - now;
+              const isExpired = timeLeft <= 0;
+              const hoursLeft = Math.max(0, Math.floor(timeLeft / (1000 * 60 * 60)));
+              const minsLeft = Math.max(0, Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60)));
+              
+              return (
+                <BentoCard 
+                  key={conn.id} 
+                  className={cn(
+                    "p-4 border-zinc-800/40 transition-all",
+                    isExpired ? "bg-red-500/5 border-red-500/20 grayscale" : "bg-zinc-900/10"
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "p-2 rounded-lg",
+                        isExpired ? "bg-red-500/10" : "bg-[#39FF14]/10"
+                      )}>
+                        <Globe className={cn("w-4 h-4", isExpired ? "text-red-500" : "text-[#39FF14]")} />
+                      </div>
+                      <div>
+                        <h4 className={cn(
+                          "text-xs font-black uppercase italic",
+                          isExpired ? "text-zinc-500" : "text-zinc-200"
+                        )}>
+                          {conn.shop_name || 'Merchant ' + conn.shop_id.slice(0, 4)}
+                        </h4>
+                        <div className="flex items-center gap-2">
+                           <p className={cn(
+                             "text-[9px] font-mono",
+                             isExpired ? "text-red-500/60" : "text-zinc-500"
+                           )}>
+                             {isExpired ? 'SIGNAL CUT' : 'UPLINK ACTIVE'}
+                           </p>
+                           {isExpired && (
+                             <button 
+                                onClick={onPair}
+                                className="text-[8px] font-black uppercase text-red-500 border border-red-500/20 px-1.5 py-0.5 rounded bg-red-500/5 animate-pulse"
+                             >
+                               Reset Time
+                             </button>
+                           )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className={cn(
+                        "text-[10px] font-mono font-bold",
+                        isExpired ? "text-red-600" : "text-orange-500"
+                      )}>
+                        {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
+                      </span>
+                      <p className="text-[8px] text-zinc-600 font-black uppercase">
+                        {isExpired ? 'EXPIRED' : 'Until Expiry'}
+                      </p>
+                    </div>
+                  </div>
+                </BentoCard>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-4">
+        <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600 ml-2">Vehicle Configuration</h3>
+        <div className="grid grid-cols-4 gap-2">
+          {(['Road', 'MTB', 'E-Bike', 'Motor'] as UserVehicle[]).map(v => (
+            <button 
+              key={v}
+              onClick={() => onUpdateVehicle(v)}
+              className={cn(
+                "p-3 rounded-2xl border flex flex-col items-center gap-2 transition-all active:scale-95",
+                profile.vehicle_type === v 
+                  ? "bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]" 
+                  : "bg-zinc-900 border-zinc-800 text-zinc-500"
+              )}
+            >
+              <Bike className="w-4 h-4" />
+              <span className="text-[8px] font-black uppercase tracking-tighter">{v}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3 pt-8">
+        <BentoCard className="p-2 border-zinc-800/30">
+          <button className="w-full flex items-center justify-between p-3 text-zinc-300 hover:text-white transition-colors">
+            <div className="flex items-center gap-3">
+              <Smartphone className="w-4 h-4" />
+              <span className="text-xs font-bold uppercase tracking-widest">Device Sync</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </button>
+        </BentoCard>
+        
+        <BentoCard className="p-2 border-zinc-800/30">
+          <button 
+            onClick={onSwitchRole}
+            className="w-full flex items-center justify-between p-3 text-[#39FF14] hover:text-[#39FF14]/80 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <ShoppingBag className="w-4 h-4" />
+              <span className="text-xs font-bold uppercase tracking-widest">Merchant Dashboard</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </button>
+        </BentoCard>
+
+        <BentoCard className="p-2 border-zinc-900 bg-red-500/5">
+          <button 
+            onClick={onLogout}
+            className="w-full flex items-center justify-between p-3 text-red-500/70 hover:text-red-500 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <LogOut className="w-4 h-4" />
+              <span className="text-xs font-bold uppercase tracking-widest">Deactivate Hub</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-red-900" />
+          </button>
+        </BentoCard>
+      </section>
+
+      <div className="text-center pt-8">
+        <p className="text-[8px] font-mono text-zinc-700 uppercase tracking-widest">v2.4.0 • Build ID-LX7</p>
+      </div>
+    </div>
+  );
+};
+
+const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (code: string) => void }) => {
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+
+  const handlePair = async () => {
+    if (code.length !== 6) {
+      toast.error('Pairing code must be 6 digits');
+      return;
+    }
+    setLoading(true);
+    try {
+      onComplete(code);
+    } catch {
+      toast.error('Uplink rejected. Invalid code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleScan = (scannedCode: string) => {
+    setShowScanner(false);
+    if (scannedCode) {
+      onComplete(scannedCode.slice(0, 6)); // Ensure it's 6 length or adapt based on QR format
+    }
+  };
+
+  return (
+    <>
+      <div className="p-6 h-[calc(100vh-100px)] flex flex-col">
+         <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 mb-8 group">
+           <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#39FF14] transition-colors" />
+           <span className="text-[10px] font-black uppercase tracking-widest">Return to Hub</span>
+         </button>
+
+         <div className="text-center mb-12">
+            <h2 className="text-3xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Initialize Uplink</h2>
+            <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.2em]">Establish 24h pairing with Merchant</p>
+         </div>
+
+         <div className="space-y-8 flex-1">
+            <BentoCard className="p-8 text-center bg-[#151515]">
+              <div className="mb-6 flex justify-center">
+                <button 
+                  onClick={() => setShowScanner(true)}
+                  className="p-6 bg-[#39FF14] rounded-3xl relative active:scale-95 transition-all text-black hover:bg-[#32e612]"
+                >
+                  <QrCode className="w-24 h-24 text-black mx-auto" />
+                  <div className="absolute inset-x-0 bottom-3 text-center">
+                    <span className="text-[10px] font-black uppercase tracking-widest bg-white/50 px-2 py-0.5 rounded">Tap to Scan</span>
+                  </div>
+                </button>
+              </div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#39FF14] mb-2">Option A: Scan Merchant QR</p>
+              <p className="text-xs text-zinc-500 font-bold leading-tight">Use your camera to scan the pairing QR code displayed on the Merchant Dashboard.</p>
+            </BentoCard>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-zinc-800"></div>
+              </div>
+              <div className="relative flex justify-center text-[10px] uppercase font-black tracking-widest">
+                <span className="bg-[#050505] px-4 text-zinc-600">OR</span>
+              </div>
+            </div>
+
+            <BentoCard className="p-6">
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#39FF14] mb-4">Option B: Pairing Cipher</p>
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  maxLength={6}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\W/g, '').toUpperCase())}
+                  placeholder="000000"
+                  className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-2 sm:px-4 py-4 text-xl sm:text-2xl font-mono font-bold tracking-[0.2em] text-center text-white focus:border-[#39FF14] outline-none transition-all placeholder:tracking-normal"
+                />
+                <button 
+                  onClick={handlePair}
+                  disabled={loading || code.length !== 6}
+                  className="p-4 bg-[#39FF14] text-black rounded-xl active:scale-95 transition-all disabled:opacity-50 flex-shrink-0 min-w-[64px] flex items-center justify-center"
+                >
+                  {loading ? <Zap className="w-6 h-6 animate-spin" /> : <ChevronRight className="w-6 h-6" />}
+                </button>
+              </div>
+              <p className="mt-4 text-[9px] text-zinc-500 font-bold uppercase text-center leading-tight">Enter the 6-character code displayed on the Merchant Terminal.</p>
+            </BentoCard>
+         </div>
+      </div>
+      {showScanner && <QRScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
+    </>
+  );
+};
+
+// --- App Hub ---
+
+type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'merchant_dash';
+
+export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<RiderProfile | null>(null);
+  const [connections, setConnections] = useState<ShopConnection[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+  const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<'rider' | 'merchant'>('rider');
+  const [view, setView] = useState<AppView>('dash');
+  const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
+  const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>([]);
+  const [history, setHistory] = useState<DeliveryOrder[]>([]);
+  const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
+
+  // Granular Notifications Protocol
+  useEffect(() => {
+    activeOrders.forEach(order => {
+      const prev = prevActiveOrdersRef.current.find(p => p.id === order.id);
+      if (prev && prev.status !== order.status) {
+        if (order.status === 'ready') {
+          toast.success(`MISSION ALERT: Order #${order.id.slice(-4)} is READY for pickup at ${order.restaurant_name}!`, {
+            duration: 5000,
+            icon: <Zap className="w-4 h-4 text-[#39FF14]" />
+          });
+        } else if (order.status === 'preparing') {
+          toast.info(`Merchant is now preparing Order #${order.id.slice(-4)}.`);
+        }
+      }
+    });
+    prevActiveOrdersRef.current = activeOrders;
+  }, [activeOrders]);
+
+  const activeMissionCount = activeOrders.length;
+  // Location Tracking Protocol
+  useEffect(() => {
+    if (!user || !profile?.is_online || activeMissionCount === 0) return;
+
+    let watchId: number;
+
+    const updateLocation = async (lat: number, lng: number) => {
+      try {
+        await getSupabase()
+          .from('rider_profiles')
+          .update({ 
+            current_latitude: lat, 
+            current_longitude: lng, 
+            updated_at: new Date().toISOString() 
+          })
+          .eq('id', user.id);
+      } catch (e) {
+        console.error('Location sync failed:', e);
+      }
+    };
+
+    if ("geolocation" in navigator) {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          updateLocation(pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          console.error('Geolocation error:', err);
+          // Fallback to mock movement
+          const mockLat = -33.9249 + (Math.random() - 0.5) * 0.01;
+          const mockLng = 18.4241 + (Math.random() - 0.5) * 0.01;
+          updateLocation(mockLat, mockLng);
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      );
+    }
+
+    return () => {
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+    };
+  }, [user, profile?.is_online, activeMissionCount]);
+
+  // Auth Listener
+  useEffect(() => {
+    try {
+      getSupabase().auth.getSession().then(({ data: { session } }) => {
+        setUser(session?.user ?? null);
+        if (!session) setLoading(false);
+      });
+
+      const { data: { subscription } } = getSupabase().auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user ?? null);
+        if (!session) {
+          setProfile(null);
+          setLoading(false);
+        }
+      });
+
+      return () => subscription.unsubscribe();
+    } catch (error) {
+      console.error(error);
+      setTimeout(() => setLoading(false), 0);
+    }
+  }, []);
+
+  // Timer for countdowns
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000 * 60); // Update every minute
+    return () => clearInterval(interval);
+  }, []);
+
+  // Profile Sync
+  useEffect(() => {
+    if (!user) return;
+    
+    const fetchProfile = async () => {
+      try {
+        if (isSupabaseMocked()) {
+          setProfile({
+            id: user.id,
+            name: 'Elite_Rider_tata',
+            full_name: 'Tata Rider',
+            phone: '083 456 7890',
+            is_online: true,
+            vehicle_type: 'Road',
+            verification_status: 'verified',
+            rating: 4.8,
+            total_earnings: 1250,
+            total_deliveries: 42,
+            active_points: 156,
+            updated_at: new Date().toISOString()
+          } as unknown as RiderProfile);
+          setLoading(false);
+          return;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data, error } = await fetchWithRetry<{ data: any; error: any }>(() => (getSupabase()
+          .from('rider_profiles')
+          .select('*')
+          .eq('id', user.id)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .single() as any));
+
+        if (error && error.code === 'PGRST116') {
+          // Build initial profile
+          const newProfile: Partial<RiderProfile> = {
+            id: user.id,
+            name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Rider',
+            full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+            phone: user.user_metadata?.phone || '',
+            is_online: false,
+            vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
+            verification_status: user.email === 'aviwenotununu4@gmail.com' ? 'verified' : 'pending',
+            rating: 5.0,
+            total_earnings: 0,
+            total_deliveries: 0,
+            active_points: 0,
+            updated_at: new Date().toISOString()
+          };
+          const { data: created, error: insertError } = await getSupabase().from('rider_profiles').upsert(newProfile).select().single();
+          if (created) setProfile(created as RiderProfile);
+          if (insertError) {
+            console.error('Profile creation failed:', insertError);
+            toast.error('System failed to initialize rider profile. Check database permissions.');
+          }
+        } else if (data) {
+          setProfile(data as RiderProfile);
+        } else if (error) {
+          console.error('Profile fetch failed:', error);
+          toast.error('Failed to sync rider telemetry. Check your connection.');
+        }
+      } catch (error) {
+        console.error('Profile sync exception:', error);
+        toast.error('Critical telemetry sync failure.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProfile();
+
+    let channel: import('@supabase/supabase-js').RealtimeChannel | undefined;
+    try {
+      channel = getSupabase()
+        .channel(`profile:${user.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_profiles', filter: `id=eq.${user.id}` }, (payload) => {
+          setProfile(payload.new as RiderProfile);
+        })
+        .subscribe();
+    } catch (e) {
+      console.error(e);
+    }
+
+    return () => { channel?.unsubscribe(); };
+  }, [user]);
+
+  // Connections & Orders Real-time
+  useEffect(() => {
+    if (!user) return;
+
+    let activeConnections: ShopConnection[] = [];
+
+    const fetchConnectionsAndOrders = async () => {
+      try {
+        if (isSupabaseMocked()) {
+          setConnections([{
+            id: 'mock-conn',
+            rider_id: user.id,
+            shop_id: 's1',
+            shop_name: 'Test Burger Hub',
+            expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
+            created_at: new Date().toISOString()
+          }] as unknown as ShopConnection[]);
+          
+          if (profile?.is_online) {
+            setAvailableOrders(prev => {
+              const mocks = [{
+                id: 'order-1',
+                customer_name: 'John Doe',
+                address: '55 Main Rd',
+                city: 'Cape Town',
+                delivery_status: 'finding_rider',
+                order_type: 'delivery',
+                product_name: 'Cheese Burger XL',
+                delivery_fee: 25,
+                total_price: 155,
+                created_at: new Date().toISOString(),
+                restaurant_name: 'Test Burger Hub',
+                distance_km: 2.3
+              }] as DeliveryOrder[];
+              if (prev.length === 0) {
+                toast('NEW MISSION DETECTED', { 
+                  duration: 4000,
+                  icon: <Zap className="w-4 h-4 text-[#39FF14]" />,
+                  style: { background: '#050505', color: '#39FF14', border: '1px solid #39FF14', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
+                });
+              }
+              return mocks;
+            });
+          }
+          return;
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: connData } = await fetchWithRetry<{ data: any; error?: any }>(() => (getSupabase()
+          .from('rider_connections')
+          .select('*, shop_name:shops(name)')
+          .eq('rider_id', user.id)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .order('expires_at', { ascending: false }) as any));
+        
+        if (connData) {
+          activeConnections = connData.map(c => ({
+            ...c,
+            shop_name: c.shop_name?.name || 'Local Merchant'
+          })) as ShopConnection[];
+          setConnections(activeConnections);
+        }
+
+        if (!profile?.is_online) {
+          setAvailableOrders([]);
+          return;
+        }
+
+        const validConnections = activeConnections.filter(c => new Date(c.expires_at) > new Date());
+        const shopIds = validConnections.map(c => c.shop_id);
+        
+        let query = getSupabase()
+          .from('orders')
+          .select('*, restaurant_name')
+          .eq('delivery_status', 'finding_rider')
+          .eq('order_type', 'delivery')
+          .order('created_at', { ascending: false });
+          
+        // All freelancers and connected riders see orders assigned to them or unassigned global orders.
+        // For connected riders, we prioritize their shop's orders locally via sorting.
+        query = query.or(`rider_id.is.null,rider_id.eq.${user.id}`);
+
+        const { data: ordersData, error: ordersError } = await query;
+        if (ordersError) console.error('Orders fetch error:', ordersError);
+
+        if (ordersData) {
+          const expiredShopIds = activeConnections
+            .filter(c => new Date(c.expires_at) <= new Date())
+            .map(c => c.shop_id);
+
+          const formatted = ordersData
+            .filter(item => !expiredShopIds.includes(item.shop_id))
+            .map(item => ({
+              ...item,
+              restaurant_name: item.restaurant_name || 'Local Merchant',
+              distance_km: Math.floor(Math.random() * 5) + 1.2
+            }));
+          
+          // Prioritize linked shops, then by newest first (descending)
+          const sorted = [...formatted].sort((a, b) => {
+            const aIsLinked = shopIds.includes(a.shop_id);
+            const bIsLinked = shopIds.includes(b.shop_id);
+            if (aIsLinked && !bIsLinked) return -1;
+            if (!aIsLinked && bIsLinked) return 1;
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          });
+          setAvailableOrders(prev => {
+             if (sorted.length > prev.length) {
+                toast('NEW MISSION DETECTED', { 
+                  duration: 4000,
+                  icon: <Zap className="w-4 h-4 text-[#39FF14]" />,
+                  style: { background: '#050505', color: '#39FF14', border: '1px solid #39FF14', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
+                });
+             }
+             return sorted as DeliveryOrder[];
+          });
+        } else {
+          setAvailableOrders([]);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    fetchConnectionsAndOrders();
+
+    let ordersChannel: import('@supabase/supabase-js').RealtimeChannel | undefined;
+    let connChannel: import('@supabase/supabase-js').RealtimeChannel | undefined;
+
+    try {
+      ordersChannel = getSupabase()
+        .channel('public_orders')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: 'order_type=eq.delivery' }, () => {
+          fetchConnectionsAndOrders();
+        })
+        .subscribe();
+
+      connChannel = getSupabase()
+        .channel(`rider_connections:${user.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_connections', filter: `rider_id=eq.${user.id}` }, () => {
+          fetchConnectionsAndOrders();
+        })
+        .subscribe();
+    } catch (e) {
+      console.error(e);
+    }
+
+    return () => { 
+      ordersChannel?.unsubscribe(); 
+      connChannel?.unsubscribe();
+    };
+  }, [user, profile?.is_online]);
+
+  // Active Mission & History Sync
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchData = async () => {
+      try {
+        if (isSupabaseMocked()) {
+          setActiveOrders([]);
+          setHistory([
+            {
+               id: 'h1',
+               customer_name: 'Recent Client',
+               product_name: 'Double Patty Special',
+               delivery_fee: 28,
+               total_price: 180,
+               delivery_status: 'delivered',
+               updated_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+               restaurant_name: 'Burger Palace',
+               created_at: new Date().toISOString()
+            }
+          ] as unknown as DeliveryOrder[]);
+          return;
+        }
+        // Active Orders
+        const { data: active } = await getSupabase()
+          .from('orders')
+          .select('*, restaurant_name')
+          .eq('rider_id', user.id)
+          .in('delivery_status', ['accepted', 'picked_up'])
+          .neq('status', 'completed')
+          .neq('status', 'cancelled');
+        
+        if (active) {
+          setActiveOrders(active.map(order => ({
+            ...order,
+            restaurant_name: order.restaurant_name || 'Local Merchant'
+          })) as DeliveryOrder[]);
+        } else {
+          setActiveOrders([]);
+        }
+
+        // History
+        const { data: historyData } = await getSupabase()
+          .from('orders')
+          .select('*, restaurant_name')
+          .eq('rider_id', user.id)
+          .eq('delivery_status', 'delivered')
+          .order('updated_at', { ascending: false });
+        
+        if (historyData) {
+          setHistory(historyData.map(item => ({
+            ...item,
+            restaurant_name: item.restaurant_name || 'Local Merchant'
+          })) as DeliveryOrder[]);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    fetchData();
+
+    let channel: import('@supabase/supabase-js').RealtimeChannel | undefined;
+    try {
+      channel = getSupabase()
+        .channel(`rider_orders:${user.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `rider_id=eq.${user.id}` }, () => {
+          fetchData();
+        })
+        .subscribe();
+    } catch (e) {
+      console.error(e);
+    }
+
+    return () => { channel?.unsubscribe(); };
+  }, [user]);
+
+  // Actions
+  const toggleOnline = async () => {
+    if (!profile) return;
+    
+    if (profile.verification_status !== 'verified') {
+      toast.error('Identity Verification Pending. Access to Missions blocked until Fleet HQ authorizes.');
+      return;
+    }
+
+    try {
+      const { error } = await getSupabase()
+        .from('rider_profiles')
+        .update({ is_online: !profile.is_online, updated_at: new Date().toISOString() })
+        .eq('id', profile.id);
+      if (error) toast.error('Failed to sync system status');
+      else toast.success(profile.is_online ? 'Hub deactivated' : 'Hub active');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Sync failed';
+      toast.error(message);
+    }
+  };
+
+  const updateVehicle = async (type: UserVehicle) => {
+    if (!profile) return;
+    try {
+      const { error } = await getSupabase()
+        .from('rider_profiles')
+        .update({ vehicle_type: type, updated_at: new Date().toISOString() })
+        .eq('id', profile.id);
+      if (error) toast.error('Sync failed');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Sync failed';
+      toast.error(message);
+    }
+  };
+
+  const handleOrderAccept = async (orderId: string) => {
+    if (!profile || !user) return;
+    try {
+      if (isSupabaseMocked()) {
+        const order = availableOrders.find(o => o.id === orderId);
+        if (order) {
+          const accepted = { ...order, delivery_status: 'accepted' as const, rider_id: user.id };
+          setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
+          setActiveOrders(prev => [...prev, accepted as DeliveryOrder]);
+          toast.success('Mission accepted. Navigation initialized.');
+          setView('active');
+        }
+        return;
+      }
+      const { data, error } = await getSupabase()
+        .from('orders')
+        .update({ 
+          delivery_status: 'accepted', 
+          rider_id: user.id,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', orderId)
+        .eq('delivery_status', 'finding_rider')
+        .or(`rider_id.is.null,rider_id.eq.${user.id}`)
+        .select()
+        .single();
+
+      if (error || !data) {
+        console.error('Accept fail error', error);
+        toast.error(`Error: ${error?.message || 'Mission already locked by another unit'}`);
+      } else {
+        toast.success('Mission accepted. Navigation initialized.');
+        setView('active');
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Accept failed';
+      toast.error(message);
+    }
+  };
+
+  const handlePair = async (code: string) => {
+    if (!user || !profile) return;
+    try {
+      // Find the active connection with this code
+      const { data: connection, error: fetchError } = await getSupabase()
+        .from('rider_connections')
+        .select('*')
+        .eq('connection_code', code)
+        .eq('status', 'active')
+        .single();
+      
+      if (fetchError || !connection) {
+        toast.error('Uplink rejected. Invalid or inactive pairing cipher.');
+        return;
+      }
+
+      // Update connection with new expiry (24h from now)
+      const { error: updateError } = await getSupabase()
+        .from('rider_connections')
+        .update({
+          rider_id: user.id,
+          rider_name: profile.full_name || profile.name || 'Unknown Rider',
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+        })
+        .eq('id', connection.id);
+      
+      if (updateError) throw updateError;
+
+      toast.success(`Uplink established! Successfully paired with Shop. (24h Pass)`);
+      setView('profile');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Pairing failed';
+      toast.error(message);
+    }
+  };
+  const handleUpdateStatus = async (orderId: string, status: DeliveryStatus) => {
+    if (!profile) return;
+    
+    // Find the order being updated
+    const orderToUpdate = activeOrders.find(o => o.id === orderId);
+    if (!orderToUpdate) return;
+    
+    const updates = { 
+      delivery_status: status, 
+      updated_at: new Date().toISOString() 
+    };
+
+    try {
+      if (isSupabaseMocked()) {
+        setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
+        if (status === 'delivered') {
+           setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
+           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
+           setProfile(prev => prev ? {
+             ...prev,
+             total_earnings: prev.total_earnings + (orderToUpdate.delivery_fee || 0),
+             total_deliveries: prev.total_deliveries + 1,
+             active_points: prev.active_points + 15
+           } : null);
+           toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
+           if (activeOrders.length <= 1) setView('dash');
+        } else {
+           toast.success('Vector updated.');
+        }
+        return;
+      }
+      const { error } = await getSupabase()
+        .from('orders')
+        .update(updates)
+        .eq('id', orderId);
+
+      if (error) {
+        toast.error('Phase sync failed');
+      } else {
+        if (status === 'delivered') {
+          const profileUpdates = {
+            total_earnings: profile.total_earnings + orderToUpdate.delivery_fee,
+            total_deliveries: profile.total_deliveries + 1,
+            active_points: profile.active_points + 15,
+            updated_at: new Date().toISOString()
+          };
+          await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile.id);
+          toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
+          // If no more orders, go back to dash
+          if (activeOrders.length <= 1) setView('dash');
+        } else {
+          toast.success('Vector updated.');
+        }
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Update failed';
+      toast.error(message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="text-center">
+          <motion.div 
+            animate={{ opacity: [0.3, 1, 0.3] }} 
+            transition={{ duration: 1, repeat: Infinity }}
+            className="text-[#39FF14] font-mono text-[10px] font-black uppercase tracking-[0.5em] mb-4"
+          >
+            BOOTING SYSTEM...
+          </motion.div>
+          <div className="w-64 h-1 bg-zinc-900 rounded-full overflow-hidden">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: '100%' }}
+              transition={{ duration: 2 }}
+              className="h-full bg-[#39FF14] neon-glow"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return <AuthView />;
+
+  if (!profile) {
+    const setupSql = `
+-- 1. Create Tables
+CREATE TABLE IF NOT EXISTS public.shops (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  created_at timestamp with time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.rider_profiles (
+  id uuid PRIMARY KEY REFERENCES auth.users(id),
+  name text,
+  full_name text,
+  phone text,
+  is_online boolean DEFAULT false,
+  vehicle_type text DEFAULT 'Road',
+  verification_status text DEFAULT 'pending',
+  rating numeric DEFAULT 5.0,
+  current_latitude numeric,
+  current_longitude numeric,
+  total_earnings numeric DEFAULT 0,
+  total_deliveries integer DEFAULT 0,
+  active_points integer DEFAULT 0,
+  updated_at timestamp with time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.orders (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id uuid REFERENCES public.shops(id),
+  customer_name text,
+  phone text,
+  address text,
+  city text,
+  product_name text,
+  items jsonb DEFAULT '[]'::jsonb,
+  restaurant_name text,
+  total_price numeric DEFAULT 0,
+  delivery_fee numeric DEFAULT 0,
+  delivery_status text DEFAULT 'finding_rider',
+  status text DEFAULT 'pending',
+  order_type text DEFAULT 'delivery',
+  rider_id uuid REFERENCES public.rider_profiles(id),
+  merchant_rating numeric,
+  merchant_feedback text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.rider_connections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shop_id uuid REFERENCES public.shops(id),
+  rider_id uuid REFERENCES public.rider_profiles(id),
+  rider_name text,
+  connection_code text NOT NULL,
+  status text DEFAULT 'active',
+  expires_at timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now()
+);
+
+-- 2. Enable RLS
+ALTER TABLE public.shops ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rider_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rider_connections ENABLE ROW LEVEL SECURITY;
+
+-- 3. Policies
+-- Shops
+DO $$ BEGIN
+    CREATE POLICY "Public shops are viewable by everyone" ON public.shops FOR SELECT USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Profiles
+DO $$ BEGIN
+    CREATE POLICY "Users can view own profile" ON public.rider_profiles FOR SELECT USING (auth.uid() = id);
+    CREATE POLICY "Users can insert own profile" ON public.rider_profiles FOR INSERT WITH CHECK (auth.uid() = id);
+    CREATE POLICY "Users can update own profile" ON public.rider_profiles FOR UPDATE USING (auth.uid() = id);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Orders
+DO $$ BEGIN
+    CREATE POLICY "Users can view available orders" ON public.orders FOR SELECT USING (
+      delivery_status = 'finding_rider' OR rider_id = auth.uid()
+    );
+    CREATE POLICY "Users can update assigned orders" ON public.orders FOR UPDATE USING (
+      rider_id = auth.uid() OR (delivery_status = 'finding_rider' AND rider_id IS NULL)
+    );
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Connections
+DO $$ BEGIN
+    CREATE POLICY "Users can view own connections" ON public.rider_connections FOR SELECT USING (rider_id = auth.uid() OR rider_id IS NULL);
+    CREATE POLICY "Users can update own connections" ON public.rider_connections FOR UPDATE USING (rider_id = auth.uid() OR rider_id IS NULL);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Refresh Schema
+NOTIFY pgrst, 'reload schema';
+    `.trim();
+
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 pb-20">
+        <ShieldAlert className="w-12 h-12 text-red-500 mb-4" />
+        <h2 className="text-xl font-black uppercase text-white mb-2">Supabase Setup Required</h2>
+        <p className="text-xs text-zinc-500 max-w-md text-center mb-6">
+          Authenticated successfully, but failed to read or create your rider profile in Supabase. 
+          You need to create the database tables.
+        </p>
+        
+        <div className="w-full max-w-lg mb-8">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 relative">
+            <div className="flex justify-between items-center mb-3">
+              <span className="text-[10px] font-black uppercase tracking-widest text-[#39FF14]">SQL Setup Script</span>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(setupSql);
+                  toast.success('SQL copied to clipboard');
+                }}
+                className="text-[10px] bg-zinc-800 text-white px-2 py-1 rounded"
+              >
+                Copy SQL
+              </button>
+            </div>
+            <pre className="text-[9px] text-zinc-400 font-mono overflow-auto max-h-60 whitespace-pre">
+              {setupSql}
+            </pre>
+          </div>
+        </div>
+
+        <div className="flex flex-col w-full max-w-xs gap-3">
+          <button 
+            onClick={() => window.location.reload()}
+            className="w-full py-4 bg-[#39FF14] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
+          >
+            I've run the SQL, Retry
+          </button>
+          <button 
+            onClick={() => getSupabase().auth.signOut()}
+            className="w-full py-4 bg-zinc-900 border border-zinc-800 text-zinc-500 font-bold uppercase tracking-widest rounded-xl active:scale-95 transition-all"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (role === 'merchant') return <MerchantDashboard onSwitchRole={() => setRole('rider')} />;
+
+  return (
+    <div className="min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#39FF14] selection:text-black overflow-x-hidden relative">
+      <Toaster position="top-center" theme="dark" richColors />
+      
+      {/* Background Map layer */}
+      {view === 'move' && (
+        <AppMapBackground 
+            isOnline={profile.is_online} 
+            activeOrder={activeOrders.length > 0 ? activeOrders[0] : null} 
+            isVisible={true}
+        />
+      )}
+      
+      {/* HUD Header */}
+      <header className="fixed top-0 left-0 right-0 h-20 bg-black/80 backdrop-blur-xl border-b border-zinc-900 z-50 flex items-center justify-between px-6 pointer-events-auto">
+        <div className="flex items-center gap-4">
+          <div className={cn(
+            "w-2 h-2 rounded-full",
+            profile.is_online ? "bg-[#39FF14] animate-pulse neon-glow" : "bg-zinc-800"
+          )} />
+          <div className="flex flex-col">
+            <h1 className="font-headline font-black italic text-xl uppercase tracking-tighter leading-none">
+              Local<span className="text-[#39FF14]">Eats</span>
+            </h1>
+            {connections.length > 0 && (() => {
+              const isExpired = new Date(connections[0].expires_at).getTime() < now;
+              return (
+                <div className="flex items-center gap-1 mt-1">
+                  <Globe className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-orange-500")} />
+                  <span className={cn("text-[7px] font-black uppercase tracking-widest", isExpired ? "text-red-500" : "text-[#39FF14]")}>{isExpired ? "PASS EXPIRED" : "CONNECTED"}</span>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+        
+        <div className="flex items-center gap-3">
+          {connections.length > 0 && (() => {
+             const isExpired = new Date(connections[0].expires_at).getTime() < now;
+             const hours = Math.max(0, Math.floor((new Date(connections[0].expires_at).getTime() - now) / (1000 * 60 * 60)));
+             const mins = Math.max(0, Math.floor(((new Date(connections[0].expires_at).getTime() - now) % (1000 * 60 * 60)) / (1000 * 60)));
+             return (
+               <div className="hidden sm:flex flex-col items-end gap-1 px-4 border-r border-zinc-800">
+                  <span className="text-[7px] text-zinc-500 font-black uppercase">Fleet Pass</span>
+                  <div className="flex items-center gap-1 cursor-pointer" onClick={() => isExpired && setView('pair')}>
+                    <Clock className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-[#39FF14]")} />
+                    <span className={cn("text-[10px] font-mono font-bold", isExpired ? "text-red-500" : "text-[#F0F0F0]")}>
+                      {isExpired ? "EXPIRED - RE-PAIR" : `CONNECTED: ${hours}H ${mins}M`}
+                    </span>
+                  </div>
+               </div>
+             );
+          })()}
+          <div className="text-right hidden sm:block">
+            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Rider Identifier</p>
+            <p className="text-xs font-mono font-bold">{profile.name}</p>
+          </div>
+          <div 
+            onClick={() => setView('hub')}
+            className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl cursor-pointer hover:border-[#39FF14]/50 transition-colors"
+          >
+            <UserIcon className="w-6 h-6 text-zinc-400" />
+          </div>
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main className="pt-20 w-full max-w-md mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none">
+        
+        {/* Mission Pulse Overlay */}
+        <AnimatePresence>
+          {profile?.is_online && availableOrders.length > 0 && activeOrders.length === 0 && view !== 'orders' && (
+            <motion.div
+              initial={{ y: "100%", opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "100%", opacity: 0 }}
+              className="fixed bottom-28 left-4 right-4 pointer-events-auto z-[200]"
+            >
+              <BentoCard glow className="bg-black/95 backdrop-blur-3xl border-2 border-[#39FF14] p-6 shadow-[0_0_80px_rgba(57,255,20,0.3)] ring-1 ring-white/10">
+                <div className="flex items-start justify-between mb-6">
+                  <div className="flex items-center gap-4">
+                    <div className="p-4 bg-[#39FF14] rounded-2xl animate-pulse shadow-[0_0_20px_#39FF14]">
+                      <Zap className="w-8 h-8 text-black" />
+                    </div>
+                    <div>
+                      <h3 className="text-[10px] font-black uppercase text-[#39FF14] tracking-[0.4em] mb-1">Drop-Off Protocol</h3>
+                      <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter">
+                        TEST SIGNAL
+                      </p>
+                      <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{availableOrders[0].restaurant_name}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[#39FF14] mb-1">Potential</p>
+                    <p className="text-3xl font-mono font-bold text-white tracking-tighter">
+                      R{Number(availableOrders[0].delivery_fee || 0).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 mb-8">
+                  <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
+                    <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">ETA Vector</span>
+                    <span className="text-xl font-mono font-bold text-white">{Math.floor(availableOrders[0].distance_km * 3)}:00 M</span>
+                  </div>
+                  <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
+                    <span className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-1">Range</span>
+                    <span className="text-xl font-mono font-bold text-white">{availableOrders[0].distance_km} KM</span>
+                  </div>
+                </div>
+
+                <SwipeButton 
+                  label="Accept Mission Cipher"
+                  onComplete={() => {
+                    handleOrderAccept(availableOrders[0].id);
+                    setView('move');
+                  }}
+                  color="#39FF14"
+                />
+              </BentoCard>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={view}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="pointer-events-auto"
+          >
+            {view === 'dash' && (
+              <div className="space-y-6">
+                {/* Mission Pulse Card at Top of HUD when pending/active */}
+                <AnimatePresence>
+                  {activeOrders.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="mb-8"
+                    >
+                      <BentoCard glow className="bg-black/95 border-[#39FF14] p-5 shadow-[0_0_50px_rgba(57,255,20,0.2)]">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#39FF14] mb-1 animate-pulse">Drop-Off Protocol</span>
+                            <h2 className="text-xl font-headline font-black italic uppercase text-white">Target Sync Active</h2>
+                          </div>
+                          <div className="p-3 bg-[#39FF14]/10 rounded-2xl">
+                            <Radar className="w-6 h-6 text-[#39FF14] animate-spin" />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-6">
+                          <TelemetryData label="Destination" value={activeOrders[0].restaurant_name.split(' ')[0]} />
+                          <TelemetryData label="Status" value={activeOrders[0].delivery_status.replace('_', ' ').toUpperCase()} />
+                        </div>
+                        <button 
+                          onClick={() => setView('move')}
+                          className="mt-6 w-full py-4 bg-[#39FF14] text-black font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
+                        >
+                          Establish Link <ArrowRight className="w-5 h-5" />
+                        </button>
+                      </BentoCard>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <Dashboard 
+                  profile={profile} 
+                  availableCount={availableOrders.length}
+                  todayEarnings={history
+                    .filter(o => o.updated_at.startsWith(new Date().toISOString().split('T')[0]))
+                    .reduce((acc, curr) => acc + Number(curr.delivery_fee || 0), 0)}
+                  totalDeliveries={profile.total_deliveries}
+                  history={history}
+                  onToggleOnline={toggleOnline} 
+                  setView={setView}
+                />
+              </div>
+            )}
+            {view === 'feed' && <OrdersFeed orders={availableOrders} onAccept={handleOrderAccept} isOnline={profile?.is_online || false} />}
+            {view === 'move' && (
+              activeOrders.length > 0 ? (
+                <div className="relative h-[80vh] pointer-events-none">
+                  {/* Floating Instruction Module is inside AppMapBackground */}
+                  <div className="absolute top-0 right-0 p-4 pointer-events-auto">
+                    <button 
+                      onClick={() => setView('dash')}
+                      className="p-4 bg-black/80 backdrop-blur-xl border border-zinc-800 rounded-full text-zinc-400 hover:text-white"
+                    >
+                      <LogOut className="w-6 h-6 rotate-180" />
+                    </button>
+                  </div>
+                  <ActiveMissionView orders={activeOrders} onUpdateStatus={handleUpdateStatus} />
+                </div>
+              ) : (
+                <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center opacity-40">
+                  <Navigation className="w-16 h-16 mb-4 text-zinc-600" />
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">No active operational mission</p>
+                  <button onClick={() => setView('feed')} className="mt-6 text-[10px] font-black uppercase text-[#39FF14] underline">Open Mission Feed</button>
+                </div>
+              )
+            )}
+            {view === 'log' && <HistoryView history={history} />}
+            {view === 'hub' && (
+              <ProfileView 
+                profile={profile} 
+                connections={connections}
+                now={now}
+                onUpdateVehicle={updateVehicle} 
+                onLogout={() => getSupabase().auth.signOut()} 
+                onPair={() => setView('pair')}
+                onSwitchRole={() => {
+                  setRole('merchant');
+                  setView('merchant_dash');
+                }}
+              />
+            )}
+            {view === 'merchant_dash' && (
+              <MerchantDashboard 
+                onSwitchRole={() => {
+                  setRole('rider');
+                  setView('dash');
+                }} 
+              />
+            )}
+            {view === 'pair' && <PairingView onBack={() => setView('profile')} onComplete={handlePair} />}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+
+      {/* HUD Navigation */}
+      {view !== 'merchant_dash' && (
+        <nav className="fixed bottom-0 left-0 right-0 h-24 bg-black/95 border-t border-zinc-900 backdrop-blur-2xl z-50 flex items-center justify-around px-4 pb-safe pointer-events-auto">
+          {[
+            { icon: Smartphone, label: 'HUD', view: 'dash' },
+            { icon: List, label: 'Feed', view: 'feed' },
+            { icon: Navigation, label: 'Move', view: 'move', alert: activeOrders.length > 0 },
+            { icon: BarChart3, label: 'Log', view: 'log' },
+            { icon: UserIcon, label: 'Hub', view: 'hub' },
+          ].map((item) => (
+            <button
+              key={item.view}
+              onClick={() => setView(item.view as AppView)}
+              className={cn(
+                "flex flex-col items-center justify-center gap-1.5 p-2 rounded-2xl transition-all relative",
+                view === item.view ? "text-[#39FF14]" : "text-zinc-500 hover:text-zinc-400"
+              )}
+            >
+              {item.alert && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(249,115,22,0.5)]" />}
+              <item.icon className={cn("w-6 h-6", view === item.view && "scale-110")} />
+              <span className={cn("text-[8px] font-black uppercase tracking-[0.2em]", view === item.view ? "opacity-100" : "opacity-40")}>
+                {item.label}
+              </span>
+              {view === item.view && (
+                <motion.div 
+                  layoutId="nav-indicator" 
+                  className="absolute -bottom-2 w-1 h-1 bg-[#39FF14] rounded-full glow" 
+                />
+              )}
+            </button>
+          ))}
+        </nav>
+      )}
+    </div>
+  );
+}

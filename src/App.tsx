@@ -329,40 +329,40 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
   connectionCount: number
 }) => {
   const getRank = (pts: number) => {
-    if (pts >= 7500) return { title: 'Gold', next: 10000, target: 10000, progress: 100 };
-    if (pts >= 2500) return { title: 'Silver', next: 7500, target: 7500, progress: ((pts - 2500) / 5000) * 100 };
-    return { title: 'Bronze', next: 2500, target: 2500, progress: (pts / 2500) * 100 };
+    if (pts >= 7500) return { title: 'GOLD', next: 10000, target: 10000, progress: 100, color: 'text-[#f59e0b]' };
+    if (pts >= 2500) return { title: 'SILVER', next: 7500, target: 7500, progress: ((pts - 2500) / 5000) * 100, color: 'text-zinc-300' };
+    return { title: 'BRONZE', next: 2500, target: 2500, progress: (pts / 2500) * 100, color: 'text-orange-700' };
   };
 
   const rank = getRank(profile.active_points || 0);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
       {connectionCount === 0 && (
          <motion.div 
-           initial={{ opacity: 0, y: 10 }}
-           animate={{ opacity: 1, y: 0 }}
-           className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-3xl flex items-center gap-4 group cursor-pointer"
+           initial={{ opacity: 0, scale: 0.95 }}
+           animate={{ opacity: 1, scale: 1 }}
+           className="bg-red-500/10 border-2 border-red-500/20 text-red-500 p-5 rounded-[2rem] flex items-center gap-4 group cursor-pointer shadow-[0_0_20px_rgba(239,68,68,0.1)]"
            onClick={() => setView('hub')}
          >
-            <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center animate-pulse">
-               <ShieldAlert className="w-5 h-5" />
+            <div className="w-12 h-12 rounded-2xl bg-red-500/20 flex items-center justify-center animate-pulse">
+               <ShieldAlert className="w-6 h-6" />
             </div>
             <div className="flex-1">
-               <h4 className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">Status: Unlinked</h4>
-               <p className="text-xs font-bold text-white/60 italic">No merchant tether detected. Sync with a merchant to begin missions.</p>
+               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">Grid Restricted</h4>
+               <p className="text-sm font-bold text-white/70 italic leading-tight">No merchant tether detected. Link in Hub to scan sector.</p>
             </div>
-            <ArrowRight className="w-4 h-4 text-zinc-600 group-hover:text-red-500 transition-colors" />
+            <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-red-500 transition-colors" />
          </motion.div>
       )}
 
       {profile.verification_status !== 'verified' && connectionCount > 0 && (
-        <BentoCard className="bg-orange-500/10 border-orange-500/20 text-orange-500 py-4">
-          <div className="flex items-center gap-3">
-            <ShieldAlert className="w-5 h-5 shrink-0" />
+        <BentoCard className="bg-orange-500/10 border-orange-500/20 text-orange-500 py-5">
+          <div className="flex items-center gap-4">
+            <ShieldAlert className="w-6 h-6 shrink-0" />
             <div className="flex flex-col">
-              <span className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">Status: Verification Pending</span>
-              <span className="text-xs font-bold leading-tight text-white/80 italic">Fleet HQ is reviewing your registry uplink. Access restricted.</span>
+              <span className="text-[11px] font-black uppercase tracking-widest leading-none mb-1">Status: Verification Pending</span>
+              <span className="text-sm font-bold leading-tight text-white/80 italic">Fleet HQ is reviewing your registry uplink. Access restricted.</span>
             </div>
           </div>
         </BentoCard>
@@ -372,103 +372,132 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
       <button 
         onClick={onToggleOnline}
         className={cn(
-          "w-full p-6 rounded-3xl border-2 flex items-center justify-between transition-all active:scale-[0.98]",
+          "w-full p-8 rounded-[2.5rem] border-2 flex items-center justify-between transition-all active:scale-[0.98] group",
           profile.is_online 
-            ? "bg-[#f59e0b]/10 border-[#f59e0b] shadow-[0_0_30px_rgba(57,255,20,0.1)]" 
-            : "bg-zinc-900/50 border-zinc-800 text-zinc-500"
+            ? "bg-[#f59e0b]/5 border-[#f59e0b] shadow-[0_0_40px_rgba(245,158,11,0.15)]" 
+            : "bg-zinc-900 border-zinc-800 text-zinc-600"
         )}
       >
         <div className="flex flex-col items-start gap-1">
-          <span className={cn("text-2xl font-black italic tracking-tighter uppercase", profile.is_online ? "text-[#f59e0b]" : "text-zinc-600")}>
+          <span className={cn("text-3xl font-headline font-black italic tracking-tighter uppercase", profile.is_online ? "text-[#f59e0b]" : "text-zinc-600")}>
             {profile.is_online ? 'SYSTEM ONLINE' : 'SYSTEM STANDBY'}
           </span>
-          <span className="text-[10px] font-black uppercase tracking-widest opacity-60">
+          <span className="text-[11px] font-black uppercase tracking-[0.2em] opacity-60">
             {profile.is_online ? 'SYNCING LOCAL MISSIONS' : 'READY FOR ACTIVATION'}
           </span>
         </div>
         <div className={cn(
-          "p-4 rounded-2xl transition-all",
-          profile.is_online ? "bg-[#f59e0b] text-black" : "bg-zinc-800 text-zinc-600"
+          "p-5 rounded-3xl transition-all shadow-lg group-hover:scale-110",
+          profile.is_online ? "bg-[#f59e0b] text-black" : "bg-zinc-800 text-zinc-700"
         )}>
           <Power className="w-8 h-8" />
         </div>
       </button>
 
-      {/* Bento Stats */}
-      <div className="grid grid-cols-2 gap-4">
-        <BentoCard className="col-span-2" glow>
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]">Fleet Performance</span>
-            <Zap className="w-4 h-4 text-[#f59e0b]" />
-          </div>
-          <div className="grid grid-cols-2 gap-8">
-            <TelemetryData label="Daily Net Yield" value={`R ${Number(todayEarnings || 0).toFixed(2)}`} />
-            <TelemetryData label="Units Cleared" value={totalDeliveries} />
-          </div>
-          <div className="mt-8 flex flex-col gap-2">
-            <div className="flex justify-between items-end mb-1">
-              <span className="text-4xl font-headline font-black italic text-white uppercase tracking-tighter leading-none">{profile.active_points}</span>
-              <span className="text-[10px] font-black uppercase tracking-[0.1em] text-zinc-400">Tier: {rank.title} <span className="text-amber-500 mx-1">-&gt;</span> Next: {rank.next.toLocaleString()} Pts</span>
+      {/* Stats Bento */}
+      <div className="space-y-6">
+        <BentoCard className="bg-zinc-900/50 border-zinc-800/80 p-6" glow>
+          <div className="flex items-center justify-between mb-8">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-[#f59e0b]/10 rounded-lg">
+                <Zap className="w-4 h-4 text-[#f59e0b]" />
+              </div>
+              <span className="text-[11px] font-black uppercase tracking-[0.2em] text-[#f59e0b]">Sector Yield</span>
             </div>
-            <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden shadow-inner">
-               <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(rank.progress, 100)}%` }} className="h-full bg-[#f59e0b] shadow-[0_0_10px_#f59e0b]" />
+            <span className={cn("text-[11px] font-black uppercase tracking-widest", rank.color)}>{rank.title} TIER</span>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-8 mb-10">
+            <div>
+              <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Today Earnings</p>
+              <p className="text-3xl font-headline font-black italic tracking-tighter text-white">R {Number(todayEarnings || 0).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-1">Drops Cleared</p>
+              <p className="text-3xl font-headline font-black italic tracking-tighter text-white">{totalDeliveries}</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex justify-between items-end">
+              <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-headline font-black italic text-white uppercase tracking-tighter leading-none">{profile.active_points}</span>
+                <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">EXP</span>
+              </div>
+              <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Next Tier: {rank.next.toLocaleString()} Pts</p>
+            </div>
+            <div className="h-3 w-full bg-zinc-800 rounded-full overflow-hidden p-0.5">
+               <motion.div 
+                 initial={{ width: 0 }} 
+                 animate={{ width: `${Math.min(rank.progress, 100)}%` }} 
+                 className="h-full bg-[#f59e0b] rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)]" 
+               />
             </div>
           </div>
         </BentoCard>
 
-        <BentoCard className="col-span-2 space-y-3 bg-zinc-900 border-zinc-800/50">
-          <div className="flex items-center gap-2 mb-2">
-            <Rocket className="w-4 h-4 text-amber-500" />
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Daily Quests</span>
-          </div>
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-zinc-300">Complete 3 drops for 50 Pts</span>
-                <span className="text-[10px] font-black text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full">{Math.min(totalDeliveries, 3)}/3</span>
+        {/* Quest Radar */}
+        <BentoCard className="p-6 bg-zinc-900/30 border-zinc-900">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2 bg-amber-500/10 rounded-lg">
+              <Rocket className="w-4 h-4 text-amber-500" />
             </div>
-            <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-400 italic">Neural Calibration</span>
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+                <div>
+                   <p className="text-sm font-bold text-zinc-200">Sector Specialist</p>
+                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Complete 3 missions for +50 Pts</p>
+                </div>
+                <div className="text-right">
+                   <p className="text-sm font-black text-amber-500">{Math.min(totalDeliveries, 3)}/3</p>
+                </div>
+            </div>
+            <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden">
                <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min((totalDeliveries / 3) * 100, 100)}%` }} className="h-full bg-amber-500" />
             </div>
           </div>
         </BentoCard>
-      </div>
 
-      {/* Quick Mission Preview */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between px-2">
-          <h2 className="text-sm font-black italic uppercase tracking-widest flex items-center gap-2">
-            <Clock className="w-4 h-4 text-zinc-500" /> Recent Logs
-          </h2>
-          <button onClick={() => setView('log')} className="text-[10px] font-black uppercase tracking-tighter text-[#f59e0b]">View All</button>
-        </div>
-        <div className="space-y-2">
-          {history.length === 0 ? (
-            <p className="text-[10px] text-zinc-600 italic px-2 py-4">No recent activity logged.</p>
-          ) : (
-            history.slice(0, 3).map(order => (
-              <BentoCard key={order.id} className="p-4 border-zinc-800/30 bg-zinc-900/20">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-zinc-800 rounded-lg">
-                      <ShoppingBag className="w-4 h-4 text-zinc-500" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-bold text-zinc-200">{order.restaurant_name}</span>
-                      <div className="flex items-center gap-2">
-                        {order.merchant_rating && <StarRating rating={order.merchant_rating} />}
-                        <span className="text-[9px] text-zinc-500 font-mono">
-                          {new Date(order.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {order.delivery_status.toUpperCase()}
-                        </span>
+        {/* Logs */}
+        <section className="space-y-4 pt-4 pb-12">
+          <div className="flex items-center justify-between px-2">
+            <h2 className="text-lg font-black italic uppercase tracking-tight flex items-center gap-3">
+              <Clock className="w-5 h-5 text-zinc-600" /> Recent Logs
+            </h2>
+            <button onClick={() => setView('log')} className="text-xs font-black uppercase tracking-widest text-[#f59e0b] hover:underline">Full Feed</button>
+          </div>
+          <div className="space-y-3">
+            {history.length === 0 ? (
+              <div className="py-12 text-center bg-zinc-900/10 rounded-[2rem] border border-dashed border-zinc-800">
+                <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest italic">Sector activity log empty.</p>
+              </div>
+            ) : (
+              history.slice(0, 3).map(order => (
+                <BentoCard key={order.id} className="p-5 border-zinc-800/40 bg-zinc-900/10 hover:bg-zinc-900/20 transition-all cursor-pointer group">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center group-hover:border-[#f59e0b]/30 transition-all">
+                        <ShoppingBag className="w-6 h-6 text-zinc-500 group-hover:text-[#f59e0b] transition-all" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-zinc-100 uppercase tracking-tight mb-1">{order.restaurant_name}</h4>
+                        <div className="flex items-center gap-3">
+                           <span className="text-[10px] font-mono text-zinc-500 uppercase">{order.delivery_status}</span>
+                           <div className="w-1 h-1 rounded-full bg-zinc-800" />
+                           <span className="text-[10px] font-mono text-zinc-600">{new Date(order.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
                       </div>
                     </div>
+                    <p className="text-base font-black italic text-[#f59e0b]">R{Number(order.delivery_fee || 0).toFixed(2)}</p>
                   </div>
-                  <span className="text-sm font-black italic text-[#f59e0b]">R{Number(order.delivery_fee || 0).toFixed(2)}</span>
-                </div>
-              </BentoCard>
-            ))
-          )}
-        </div>
-      </section>
+                </BentoCard>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
     </div>
   );
 };
@@ -477,18 +506,28 @@ const OrdersFeed = ({ orders, onAccept, isOnline, surgeMultiplier, connectionCou
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   return (
-    <div className="p-6 space-y-6 pb-32">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h2 className="text-2xl font-headline font-black italic uppercase italic tracking-tighter text-white">Live Missions</h2>
-          <p className="text-[10px] text-[#f59e0b] font-black uppercase tracking-[0.3em]">
-            Sector Alpha-12 Scan {surgeMultiplier > 1 && <span className="text-white ml-2 bg-orange-500 px-2 py-0.5 rounded-full">ROI x{surgeMultiplier.toFixed(1)}</span>}
-          </p>
+    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
+      <header className="flex flex-col gap-2 pt-6">
+        <div className="flex items-center justify-between">
+           <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Live Missions</h2>
+           {isOnline && (
+              <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-4 py-2 rounded-2xl flex items-center gap-2">
+                <div className="w-2 h-2 bg-[#f59e0b] rounded-full animate-pulse shadow-[0_0_8px_#f59e0b]" />
+                <span className="text-[11px] font-black text-[#f59e0b] tracking-widest">{orders.length} READY</span>
+              </div>
+           )}
         </div>
-        <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-3 py-1 rounded-full">
-          <span className="text-[10px] font-black text-[#f59e0b] animate-pulse">{orders.length} ACTIVE</span>
+        <div className="flex items-center gap-3">
+           <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
+             Sector Alpha-12 Scan
+           </p>
+           {surgeMultiplier > 1 && (
+             <div className="bg-orange-600 text-white px-3 py-1 rounded-xl shadow-lg border border-orange-500 animate-pulse">
+                <span className="text-[10px] font-black uppercase">ROI x{surgeMultiplier.toFixed(1)}</span>
+             </div>
+           )}
         </div>
-      </div>
+      </header>
 
       {confirmId && (
         <motion.div 
@@ -582,63 +621,63 @@ const OrdersFeed = ({ orders, onAccept, isOnline, surgeMultiplier, connectionCou
               animate={{ opacity: 1, y: 0 }}
               className="relative"
             >
-              <BentoCard className="border-l-4 border-l-orange-500" glow={order.delivery_fee > 50}>
+              <BentoCard className="border-l-4 border-l-[#f59e0b] shadow-2xl overflow-hidden group" glow={order.delivery_fee > 50}>
                 <div className="flex justify-between items-start mb-6">
                   <div>
-                    <div className="mb-2 flex items-center justify-between">
+                    <div className="mb-3 flex items-center gap-3">
                        <StatusBadge status={order.delivery_status} />
                        {order.match_score && (
-                         <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/20 px-2 py-1 rounded-lg">
-                           <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest">
-                             Match: {Math.min(100, Math.round(order.match_score * 2.5))}%
+                         <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
+                           <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
+                             {Math.min(100, Math.round(order.match_score * 2.5))}% Match
                            </span>
                          </div>
                        )}
                     </div>
-                    <h3 className="text-xl font-black italic text-white uppercase tracking-tight leading-none mb-1">
+                    <h3 className="text-2xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">
                       {order.restaurant_name || 'Merchant-X'}
                     </h3>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2 text-zinc-500 w-full">
-                        <MapPin className="w-3 h-3 text-[#f59e0b] shrink-0" />
-                        <span className="text-[10px] font-bold truncate flex-1 min-w-0">{order.address}, {order.city}</span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2 text-zinc-400">
+                        <MapPin className="w-4 h-4 text-[#f59e0b] shrink-0" />
+                        <span className="text-xs font-bold truncate max-w-[200px]">{order.address}, {order.city}</span>
                       </div>
                       <div className="flex items-center gap-2 text-zinc-500">
-                        <Navigation className="w-3 h-3 text-orange-500" />
-                        <span className="text-[10px] font-mono font-bold text-orange-500/80">{Number(order.distance_km || 0).toFixed(1)} KM DISTANCE</span>
+                        <Navigation className="w-3.5 h-3.5 text-orange-600" />
+                        <span className="text-[11px] font-black italic text-orange-600 uppercase tracking-widest">{Number(order.distance_km || 0).toFixed(1)} KM VECTOR</span>
                       </div>
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-mono font-bold text-[#f59e0b]">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
-                    <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Est. Payout</span>
+                    <div className="text-2xl font-headline font-black italic text-[#f59e0b] tracking-tighter">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
+                    <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] block">Payload Reward</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div className="bg-zinc-800/20 p-4 rounded-2xl border border-zinc-800/50">
-                    <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Package</span>
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
+                    <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Cargo Details</span>
                     {order.items && order.items.length > 0 ? (
-                      <div className="space-y-0.5">
+                      <div className="space-y-1">
                         {order.items.slice(0, 2).map((item, idx) => (
-                          <span key={idx} className="text-sm font-mono font-bold text-zinc-200 block truncate">{item}</span>
+                          <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{item}</span>
                         ))}
                         {order.items.length > 2 && (
-                          <span className="text-[8px] text-zinc-500 font-bold">+{order.items.length - 2} MORE ITEMS</span>
+                          <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more packets</span>
                         )}
                       </div>
                     ) : (
-                      <span className="text-sm font-mono font-bold text-zinc-200 truncate">{order.product_name || "Assorted Items"}</span>
+                      <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Cargo"}</span>
                     )}
                   </div>
-                  <div className="bg-zinc-800/20 p-4 rounded-2xl border border-zinc-800/50">
-                    <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Value</span>
-                    <span className="text-sm font-mono font-bold text-[#f59e0b]">R{Number(order.total_price || 0).toFixed(2)}</span>
+                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
+                    <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Sector Value</span>
+                    <span className="text-lg font-headline font-black italic text-[#f59e0b] tracking-tight">R{Number(order.total_price || 0).toFixed(2)}</span>
                   </div>
                 </div>
 
                 <SwipeButton 
-                  label="Swipe to Accept Mission" 
+                  label="Initiate Mission Vector" 
                   onComplete={() => setConfirmId(order.id)} 
                 />
               </BentoCard>
@@ -664,7 +703,6 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
     return orders;
   }, [orders, sortMethod]);
 
-  // Adjust activeIndex if orders change
   const currentOrder = useMemo(() => {
     const targetIdx = activeIndex >= displayOrders.length ? 0 : activeIndex;
     return displayOrders[targetIdx] || displayOrders[0];
@@ -682,29 +720,30 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
   };
 
   return (
-    <div className="h-[calc(100vh-100px)] flex flex-col pt-20 pointer-events-none">
+    <div className="h-[calc(100vh-100px)] flex flex-col pt-24 pointer-events-none max-w-lg mx-auto">
       {/* Multi-Order Selector */}
       {displayOrders.length > 1 && (
-        <div className="bg-black/40 backdrop-blur-md border-b border-zinc-900 p-2 flex gap-2 overflow-x-auto no-scrollbar pointer-events-auto">
+        <div className="bg-black/60 backdrop-blur-3xl border-b border-white/5 p-4 flex gap-3 overflow-x-auto no-scrollbar pointer-events-auto shadow-2xl">
           {displayOrders.map((o, idx) => (
             <button
               key={o.id}
               onClick={() => setActiveIndex(idx)}
               className={cn(
-                "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border shrink-0",
+                "px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all whitespace-nowrap border-2 shrink-0 flex items-center gap-3 shadow-lg",
                 activeIndex === idx 
-                  ? "bg-[#f59e0b] text-black border-[#f59e0b]" 
+                  ? "bg-[#f59e0b] text-black border-[#f59e0b] scale-105" 
                   : "bg-zinc-900 text-zinc-500 border-zinc-800"
               )}
             >
-              Order #{o.id.slice(-4)} {o.delivery_status === 'picked_up' ? '• DROP' : '• PICK'}
+              <div className={cn("w-2 h-2 rounded-full", o.delivery_status === 'picked_up' ? "bg-red-500" : "bg-green-500")} />
+              SEQ_{idx + 1} • {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
             </button>
           ))}
           <button 
             onClick={optimizeRoute}
-            className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-zinc-800 text-[#f59e0b] border border-zinc-700 whitespace-nowrap flex items-center gap-2"
+            className="px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest bg-zinc-900 text-[#f59e0b] border-2 border-zinc-800 whitespace-nowrap flex items-center gap-2 active:scale-95 shadow-lg"
           >
-            <Zap className="w-3 h-3" /> Optimize
+            <Zap className="w-3.5 h-3.5" /> Optimize
           </button>
         </div>
       )}
@@ -729,27 +768,28 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         )}
       </div>
 
-      <div className="bg-black/95 backdrop-blur-3xl p-6 border-t-2 border-[#f59e0b]/30 pb-12 pointer-events-auto shadow-[0_-20px_60px_rgba(0,0,0,0.8)]">
-        <div className="flex items-center justify-between mb-8 px-2">
-          <div className="flex items-center gap-4 flex-1 min-w-0 mr-4">
-            <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-2xl shrink-0 shadow-[0_0_15px_rgba(57,255,20,0.1)]">
-              <MapPin className="w-6 h-6 text-[#f59e0b]" />
+      <div className="bg-black/95 backdrop-blur-3xl p-8 border-t-2 border-[#f59e0b]/40 pb-16 pointer-events-auto shadow-[0_-30px_80px_rgba(0,0,0,0.9)] rounded-t-[3rem]">
+        <div className="flex items-center justify-between mb-10 px-2">
+          <div className="flex items-center gap-5 flex-1 min-w-0 mr-4">
+            <div className="p-4 bg-zinc-900 border-2 border-zinc-800 rounded-3xl shrink-0 shadow-[0_0_20px_rgba(245,158,11,0.15)] ring-4 ring-black">
+              <MapPin className="w-8 h-8 text-[#f59e0b]" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-[9px] font-black text-[#f59e0b] uppercase tracking-[0.4em] mb-1">Drop-Off Protocol</p>
-              <p className="text-lg font-headline font-black italic text-white uppercase truncate w-full tracking-tighter">{targetAddress}</p>
+              <p className="text-[11px] font-black text-[#f59e0b] uppercase tracking-[0.3em] mb-1 italic">Mission Objective</p>
+              <p className="text-xl font-headline font-black italic text-zinc-100 uppercase truncate w-full tracking-tighter leading-tight">{isPickedUp ? 'Drop-Off' : 'Pick-Up'}</p>
+              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest truncate">{targetAddress}</p>
             </div>
           </div>
           <div className="text-right">
-            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest font-mono mb-1">SIGNAL ETA</p>
-            <p className="text-2xl font-mono font-bold text-white tracking-tighter shadow-sm">
+            <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest font-mono mb-1">PULSE ETA</p>
+            <p className="text-3xl font-mono font-black text-white tracking-tighter">
               {Math.floor(currentOrder.distance_km * 2)}:15
             </p>
           </div>
         </div>
 
         <SwipeButton 
-          label={isPickedUp ? "Slide to Complete Mission" : "Slide to Confirm Pickup"}
+          label={isPickedUp ? "Complete Mission Uplink" : "Confirm Cargo Pickup"}
           onComplete={() => onUpdateStatus(currentOrder.id, isPickedUp ? 'delivered' : 'picked_up')}
           color={isPickedUp ? "#f59e0b" : "#f58220"}
         />
@@ -768,23 +808,34 @@ const StarRating = ({ rating }: { rating: number }) => (
 
 const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
   const chartData = useMemo(() => {
-    // Generate dummy 7 day data based on history or seeds
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     return Array.from({ length: 7 }, (_, i) => ({
       name: days[i],
-      yield: 100 + (i * 25) // Deterministic value based on index
+      yield: 100 + (i * 25)
     }));
   }, []);
 
   return (
-    <div className="p-6 space-y-8 pb-32">
-      <div className="mb-8">
-        <h2 className="text-2xl font-headline font-black italic uppercase tracking-tighter text-white">Telemetry</h2>
-        <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.3em]">Operational Logs • Last 7 Phases</p>
-      </div>
+    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
+      <header className="pt-8 mb-4">
+        <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Telemetry</h2>
+        <div className="flex items-center gap-3">
+           <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
+             Operational Logs • Sector 7
+           </p>
+           <div className="p-1 bg-zinc-900 border border-zinc-800 rounded-md">
+              <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse" />
+           </div>
+        </div>
+      </header>
 
-      <BentoCard className="h-64 border-zinc-800/50">
-        <ResponsiveContainer width="100%" height="100%">
+      <BentoCard className="h-72 border-zinc-800/40 bg-zinc-950/50 p-6" glow>
+        <div className="flex items-center justify-between mb-6">
+           <span className="text-[11px] font-black text-zinc-500 uppercase tracking-widest">Yield Variance Pulse</span>
+           <Activity className="w-4 h-4 text-[#f59e0b] opacity-50" />
+        </div>
+        <div className="h-48 w-full">
+          <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="colorYield" x1="0" y1="0" x2="0" y2="1">
@@ -813,7 +864,8 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
             />
           </AreaChart>
         </ResponsiveContainer>
-      </BentoCard>
+      </div>
+    </BentoCard>
 
       <div className="space-y-4">
         <div className="flex items-center justify-between px-2">
@@ -1678,47 +1730,40 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
   onSwitchRole: () => void
 }) => {
   return (
-    <div className="p-6 space-y-8 pb-32">
-      <div className="flex flex-col items-center py-8 text-center">
+    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
+      <header className="flex flex-col items-center pt-10 pb-6 text-center">
         <div className="relative mb-6">
-          <div className="w-24 h-24 rounded-3xl bg-zinc-900 border border-zinc-800 flex items-center justify-center p-1 glow">
+          <div className="w-28 h-28 rounded-[2.5rem] bg-zinc-900 border-2 border-zinc-800 flex items-center justify-center p-1.5 glow ring-4 ring-[#f59e0b]/5">
             {profile.photo_url ? (
-              <img src={profile.photo_url} className="w-full h-full object-cover rounded-2xl" alt="Profile" />
+              <img src={profile.photo_url} className="w-full h-full object-cover rounded-[2rem]" alt="Profile" />
             ) : (
-              <div className="text-4xl font-headline font-black italic text-[#f59e0b]">{profile.name[0]}</div>
+              <div className="text-5xl font-headline font-black italic text-[#f59e0b]">{profile.name[0]}</div>
             )}
           </div>
-          <div className="absolute -bottom-2 -right-2 bg-[#f59e0b] text-black text-[9px] font-black italic px-2 py-0.5 rounded-full shadow-lg">
-            lvl 42
+          <div className="absolute -bottom-1 -right-1 bg-[#f59e0b] text-black text-[10px] font-black italic px-3 py-1 rounded-xl shadow-xl border-2 border-[#050505]">
+            RANK 42
           </div>
         </div>
-        <h2 className="text-3xl font-headline font-black italic text-white uppercase tracking-tighter leading-none">{profile.name}</h2>
-        <div className="mt-2 flex items-center gap-2">
-           <StarRating rating={Math.round(profile.rating || 5)} />
-           <span className="text-[10px] font-mono text-zinc-500 font-bold">{Number(profile.rating || 5.0).toFixed(1)}</span>
+        <h2 className="text-4xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">{profile.name}</h2>
+        <div className="flex items-center gap-3">
+           <div className="flex items-center gap-1">
+              <StarRating rating={Math.round(profile.rating || 5)} />
+              <span className="text-xs font-bold text-zinc-400 ml-1">({Number(profile.rating || 5.0).toFixed(1)})</span>
+           </div>
+           <div className="w-px h-3 bg-zinc-800" />
+           <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">{profile.verification_status}</p>
         </div>
-        <div className="flex flex-col items-center mt-2">
-          <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">{profile.full_name}</p>
-          <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{profile.phone}</p>
-        </div>
-        <div className="mt-4 px-3 py-1 rounded-full border border-zinc-800 bg-zinc-900/50">
-           <span className={cn(
-             "text-[8px] font-black uppercase tracking-[0.3em]",
-             profile.verification_status === 'verified' ? "text-[#f59e0b]" : "text-orange-500"
-           )}>
-             Status: {profile.verification_status}
-           </span>
-        </div>
-      </div>
+      </header>
 
       <section className="space-y-4">
-        <div className="flex items-center justify-between px-2">
-          <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600">Active Uplinks</h3>
+        <div className="flex items-center justify-between px-1">
+          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">Authorized Uplinks</h3>
           <button 
             onClick={() => onPair()}
-            className="text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/20 px-3 py-1 rounded-full bg-[#f59e0b]/5"
+            className="flex items-center gap-2 text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/30 px-4 py-2 rounded-2xl bg-[#f59e0b]/5 active:scale-95 transition-all"
           >
-            + Connect New
+            <Plus className="w-3.5 h-3.5" />
+            Connect Now
           </button>
         </div>
         
@@ -1882,20 +1927,19 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     }
   };
 
-  const handleScan = async (scannedCode: string) => {
+  const handleScan = useCallback(async (scannedCode: string) => {
+    if (!scannedCode) return;
     setShowScanner(false);
-    if (scannedCode) {
-      setLoading(true);
-      try {
-        await onComplete(scannedCode.slice(0, 6));
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : (err as any)?.message || 'Uplink rejected. Invalid scan.';
-        toast.error(msg);
-      } finally {
-        setLoading(false);
-      }
+    setLoading(true);
+    try {
+      await onComplete(scannedCode.slice(0, 6));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : (err as any)?.message || 'Uplink rejected. Invalid scan.';
+      toast.error(msg);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [onComplete]);
 
   return (
     <>

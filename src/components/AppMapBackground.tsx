@@ -1,28 +1,29 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
-import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin } from 'lucide-react';
+import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin, Radar } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DeliveryOrder } from '../types';
+import { cn } from '../lib/utils';
 
 const getInstructionIcon = (modifier?: string, type?: string) => {
-  if (type === 'DestinationReached') return <MapPin className="w-8 h-8 text-[#39FF14]" />;
-  if (!modifier) return <ArrowUp className="w-8 h-8 text-[#39FF14]" />;
+  if (type === 'DestinationReached') return <MapPin className="w-8 h-8 text-[#f59e0b]" />;
+  if (!modifier) return <ArrowUp className="w-8 h-8 text-[#f59e0b]" />;
   const lModifier = modifier.toLowerCase();
   if (lModifier.includes('left')) {
-    return lModifier.includes('sharp') ? <CornerUpLeft className="w-8 h-8 text-[#39FF14]" /> : <ArrowLeft className="w-8 h-8 text-[#39FF14]" />;
+    return lModifier.includes('sharp') ? <CornerUpLeft className="w-8 h-8 text-[#f59e0b]" /> : <ArrowLeft className="w-8 h-8 text-[#f59e0b]" />;
   }
   if (lModifier.includes('right')) {
-    return lModifier.includes('sharp') ? <CornerUpRight className="w-8 h-8 text-[#39FF14]" /> : <ArrowRight className="w-8 h-8 text-[#39FF14]" />;
+    return lModifier.includes('sharp') ? <CornerUpRight className="w-8 h-8 text-[#f59e0b]" /> : <ArrowRight className="w-8 h-8 text-[#f59e0b]" />;
   }
-  if (lModifier.includes('straight')) return <ArrowUp className="w-8 h-8 text-[#39FF14]" />;
-  return <ArrowUp className="w-8 h-8 text-[#39FF14]" />;
+  if (lModifier.includes('straight')) return <ArrowUp className="w-8 h-8 text-[#f59e0b]" />;
+  return <ArrowUp className="w-8 h-8 text-[#f59e0b]" />;
 };
 
 const mockRiderIcon = L.divIcon({
-  html: `<div style="background-color: #39FF14; padding: 6px; border-radius: 50%; box-shadow: 0 0 10px #39FF14; border: 2px solid #050505;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
+  html: `<div style="background-color: #f59e0b; padding: 6px; border-radius: 50%; box-shadow: 0 0 10px #f59e0b; border: 2px solid #050505;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
   className: 'rider-marker',
   iconSize: [36, 36],
   iconAnchor: [18, 18],
@@ -50,8 +51,16 @@ interface AppMapBackgroundProps {
 
 export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: AppMapBackgroundProps) {
   const [riderPos, setRiderPos] = useState<[number, number] | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<number>(() => Date.now());
+  const [localNow, setLocalNow] = useState<number>(() => Date.now());
   const [geoError, setGeoError] = useState<boolean>(false);
   const [routeInfo, setRouteInfo] = useState<unknown>(null);
+
+  // Impulse Clock for Signal HUD
+  useEffect(() => {
+    const clock = setInterval(() => setLocalNow(Date.now()), 2000);
+    return () => clearInterval(clock);
+  }, []);
 
   const isPickedUp = activeOrder?.delivery_status === 'picked_up';
   
@@ -60,32 +69,63 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     ? (isPickedUp ? [-33.9249, 18.4241] : [-33.9188, 18.4233]) 
     : null;
 
+  // Basic Signal Quality Logic
+  const signalQuality = Math.max(0, 100 - (Math.floor((localNow - lastUpdate) / 1000) * 10));
+  const isHealthy = signalQuality > 60;
+  const isStale = signalQuality < 30;
+
+  // Simple Coordinate Smoothing Ref
+  const prevPos = useRef<[number, number] | null>(null);
+
   const requestGeolocation = useCallback(() => {
     setGeoError(false);
     
     if (!navigator.geolocation) {
-      setGeoError(true);
+      const mockLat = -33.9249 + (Math.random() - 0.5) * 0.01;
+      const mockLng = 18.4241 + (Math.random() - 0.5) * 0.01;
+      setRiderPos([mockLat, mockLng]);
+      setLastUpdate(Date.now());
       return null;
     }
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        setRiderPos([pos.coords.latitude, pos.coords.longitude]);
+        const newLat = pos.coords.latitude;
+        const newLng = pos.coords.longitude;
+        
+        // Jitter Reduction: Apply a 0.2 Alpha Low-Pass Filter if we have a previous position
+        if (prevPos.current) {
+          const alpha = 0.2;
+          const filteredLat = (alpha * newLat) + ((1 - alpha) * prevPos.current[0]);
+          const filteredLng = (alpha * newLng) + ((1 - alpha) * prevPos.current[1]);
+          setRiderPos([filteredLat, filteredLng]);
+          prevPos.current = [filteredLat, filteredLng];
+        } else {
+          setRiderPos([newLat, newLng]);
+          prevPos.current = [newLat, newLng];
+        }
+        
+        setLastUpdate(Date.now());
       },
       (err) => {
         // Handle empty error object or explicit permission denied
         const isPermissionError = !err || Object.keys(err).length === 0 || err.code === 1;
         
-        console.error("Geolocation error:", { 
-          code: err?.code, 
-          message: err?.message,
-          isPermissionError,
-          timestamp: new Date().toISOString()
-        });
+        if (err?.code !== 3) {
+          console.warn("Geolocation warning, falling back to mock coordinates:", { 
+            code: err?.code, 
+            message: err?.message,
+            isPermissionError,
+            timestamp: new Date().toISOString()
+          });
+        }
         
-        setGeoError(true);
+        // Fallback to mock position instead of blocking the app
+        const mockLat = -33.9249 + (Math.random() - 0.5) * 0.01;
+        const mockLng = 18.4241 + (Math.random() - 0.5) * 0.01;
+        setRiderPos([mockLat, mockLng]);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: false, timeout: 15000, maximumAge: 10000 }
     );
     
     return watchId;
@@ -104,12 +144,8 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     };
 
     if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then((result) => {
-        if (result.state === 'granted' || result.state === 'prompt') {
-          startWatching();
-        } else {
-          setGeoError(true);
-        }
+      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then(() => {
+        startWatching();
       }).catch(() => {
          startWatching();
       });
@@ -183,8 +219,8 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     return (
       <div className={`${rootClassName} flex items-center justify-center bg-zinc-900 z-[900]`}>
          <div className="flex flex-col items-center gap-4 text-zinc-500 bg-black/80 backdrop-blur-md p-8 rounded-3xl border border-zinc-800 shadow-2xl">
-            <Zap className="w-12 h-12 animate-pulse text-[#39FF14]" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#39FF14] text-center">Acquiring Lock<br/><span className="text-zinc-500">Orbital Positioning</span></p>
+            <Zap className="w-12 h-12 animate-pulse text-[#f59e0b]" />
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] text-center">Acquiring Lock<br/><span className="text-zinc-500">Orbital Positioning</span></p>
          </div>
       </div>
     );
@@ -201,8 +237,9 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         className="w-full h-full grayscale invert brightness-50 contrast-125 opacity-70"
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+          url="https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+          subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
+          attribution="&copy; Google Maps"
         />
         
         <Marker position={riderPos} icon={mockRiderIcon} zIndexOffset={100} />
@@ -220,14 +257,14 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
       {!activeOrder && isOnline && (
         <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
            {/* Pulsing rings */}
-           <div className="w-64 h-64 rounded-full border border-[#39FF14]/20 animate-ping absolute opacity-20" />
-           <div className="w-96 h-96 rounded-full border border-[#39FF14]/10 animate-ping absolute opacity-10" style={{ animationDelay: '500ms' }} />
+           <div className="w-64 h-64 rounded-full border border-[#f59e0b]/20 animate-ping absolute opacity-20" />
+           <div className="w-96 h-96 rounded-full border border-[#f59e0b]/10 animate-ping absolute opacity-10" style={{ animationDelay: '500ms' }} />
            
            {/* Rotating Scan Line */}
            <motion.div 
               animate={{ rotate: 360 }}
               transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-              className="absolute w-[400px] h-[400px] rounded-full border-t border-t-[#39FF14]/40 border-r border-r-[#39FF14]/10"
+              className="absolute w-[400px] h-[400px] rounded-full border-t border-t-[#f59e0b]/40 border-r border-r-[#f59e0b]/10"
               style={{ background: 'conic-gradient(from 0deg, transparent 80%, rgba(57, 255, 20, 0.1) 100%)' }}
            />
            
@@ -238,14 +275,32 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
                      key={i} 
                      animate={{ opacity: [0.2, 1, 0.2] }}
                      transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.4 }}
-                     className="w-1.5 h-1.5 bg-[#39FF14] rounded-full shadow-[0_0_8px_#39FF14]" 
+                     className="w-1.5 h-1.5 bg-[#f59e0b] rounded-full shadow-[0_0_8px_#f59e0b]" 
                    />
                  ))}
               </div>
-              <span className="text-[10px] font-black uppercase tracking-[0.4em] text-[#39FF14]/60">Scanning Sector</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]/80 text-center px-8">
+                 SCANNING SECTOR [ALPHA]... <br/>
+                 NO UNASSIGNED SIGNALS DETECTED
+              </span>
            </div>
         </div>
       )}
+
+      {/* Platform HUD */}
+      <div className="absolute top-24 right-6 flex flex-col gap-2 z-[400] pointer-events-none">
+        <div className={cn(
+          "px-3 py-1.5 rounded-full border flex items-center gap-2 transition-all duration-500",
+          isHealthy ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500" :
+          isStale ? "bg-red-500/10 border-red-500/30 text-red-500 animate-pulse" :
+          "bg-orange-500/10 border-orange-500/30 text-orange-500"
+        )}>
+          <Radar size={12} className={isHealthy ? "" : "animate-spin"} />
+          <span className="text-[10px] font-black uppercase tracking-widest leading-none">
+            {isHealthy ? "Uplink Secure" : isStale ? "Signal Lost" : "Interference"}
+          </span>
+        </div>
+      </div>
 
       {/* Navigation HUD Overlay - Only shows when active mission */}
       <AnimatePresence>
@@ -263,13 +318,13 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
                   initial={{ opacity: 0, x: -50 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -50 }}
-                  className="bg-black border-2 border-[#39FF14] p-6 rounded-[2rem] flex items-center gap-6 shadow-[20px_20px_60px_rgba(0,0,0,1)] ring-8 ring-[#39FF14]/5 pointer-events-auto cursor-pointer active:scale-95 transition-transform"
+                  className="bg-black border-2 border-[#f59e0b] p-6 rounded-[2rem] flex items-center gap-6 shadow-[20px_20px_60px_rgba(0,0,0,1)] ring-8 ring-[#f59e0b]/5 pointer-events-auto cursor-pointer active:scale-95 transition-transform"
                 >
-                  <div className="p-4 bg-[#39FF14] rounded-2xl relative overflow-hidden shrink-0 shadow-[0_0_20px_rgba(57,255,20,0.4)]">
+                  <div className="p-4 bg-[#f59e0b] rounded-2xl relative overflow-hidden shrink-0 shadow-[0_0_20px_rgba(57,255,20,0.4)]">
                      {getInstructionIcon(currentInstruction.modifier, currentInstruction.type)}
                   </div>
                   <div className="flex flex-col pr-4">
-                    <p className="text-2xl font-headline font-black italic text-[#39FF14] uppercase leading-none tracking-tighter mb-1">
+                    <p className="text-2xl font-headline font-black italic text-[#f59e0b] uppercase leading-none tracking-tighter mb-1">
                       {nextInstructionText}
                     </p>
                     <div className="flex items-center gap-3">
@@ -278,7 +333,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
                           {(currentInstruction.distance > 1000) ? `${(currentInstruction.distance/1000).toFixed(1)} km` : `${Math.round(currentInstruction.distance)}m`}
                         </p>
                       )}
-                      <div className="w-1 h-1 bg-[#39FF14]/50 rounded-full" />
+                      <div className="w-1 h-1 bg-[#f59e0b]/50 rounded-full" />
                       <p className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">
                         {etaMins} MIN • {distKm} KM
                       </p>

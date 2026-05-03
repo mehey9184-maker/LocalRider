@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Smartphone, 
@@ -23,7 +23,8 @@ import {
   Link2,
   Gift,
   Radar,
-  WifiOff
+  WifiOff,
+  Rocket
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -34,27 +35,30 @@ import {
   CartesianGrid
 } from 'recharts';
 import { Toaster, toast } from 'sonner';
-import { Map, Marker } from 'pigeon-maps';
 import { getSupabase, isSupabaseMocked } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
 import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection } from './types';
 import { cn, getEstimatedMinutes } from './lib/utils';
 import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/AppMapBackground';
+import { TacticalOnboarding } from './components/TacticalOnboarding';
 
 // --- Components ---
 
 
 // --- Utilities ---
 
-const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
+const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 1000, timeoutMs = 8000): Promise<T> => {
   try {
-    return await fn();
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
+    ]);
   } catch (error) {
-    if (retries > 0 && error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('Network'))) {
+    if (retries > 0 && (error instanceof TypeError || (error instanceof Error && error.message === 'timeout'))) {
       console.warn(`Fetch failure, retrying in ${delay}ms... (${retries} attempts left)`);
       await new Promise(res => setTimeout(res, delay));
-      return fetchWithRetry(fn, retries - 1, delay);
+      return fetchWithRetry(fn, retries - 1, delay, timeoutMs);
     }
     throw error;
   }
@@ -65,7 +69,7 @@ const StatusBadge = ({ status }: { status: DeliveryStatus }) => {
     finding_rider: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
     accepted: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
     picked_up: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
-    delivered: 'bg-[#39FF14]/10 text-[#39FF14] border-[#39FF14]/20',
+    delivered: 'bg-[#f59e0b]/10 text-[#f59e0b] border-[#f59e0b]/20',
     cancelled: 'bg-red-500/10 text-red-500 border-red-500/20',
   };
   return (
@@ -88,15 +92,15 @@ const TelemetryData = ({ label, value, unit }: { label: string, value: string | 
 const BentoCard = ({ children, className, glow = false, ...props }: { children: React.ReactNode, className?: string, glow?: boolean } & React.HTMLAttributes<HTMLDivElement>) => (
   <div {...props} className={cn(
     "bg-[#0D0D0D] border border-zinc-800 rounded-3xl p-6 relative overflow-hidden group transition-all",
-    glow && "shadow-[0_0_40px_rgba(57,255,20,0.1)] border-[#39FF14]/20",
+    glow && "shadow-[0_0_40px_rgba(57,255,20,0.1)] border-[#f59e0b]/20",
     className
   )}>
-    {glow && <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#39FF14]/5 rounded-full blur-3xl" />}
+    {glow && <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#f59e0b]/5 rounded-full blur-3xl" />}
     <div className="relative z-10">{children}</div>
   </div>
 );
 
-const SwipeButton = ({ label, onComplete, color = "#39FF14" }: { label: string, onComplete: () => void, color?: string }) => {
+const SwipeButton = ({ label, onComplete, color = "#f59e0b" }: { label: string, onComplete: () => void, color?: string }) => {
   const [isComplete, setIsComplete] = useState(false);
 
   return (
@@ -116,7 +120,7 @@ const SwipeButton = ({ label, onComplete, color = "#39FF14" }: { label: string, 
             onComplete();
           }
         }}
-        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square bg-[#39FF14] rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_0_20px_rgba(57,255,20,0.4)]"
+        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square bg-[#f59e0b] rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_0_20px_rgba(57,255,20,0.4)]"
         style={{ backgroundColor: isComplete ? '#fff' : color }}
       >
         <ArrowRight className="w-8 h-8 text-black" />
@@ -190,10 +194,10 @@ const AuthView = () => {
       >
         <div className="text-center mb-10">
           <div className="inline-flex p-4 bg-zinc-900 rounded-3xl border border-zinc-800 mb-6 neon-glow">
-            <Bike className="w-10 h-10 text-[#39FF14]" />
+            <Bike className="w-10 h-10 text-[#f59e0b]" />
           </div>
           <h1 className="text-3xl font-headline font-black tracking-tighter italic uppercase leading-none">
-            Local<span className="text-[#39FF14]">Eats</span><br/>
+            Local<span className="text-[#f59e0b]">Eats</span><br/>
             <span className="text-lg opacity-50">{isSignUp ? 'Registry Uplink' : 'Rider Hub'}</span>
           </h1>
         </div>
@@ -212,7 +216,7 @@ const AuthView = () => {
                     type="text" 
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all"
+                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#f59e0b] outline-none transition-all"
                     placeholder="John Doe"
                     required={isSignUp}
                   />
@@ -223,7 +227,7 @@ const AuthView = () => {
                     type="tel" 
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all font-mono"
+                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#f59e0b] outline-none transition-all font-mono"
                     placeholder="+27 00 000 0000"
                     required={isSignUp}
                   />
@@ -233,7 +237,7 @@ const AuthView = () => {
                   <select 
                     value={vehicleType}
                     onChange={(e) => setVehicleType(e.target.value as UserVehicle)}
-                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all appearance-none text-[#39FF14] font-bold"
+                    className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#f59e0b] outline-none transition-all appearance-none text-[#f59e0b] font-bold"
                   >
                     <option value="Road">Road Bike</option>
                     <option value="MTB">Mountain Bike</option>
@@ -250,7 +254,7 @@ const AuthView = () => {
                 type="email" 
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all font-mono"
+                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#f59e0b] outline-none transition-all font-mono"
                 placeholder="rider@localeats.io"
                 required
               />
@@ -261,7 +265,7 @@ const AuthView = () => {
                 type="password" 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#39FF14] outline-none transition-all font-mono"
+                className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#f59e0b] outline-none transition-all font-mono"
                 placeholder="••••••••"
                 required
               />
@@ -271,7 +275,7 @@ const AuthView = () => {
               type="submit" 
               disabled={loading}
               className={cn(
-                "w-full py-4 bg-[#39FF14] text-black font-black uppercase italic tracking-widest rounded-xl transition-all active:scale-95 shadow-[0_0_20px_rgba(57,255,20,0.2)] mt-4",
+                "w-full py-4 bg-[#f59e0b] text-black font-black uppercase italic tracking-widest rounded-xl transition-all active:scale-95 shadow-[0_0_20px_rgba(57,255,20,0.2)] mt-4",
                 loading && "opacity-50"
               )}
             >
@@ -297,7 +301,7 @@ const AuthView = () => {
             onClick={signInWithGoogle}
             className="w-full py-4 bg-zinc-900 border border-zinc-800 text-[#F0F0F0] font-black uppercase italic tracking-widest rounded-xl flex items-center justify-center gap-3 active:scale-95 transition-all"
           >
-            <Globe className="w-5 h-5 text-[#39FF14]" />
+            <Globe className="w-5 h-5 text-[#f59e0b]" />
             Google Uplink
           </button>
           
@@ -315,18 +319,44 @@ const AuthView = () => {
 
 // --- Main App Views ---
 
-const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, history, onToggleOnline, setView }: { 
+const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleOnline, setView, connectionCount }: { 
   profile: RiderProfile, 
-  availableCount: number,
   todayEarnings: number,
   totalDeliveries: number,
   history: DeliveryOrder[],
   onToggleOnline: () => void,
-  setView: (view: AppView) => void
+  setView: (view: AppView) => void,
+  connectionCount: number
 }) => {
+  const getRank = (pts: number) => {
+    if (pts >= 7500) return { title: 'Gold', next: 10000, target: 10000, progress: 100 };
+    if (pts >= 2500) return { title: 'Silver', next: 7500, target: 7500, progress: ((pts - 2500) / 5000) * 100 };
+    return { title: 'Bronze', next: 2500, target: 2500, progress: (pts / 2500) * 100 };
+  };
+
+  const rank = getRank(profile.active_points || 0);
+
   return (
     <div className="p-6 space-y-6">
-      {profile.verification_status !== 'verified' && (
+      {connectionCount === 0 && (
+         <motion.div 
+           initial={{ opacity: 0, y: 10 }}
+           animate={{ opacity: 1, y: 0 }}
+           className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-3xl flex items-center gap-4 group cursor-pointer"
+           onClick={() => setView('hub')}
+         >
+            <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center animate-pulse">
+               <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div className="flex-1">
+               <h4 className="text-[10px] font-black uppercase tracking-widest leading-none mb-1">Status: Unlinked</h4>
+               <p className="text-xs font-bold text-white/60 italic">No merchant tether detected. Sync with a merchant to begin missions.</p>
+            </div>
+            <ArrowRight className="w-4 h-4 text-zinc-600 group-hover:text-red-500 transition-colors" />
+         </motion.div>
+      )}
+
+      {profile.verification_status !== 'verified' && connectionCount > 0 && (
         <BentoCard className="bg-orange-500/10 border-orange-500/20 text-orange-500 py-4">
           <div className="flex items-center gap-3">
             <ShieldAlert className="w-5 h-5 shrink-0" />
@@ -344,12 +374,12 @@ const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, hi
         className={cn(
           "w-full p-6 rounded-3xl border-2 flex items-center justify-between transition-all active:scale-[0.98]",
           profile.is_online 
-            ? "bg-[#39FF14]/10 border-[#39FF14] shadow-[0_0_30px_rgba(57,255,20,0.1)]" 
+            ? "bg-[#f59e0b]/10 border-[#f59e0b] shadow-[0_0_30px_rgba(57,255,20,0.1)]" 
             : "bg-zinc-900/50 border-zinc-800 text-zinc-500"
         )}
       >
         <div className="flex flex-col items-start gap-1">
-          <span className={cn("text-2xl font-black italic tracking-tighter uppercase", profile.is_online ? "text-[#39FF14]" : "text-zinc-600")}>
+          <span className={cn("text-2xl font-black italic tracking-tighter uppercase", profile.is_online ? "text-[#f59e0b]" : "text-zinc-600")}>
             {profile.is_online ? 'SYSTEM ONLINE' : 'SYSTEM STANDBY'}
           </span>
           <span className="text-[10px] font-black uppercase tracking-widest opacity-60">
@@ -358,7 +388,7 @@ const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, hi
         </div>
         <div className={cn(
           "p-4 rounded-2xl transition-all",
-          profile.is_online ? "bg-[#39FF14] text-black" : "bg-zinc-800 text-zinc-600"
+          profile.is_online ? "bg-[#f59e0b] text-black" : "bg-zinc-800 text-zinc-600"
         )}>
           <Power className="w-8 h-8" />
         </div>
@@ -368,32 +398,37 @@ const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, hi
       <div className="grid grid-cols-2 gap-4">
         <BentoCard className="col-span-2" glow>
           <div className="flex items-center justify-between mb-4">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#39FF14]">Fleet Performance</span>
-            <Zap className="w-4 h-4 text-[#39FF14]" />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]">Fleet Performance</span>
+            <Zap className="w-4 h-4 text-[#f59e0b]" />
           </div>
           <div className="grid grid-cols-2 gap-8">
-            <TelemetryData label="Today's Yield" value={`R${Number(todayEarnings || 0).toFixed(2)}`} />
-            <TelemetryData label="Daily Units" value={totalDeliveries} />
+            <TelemetryData label="Daily Net Yield" value={`R ${Number(todayEarnings || 0).toFixed(2)}`} />
+            <TelemetryData label="Units Cleared" value={totalDeliveries} />
           </div>
-          <div className="mt-6 flex items-baseline gap-2">
-            <span className="text-4xl font-headline font-black italic text-white uppercase tracking-tighter">{profile.active_points}</span>
-            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Active Pts</span>
-          </div>
-        </BentoCard>
-
-        <BentoCard>
-          <div className="flex flex-col gap-2">
-            <Bike className="w-5 h-5 text-orange-500" />
-            <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Vehicle Rig</span>
-            <span className="text-sm font-black italic text-zinc-200 uppercase">{profile.vehicle_type}</span>
+          <div className="mt-8 flex flex-col gap-2">
+            <div className="flex justify-between items-end mb-1">
+              <span className="text-4xl font-headline font-black italic text-white uppercase tracking-tighter leading-none">{profile.active_points}</span>
+              <span className="text-[10px] font-black uppercase tracking-[0.1em] text-zinc-400">Tier: {rank.title} <span className="text-amber-500 mx-1">-&gt;</span> Next: {rank.next.toLocaleString()} Pts</span>
+            </div>
+            <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden shadow-inner">
+               <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(rank.progress, 100)}%` }} className="h-full bg-[#f59e0b] shadow-[0_0_10px_#f59e0b]" />
+            </div>
           </div>
         </BentoCard>
 
-        <BentoCard>
+        <BentoCard className="col-span-2 space-y-3 bg-zinc-900 border-zinc-800/50">
+          <div className="flex items-center gap-2 mb-2">
+            <Rocket className="w-4 h-4 text-amber-500" />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Daily Quests</span>
+          </div>
           <div className="flex flex-col gap-2">
-            <List className="w-5 h-5 text-blue-500" />
-            <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Missions Near</span>
-            <span className="text-sm font-black italic text-zinc-200 uppercase">{availableCount} Units</span>
+            <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-zinc-300">Complete 3 drops for 50 Pts</span>
+                <span className="text-[10px] font-black text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full">{Math.min(totalDeliveries, 3)}/3</span>
+            </div>
+            <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+               <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min((totalDeliveries / 3) * 100, 100)}%` }} className="h-full bg-amber-500" />
+            </div>
           </div>
         </BentoCard>
       </div>
@@ -404,7 +439,7 @@ const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, hi
           <h2 className="text-sm font-black italic uppercase tracking-widest flex items-center gap-2">
             <Clock className="w-4 h-4 text-zinc-500" /> Recent Logs
           </h2>
-          <button onClick={() => setView('log')} className="text-[10px] font-black uppercase tracking-tighter text-[#39FF14]">View All</button>
+          <button onClick={() => setView('log')} className="text-[10px] font-black uppercase tracking-tighter text-[#f59e0b]">View All</button>
         </div>
         <div className="space-y-2">
           {history.length === 0 ? (
@@ -427,7 +462,7 @@ const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, hi
                       </div>
                     </div>
                   </div>
-                  <span className="text-sm font-black italic text-[#39FF14]">R{Number(order.delivery_fee || 0).toFixed(2)}</span>
+                  <span className="text-sm font-black italic text-[#f59e0b]">R{Number(order.delivery_fee || 0).toFixed(2)}</span>
                 </div>
               </BentoCard>
             ))
@@ -438,7 +473,7 @@ const Dashboard = ({ profile, availableCount, todayEarnings, totalDeliveries, hi
   );
 };
 
-const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], onAccept: (id: string) => void, isOnline: boolean }) => {
+const OrdersFeed = ({ orders, onAccept, isOnline, surgeMultiplier, connectionCount }: { orders: DeliveryOrder[], onAccept: (id: string) => void, isOnline: boolean, surgeMultiplier: number, connectionCount: number }) => {
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   return (
@@ -446,10 +481,12 @@ const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], o
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl font-headline font-black italic uppercase italic tracking-tighter text-white">Live Missions</h2>
-          <p className="text-[10px] text-[#39FF14] font-black uppercase tracking-[0.3em]">Sector Alpha-12 Scan</p>
+          <p className="text-[10px] text-[#f59e0b] font-black uppercase tracking-[0.3em]">
+            Sector Alpha-12 Scan {surgeMultiplier > 1 && <span className="text-white ml-2 bg-orange-500 px-2 py-0.5 rounded-full">ROI x{surgeMultiplier.toFixed(1)}</span>}
+          </p>
         </div>
-        <div className="bg-[#39FF14]/10 border border-[#39FF14]/30 px-3 py-1 rounded-full">
-          <span className="text-[10px] font-black text-[#39FF14] animate-pulse">{orders.length} ACTIVE</span>
+        <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-3 py-1 rounded-full">
+          <span className="text-[10px] font-black text-[#f59e0b] animate-pulse">{orders.length} ACTIVE</span>
         </div>
       </div>
 
@@ -459,8 +496,8 @@ const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], o
           animate={{ opacity: 1 }}
           className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-6"
         >
-          <BentoCard className="w-full max-w-sm border-[#39FF14]/30">
-            <ShieldAlert className="w-12 h-12 text-[#39FF14] mb-4 mx-auto" />
+          <BentoCard className="w-full max-w-sm border-[#f59e0b]/30">
+            <ShieldAlert className="w-12 h-12 text-[#f59e0b] mb-4 mx-auto" />
             <h3 className="text-xl font-black italic uppercase text-center text-white mb-2">Confirm Mission</h3>
             <p className="text-xs text-zinc-500 text-center mb-6 leading-relaxed">
               Accepting this mission indicates you are ready to initiate the delivery vector. 
@@ -472,7 +509,7 @@ const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], o
                   onAccept(confirmId);
                   setConfirmId(null);
                 }}
-                className="w-full py-4 bg-[#39FF14] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
+                className="w-full py-4 bg-[#f59e0b] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
               >
                 Accept Mission
               </button>
@@ -488,15 +525,53 @@ const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], o
       )}
 
       {orders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center opacity-40">
-          {isOnline ? (
-            <Radar className="w-12 h-12 mb-4 text-[#39FF14] animate-[spin_3s_linear_infinite] opacity-50" />
-          ) : (
-            <WifiOff className="w-12 h-12 mb-4 text-red-500" />
-          )}
-          <p className="text-xs font-black uppercase tracking-widest text-zinc-500 max-w-[250px] leading-relaxed">
-            {isOnline ? "SCANNING SECTOR [ALPHA]... NO UNASSIGNED SIGNALS DETECTED." : "SIGNAL LOST - GO ONLINE TO SCAN FOR MISSIONS."}
-          </p>
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="relative mb-8">
+            {!isOnline ? (
+               <>
+                 <div className="absolute inset-0 bg-red-500/20 blur-2xl rounded-full" />
+                 <WifiOff className="w-16 h-16 text-red-500 relative" />
+               </>
+            ) : connectionCount === 0 ? (
+               <>
+                 <div className="absolute inset-0 bg-zinc-500/20 blur-2xl rounded-full" />
+                 <ShieldAlert className="w-16 h-16 text-zinc-500 relative" />
+               </>
+            ) : (
+               <>
+                 <div className="absolute inset-0 bg-[#f59e0b]/20 blur-2xl rounded-full animate-pulse" />
+                 <Radar className="w-16 h-16 text-[#f59e0b] animate-[spin_4s_linear_infinite] relative" />
+                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-[#f59e0b] rounded-full animate-ping" />
+               </>
+            )}
+          </div>
+          <div className="space-y-2">
+            <h3 className={cn(
+              "text-[10px] font-black uppercase tracking-[0.4em]",
+              !isOnline ? "text-red-500" : connectionCount === 0 ? "text-zinc-500" : "text-[#f59e0b]"
+            )}>
+              {!isOnline ? "Network Offline" : connectionCount === 0 ? "No Tether" : "Scanning Sector [Alpha]"}
+            </h3>
+            <p className="text-xs font-black uppercase tracking-widest text-zinc-500 max-w-[280px] leading-relaxed italic">
+              {!isOnline 
+                ? "SIGNAL LOST - GO ONLINE TO SCAN FOR MISSIONS." 
+                : connectionCount === 0 
+                ? "UNLINKED TERRITORY - SYNC WITH A MERCHANT TO RECEIVE MISSIONS." 
+                : "SCANNING SECTOR [ALPHA]... NO UNASSIGNED SIGNALS DETECTED."}
+            </p>
+            {isOnline && connectionCount > 0 && (
+              <div className="flex gap-1 justify-center mt-4">
+                {[...Array(3)].map((_, i) => (
+                  <motion.div 
+                    key={i}
+                    animate={{ opacity: [0.3, 1, 0.3] }}
+                    transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.5 }}
+                    className="w-1 h-4 bg-zinc-800" 
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="space-y-4">
@@ -510,15 +585,22 @@ const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], o
               <BentoCard className="border-l-4 border-l-orange-500" glow={order.delivery_fee > 50}>
                 <div className="flex justify-between items-start mb-6">
                   <div>
-                    <div className="mb-2">
+                    <div className="mb-2 flex items-center justify-between">
                        <StatusBadge status={order.delivery_status} />
+                       {order.match_score && (
+                         <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/20 px-2 py-1 rounded-lg">
+                           <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest">
+                             Match: {Math.min(100, Math.round(order.match_score * 2.5))}%
+                           </span>
+                         </div>
+                       )}
                     </div>
                     <h3 className="text-xl font-black italic text-white uppercase tracking-tight leading-none mb-1">
                       {order.restaurant_name || 'Merchant-X'}
                     </h3>
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2 text-zinc-500 w-full">
-                        <MapPin className="w-3 h-3 text-[#39FF14] shrink-0" />
+                        <MapPin className="w-3 h-3 text-[#f59e0b] shrink-0" />
                         <span className="text-[10px] font-bold truncate flex-1 min-w-0">{order.address}, {order.city}</span>
                       </div>
                       <div className="flex items-center gap-2 text-zinc-500">
@@ -528,7 +610,7 @@ const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], o
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-2xl font-mono font-bold text-[#39FF14]">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
+                    <div className="text-2xl font-mono font-bold text-[#f59e0b]">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
                     <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Est. Payout</span>
                   </div>
                 </div>
@@ -551,7 +633,7 @@ const OrdersFeed = ({ orders, onAccept, isOnline }: { orders: DeliveryOrder[], o
                   </div>
                   <div className="bg-zinc-800/20 p-4 rounded-2xl border border-zinc-800/50">
                     <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Value</span>
-                    <span className="text-sm font-mono font-bold text-[#39FF14]">R{Number(order.total_price || 0).toFixed(2)}</span>
+                    <span className="text-sm font-mono font-bold text-[#f59e0b]">R{Number(order.total_price || 0).toFixed(2)}</span>
                   </div>
                 </div>
 
@@ -611,7 +693,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
               className={cn(
                 "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border shrink-0",
                 activeIndex === idx 
-                  ? "bg-[#39FF14] text-black border-[#39FF14]" 
+                  ? "bg-[#f59e0b] text-black border-[#f59e0b]" 
                   : "bg-zinc-900 text-zinc-500 border-zinc-800"
               )}
             >
@@ -620,7 +702,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
           ))}
           <button 
             onClick={optimizeRoute}
-            className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-zinc-800 text-[#39FF14] border border-zinc-700 whitespace-nowrap flex items-center gap-2"
+            className="px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest bg-zinc-800 text-[#f59e0b] border border-zinc-700 whitespace-nowrap flex items-center gap-2"
           >
             <Zap className="w-3 h-3" /> Optimize
           </button>
@@ -638,7 +720,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
                   key={i}
                   className={cn(
                     "h-1 rounded-full transition-all",
-                    i === activeIndex ? "bg-[#39FF14] w-8" : "bg-zinc-700 w-4"
+                    i === activeIndex ? "bg-[#f59e0b] w-8" : "bg-zinc-700 w-4"
                   )} 
                 />
               ))}
@@ -647,14 +729,14 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         )}
       </div>
 
-      <div className="bg-black/95 backdrop-blur-3xl p-6 border-t-2 border-[#39FF14]/30 pb-12 pointer-events-auto shadow-[0_-20px_60px_rgba(0,0,0,0.8)]">
+      <div className="bg-black/95 backdrop-blur-3xl p-6 border-t-2 border-[#f59e0b]/30 pb-12 pointer-events-auto shadow-[0_-20px_60px_rgba(0,0,0,0.8)]">
         <div className="flex items-center justify-between mb-8 px-2">
           <div className="flex items-center gap-4 flex-1 min-w-0 mr-4">
             <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-2xl shrink-0 shadow-[0_0_15px_rgba(57,255,20,0.1)]">
-              <MapPin className="w-6 h-6 text-[#39FF14]" />
+              <MapPin className="w-6 h-6 text-[#f59e0b]" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-[9px] font-black text-[#39FF14] uppercase tracking-[0.4em] mb-1">Drop-Off Protocol</p>
+              <p className="text-[9px] font-black text-[#f59e0b] uppercase tracking-[0.4em] mb-1">Drop-Off Protocol</p>
               <p className="text-lg font-headline font-black italic text-white uppercase truncate w-full tracking-tighter">{targetAddress}</p>
             </div>
           </div>
@@ -669,7 +751,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         <SwipeButton 
           label={isPickedUp ? "Slide to Complete Mission" : "Slide to Confirm Pickup"}
           onComplete={() => onUpdateStatus(currentOrder.id, isPickedUp ? 'delivered' : 'picked_up')}
-          color={isPickedUp ? "#39FF14" : "#f58220"}
+          color={isPickedUp ? "#f59e0b" : "#f58220"}
         />
       </div>
     </div>
@@ -679,7 +761,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
 const StarRating = ({ rating }: { rating: number }) => (
   <div className="flex gap-0.5">
     {Array.from({ length: 5 }).map((_, i) => (
-      <Zap key={i} className={cn("w-2 h-2", i < rating ? "text-[#39FF14] fill-[#39FF14]" : "text-zinc-800")} />
+      <Zap key={i} className={cn("w-2 h-2", i < rating ? "text-[#f59e0b] fill-[#f59e0b]" : "text-zinc-800")} />
     ))}
   </div>
 );
@@ -706,8 +788,8 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="colorYield" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#39FF14" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="#39FF14" stopOpacity={0}/>
+                <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1f1f1f" />
@@ -719,12 +801,12 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
             />
             <Tooltip 
               contentStyle={{ backgroundColor: '#0D0D0D', border: '1px solid #333', borderRadius: '12px', fontSize: '10px' }}
-              itemStyle={{ color: '#39FF14', fontWeight: 'black' }}
+              itemStyle={{ color: '#f59e0b', fontWeight: 'black' }}
             />
             <Area 
               type="monotone" 
               dataKey="yield" 
-              stroke="#39FF14" 
+              stroke="#f59e0b" 
               strokeWidth={3}
               fillOpacity={1} 
               fill="url(#colorYield)" 
@@ -747,7 +829,7 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
               <div className="flex items-center justify-between">
                 <div className="flex items-start gap-4 flex-1 min-w-0 mr-4">
                   <div className="p-2 bg-zinc-800 rounded-lg shrink-0">
-                    <CheckCircle className="w-4 h-4 text-[#39FF14]" />
+                    <CheckCircle className="w-4 h-4 text-[#f59e0b]" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="text-sm font-black italic text-zinc-200 uppercase truncate w-full">{item.restaurant_name}</h4>
@@ -761,7 +843,7 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-base font-black italic text-[#39FF14]">R{Number(item.delivery_fee || 0).toFixed(2)}</span>
+                  <span className="text-base font-black italic text-[#f59e0b]">R{Number(item.delivery_fee || 0).toFixed(2)}</span>
                   <p className="text-[8px] text-zinc-600 font-mono">CODE-{item.id.slice(-4).toUpperCase()}</p>
                 </div>
               </div>
@@ -784,7 +866,7 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
         <Zap 
           className={cn(
             "w-8 h-8 transition-all", 
-            i < rating ? "text-[#39FF14] fill-[#39FF14] scale-110" : "text-zinc-800 hover:text-zinc-700"
+            i < rating ? "text-[#f59e0b] fill-[#f59e0b] scale-110" : "text-zinc-800 hover:text-zinc-700"
           )} 
         />
       </button>
@@ -793,39 +875,23 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
 );
 
 const RiderTrackingMap = ({ 
-  riderCoords, 
-  shopCoords = [-33.918861, 18.423300], // Example Cape Town City Center
-  orderCoords 
+  riderCoords
 }: { 
-  riderCoords: [number, number], 
-  shopCoords?: [number, number],
-  orderCoords?: [number, number] 
+  riderCoords: [number, number]
 }) => {
   return (
     <div className="w-full h-56 bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-200/10 relative group mb-6 shadow-2xl">
-      <Map 
-        height={224} 
-        center={riderCoords} 
-        zoom={14}
-        mouseEvents={false}
-        touchEvents={false}
-      >
-        {orderCoords && (
-          <Marker width={25} anchor={orderCoords} color="#39FF14" />
-        )}
-        <Marker width={25} anchor={shopCoords} color="#f58220" />
-        <Marker width={30} anchor={riderCoords}>
-          <div className="relative">
-            <div className="absolute -top-4 -left-4 w-12 h-12 bg-[#39FF14]/20 rounded-full animate-ping" />
-            <div className="bg-[#39FF14] p-2 rounded-full shadow-lg border-2 border-[#050505] relative z-10 scale-110">
-              <Bike className="w-4 h-4 text-black" />
-            </div>
-          </div>
-        </Marker>
-      </Map>
+      <iframe
+        width="100%"
+        height="100%"
+        frameBorder="0"
+        style={{ border: 0 }}
+        src={`https://maps.google.com/maps?q=${riderCoords[0]},${riderCoords[1]}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
+        allowFullScreen
+      ></iframe>
       <div className="absolute top-4 left-4 flex gap-2 pointer-events-none">
-        <div className="bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-black uppercase text-[#39FF14] border border-[#39FF14]/20 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 bg-[#39FF14] rounded-full animate-pulse" />
+        <div className="bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/20 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 bg-[#f59e0b] rounded-full animate-pulse" />
           Live Vector
         </div>
       </div>
@@ -841,6 +907,7 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'orders' | 'marketing' | 'coupons' | 'payments' | 'insights' | 'riders' | 'settings'>('orders');
+  const [pairingCode, setPairingCode] = useState(isSupabaseMocked() ? 'LX-882' : '772901');
   const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
   const [riderSimCoords, setRiderSimCoords] = useState<[number, number]>([-33.922861, 18.421300]);
 
@@ -1214,6 +1281,159 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
                 </BentoCard>
              </div>
            </div>
+        ) : activeTab === 'riders' ? (
+          <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="flex flex-col gap-1 mb-2">
+                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Fleet <span className="text-[#f58220]">Management</span></h2>
+                <p className="text-zinc-500 text-sm">Monitor active couriers and authorize new neural uplinks.</p>
+             </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="md:col-span-1 space-y-6">
+                   <BentoCard className="bg-zinc-900 border-zinc-800 p-8 text-white">
+                      <div className="flex items-center gap-3 mb-6">
+                         <div className="p-2 bg-[#f58220]/20 rounded-lg">
+                            <Zap className="w-5 h-5 text-[#f58220]" />
+                         </div>
+                         <h3 className="text-sm font-black uppercase tracking-widest">Active Tether</h3>
+                      </div>
+
+                      <div className="text-center py-6">
+                         <div className="text-4xl font-headline font-black italic tracking-widest text-[#f59e0b] mb-2 uppercase">
+                            {pairingCode}
+                         </div>
+                         <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Current Pairing Cipher</p>
+                      </div>
+
+                      <button 
+                        onClick={() => {
+                          const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+                          setPairingCode(newCode);
+                          toast.success('Neural sequence rotated.', {
+                            description: `Cipher ${newCode} active for 24h`
+                          });
+                        }}
+                        className="w-full bg-[#f58220] text-black py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all mt-4"
+                      >
+                        Rotate Cipher
+                      </button>
+
+                      <div className="mt-8 pt-8 border-t border-white/5 space-y-4">
+                         <div className="flex justify-between items-center text-[10px] font-bold uppercase">
+                            <span className="text-zinc-500">Protocol</span>
+                            <span className="text-zinc-300">Handshake-V2</span>
+                         </div>
+                         <div className="flex justify-between items-center text-[10px] font-bold uppercase">
+                            <span className="text-zinc-500">TTL</span>
+                            <span className="text-zinc-300">24 Hours</span>
+                         </div>
+                      </div>
+                   </BentoCard>
+
+                   <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
+                      <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-[0.2em] mb-4">Neural Scan</h4>
+                      <p className="text-xs text-zinc-500 font-bold leading-relaxed">
+                         Authorizing a rider allows them to receive mission signals from this merchant node for 24 hours.
+                      </p>
+                   </BentoCard>
+                </div>
+
+                <div className="md:col-span-2 space-y-6">
+                   <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-lg font-black italic uppercase tracking-tight">Active Couriers</h3>
+                      <span className="text-[10px] bg-zinc-100 text-zinc-500 px-2 py-1 rounded-full font-black uppercase">{activeRiders.length} Online</span>
+                   </div>
+
+                   <div className="space-y-4">
+                      {activeRiders.length > 0 ? activeRiders.map(rider => (
+                         <BentoCard key={rider.id} className="bg-white border-zinc-200 p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-all">
+                            <div className="flex items-center gap-4">
+                               <div className="w-12 h-12 rounded-2xl bg-zinc-50 border border-zinc-100 flex items-center justify-center relative">
+                                  <Bike className="w-6 h-6 text-zinc-400" />
+                                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
+                               </div>
+                               <div>
+                                  <h4 className="text-sm font-black text-zinc-800 uppercase tracking-tight">{rider.name}</h4>
+                                  <p className="text-[10px] text-zinc-400 font-bold uppercase">{rider.vehicle_type || 'Road Vector'} • {rider.rating || 5.0}★</p>
+                               </div>
+                            </div>
+                            <div className="flex gap-2">
+                               <button className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors">
+                                  <Smartphone className="w-4 h-4" />
+                               </button>
+                               <button className="p-2 text-zinc-400 hover:text-red-500 transition-colors">
+                                  <ShieldAlert className="w-4 h-4" />
+                               </button>
+                            </div>
+                         </BentoCard>
+                      )) : (
+                        <div className="py-12 text-center bg-zinc-50 rounded-[2rem] border-2 border-dashed border-zinc-200">
+                          <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">No riders currently tethered in this sector.</p>
+                        </div>
+                      )}
+                   </div>
+                </div>
+             </div>
+          </div>
+        ) : activeTab === 'settings' ? (
+          <div className="max-w-2xl mx-auto space-y-8">
+            <BentoCard className="bg-white border-zinc-200 p-8 shadow-sm">
+               <h2 className="text-2xl font-black italic uppercase tracking-tighter mb-8">System Configuration</h2>
+               
+               <div className="space-y-8">
+                  <div className="p-6 bg-zinc-900 rounded-[2rem] text-white">
+                     <div className="flex items-center justify-between mb-8">
+                        <div>
+                           <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1">Rider Uplink Protocol</p>
+                           <h3 className="text-xs font-bold text-zinc-400">Merchant Terminal Code</h3>
+                        </div>
+                        <div className="w-10 h-10 rounded-2xl bg-[#f59e0b]/10 flex items-center justify-center">
+                           <Zap className="w-5 h-5 text-[#f59e0b]" />
+                        </div>
+                     </div>
+                     
+                     <div className="flex flex-col items-center py-6">
+                        <div className="text-6xl font-headline font-black italic tracking-widest text-[#f59e0b] animate-pulse">
+                           {isSupabaseMocked() ? '123456' : '772 901'}
+                        </div>
+                        <p className="mt-4 text-[10px] font-black uppercase text-zinc-500 text-center max-w-[200px]">
+                           Share this sequence with a rider to establish a neural uplink.
+                        </p>
+                     </div>
+
+                     <div className="mt-6 pt-6 border-t border-white/5 flex gap-4">
+                        <button className="flex-1 bg-white/5 hover:bg-white/10 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">Regenerate Code</button>
+                        <button className="flex-1 bg-[#f59e0b] text-black py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">Display QR</button>
+                     </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-zinc-400 ml-2">Terminal Access</h4>
+                    <div className="divide-y divide-zinc-100 border rounded-2xl overflow-hidden bg-zinc-50">
+                       <div className="p-4 flex items-center justify-between bg-white">
+                          <span className="text-xs font-bold">Auto-Dispatch Mode</span>
+                          <div className="w-10 h-5 bg-[#f59e0b] rounded-full relative">
+                             <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm" />
+                          </div>
+                       </div>
+                       <div className="p-4 flex items-center justify-between bg-white">
+                          <span className="text-xs font-bold">Real-time Telemetry sharing</span>
+                          <div className="w-10 h-5 bg-[#f59e0b] rounded-full relative">
+                             <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm" />
+                          </div>
+                       </div>
+                    </div>
+                  </div>
+               </div>
+            </BentoCard>
+
+            <BentoCard className="bg-red-50 border-red-100 p-8">
+               <h4 className="text-xs font-black uppercase tracking-widest text-red-500 mb-4">Danger Zone</h4>
+               <button onClick={onSwitchRole} className="w-full bg-red-500 text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-red-500/20">
+                  Deactivate Merchant Node
+               </button>
+            </BentoCard>
+          </div>
         ) : (
           <div className="flex flex-col md:flex-row gap-8">
           
@@ -1302,7 +1522,7 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
                                onClick={() => setTrackingOrderId(trackingOrderId === order.id ? null : order.id)}
                                className={cn(
                                  "w-8 h-8 flex items-center justify-center rounded-lg shadow-sm transition-all",
-                                 trackingOrderId === order.id ? "bg-[#39FF14] text-black border-[#39FF14]" : "bg-white border border-zinc-200 text-zinc-600"
+                                 trackingOrderId === order.id ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-white border border-zinc-200 text-zinc-600"
                                )}
                              >
                                 <MapPin className="w-4 h-4" />
@@ -1318,7 +1538,6 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
                              ? riderSimCoords 
                              : [order.rider.current_latitude || -33.9188, order.rider.current_longitude || 18.4233]
                          }
-                         orderCoords={[-33.9158, 18.4203]} // Mock customer location
                        />
                     )}
 
@@ -1455,7 +1674,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
   now: number,
   onUpdateVehicle: (v: UserVehicle) => void,
   onLogout: () => void,
-  onPair: () => void,
+  onPair: (code?: string) => void,
   onSwitchRole: () => void
 }) => {
   return (
@@ -1466,10 +1685,10 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
             {profile.photo_url ? (
               <img src={profile.photo_url} className="w-full h-full object-cover rounded-2xl" alt="Profile" />
             ) : (
-              <div className="text-4xl font-headline font-black italic text-[#39FF14]">{profile.name[0]}</div>
+              <div className="text-4xl font-headline font-black italic text-[#f59e0b]">{profile.name[0]}</div>
             )}
           </div>
-          <div className="absolute -bottom-2 -right-2 bg-[#39FF14] text-black text-[9px] font-black italic px-2 py-0.5 rounded-full shadow-lg">
+          <div className="absolute -bottom-2 -right-2 bg-[#f59e0b] text-black text-[9px] font-black italic px-2 py-0.5 rounded-full shadow-lg">
             lvl 42
           </div>
         </div>
@@ -1485,7 +1704,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
         <div className="mt-4 px-3 py-1 rounded-full border border-zinc-800 bg-zinc-900/50">
            <span className={cn(
              "text-[8px] font-black uppercase tracking-[0.3em]",
-             profile.verification_status === 'verified' ? "text-[#39FF14]" : "text-orange-500"
+             profile.verification_status === 'verified' ? "text-[#f59e0b]" : "text-orange-500"
            )}>
              Status: {profile.verification_status}
            </span>
@@ -1496,8 +1715,8 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
         <div className="flex items-center justify-between px-2">
           <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600">Active Uplinks</h3>
           <button 
-            onClick={onPair}
-            className="text-[10px] font-black uppercase text-[#39FF14] border border-[#39FF14]/20 px-3 py-1 rounded-full bg-[#39FF14]/5"
+            onClick={() => onPair()}
+            className="text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/20 px-3 py-1 rounded-full bg-[#f59e0b]/5"
           >
             + Connect New
           </button>
@@ -1528,9 +1747,9 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
                     <div className="flex items-center gap-3">
                       <div className={cn(
                         "p-2 rounded-lg",
-                        isExpired ? "bg-red-500/10" : "bg-[#39FF14]/10"
+                        isExpired ? "bg-red-500/10" : "bg-[#f59e0b]/10"
                       )}>
-                        <Globe className={cn("w-4 h-4", isExpired ? "text-red-500" : "text-[#39FF14]")} />
+                        <Globe className={cn("w-4 h-4", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
                       </div>
                       <div>
                         <h4 className={cn(
@@ -1548,10 +1767,10 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
                            </p>
                            {isExpired && (
                              <button 
-                                onClick={onPair}
+                                onClick={() => onPair(conn.connection_code)}
                                 className="text-[8px] font-black uppercase text-red-500 border border-red-500/20 px-1.5 py-0.5 rounded bg-red-500/5 animate-pulse"
                              >
-                               Reset Time
+                                 Reset Time
                              </button>
                            )}
                         </div>
@@ -1586,7 +1805,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
               className={cn(
                 "p-3 rounded-2xl border flex flex-col items-center gap-2 transition-all active:scale-95",
                 profile.vehicle_type === v 
-                  ? "bg-[#39FF14]/10 border-[#39FF14] text-[#39FF14]" 
+                  ? "bg-[#f59e0b]/10 border-[#f59e0b] text-[#f59e0b]" 
                   : "bg-zinc-900 border-zinc-800 text-zinc-500"
               )}
             >
@@ -1611,7 +1830,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
         <BentoCard className="p-2 border-zinc-800/30">
           <button 
             onClick={onSwitchRole}
-            className="w-full flex items-center justify-between p-3 text-[#39FF14] hover:text-[#39FF14]/80 transition-colors"
+            className="w-full flex items-center justify-between p-3 text-[#f59e0b] hover:text-[#f59e0b]/80 transition-colors"
           >
             <div className="flex items-center gap-3">
               <ShoppingBag className="w-4 h-4" />
@@ -1654,26 +1873,35 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     }
     setLoading(true);
     try {
-      onComplete(code);
-    } catch {
-      toast.error('Uplink rejected. Invalid code.');
+      await onComplete(code);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Uplink rejected. Invalid code.';
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleScan = (scannedCode: string) => {
+  const handleScan = async (scannedCode: string) => {
     setShowScanner(false);
     if (scannedCode) {
-      onComplete(scannedCode.slice(0, 6)); // Ensure it's 6 length or adapt based on QR format
+      setLoading(true);
+      try {
+        await onComplete(scannedCode.slice(0, 6));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : (err as any)?.message || 'Uplink rejected. Invalid scan.';
+        toast.error(msg);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
   return (
     <>
-      <div className="p-6 h-[calc(100vh-100px)] flex flex-col">
+      <div className="p-6 h-full min-h-[100dvh] pb-32 overflow-y-auto no-scrollbar flex flex-col">
          <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 mb-8 group">
-           <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#39FF14] transition-colors" />
+           <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#f59e0b] transition-colors" />
            <span className="text-[10px] font-black uppercase tracking-widest">Return to Hub</span>
          </button>
 
@@ -1687,7 +1915,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
               <div className="mb-6 flex justify-center">
                 <button 
                   onClick={() => setShowScanner(true)}
-                  className="p-6 bg-[#39FF14] rounded-3xl relative active:scale-95 transition-all text-black hover:bg-[#32e612]"
+                  className="p-6 bg-[#f59e0b] rounded-3xl relative active:scale-95 transition-all text-black hover:bg-[#32e612]"
                 >
                   <QrCode className="w-24 h-24 text-black mx-auto" />
                   <div className="absolute inset-x-0 bottom-3 text-center">
@@ -1695,7 +1923,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
                   </div>
                 </button>
               </div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#39FF14] mb-2">Option A: Scan Merchant QR</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-2">Option A: Scan Merchant QR</p>
               <p className="text-xs text-zinc-500 font-bold leading-tight">Use your camera to scan the pairing QR code displayed on the Merchant Dashboard.</p>
             </BentoCard>
 
@@ -1709,7 +1937,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
             </div>
 
             <BentoCard className="p-6">
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#39FF14] mb-4">Option B: Pairing Cipher</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-4">Option B: Pairing Cipher</p>
               <div className="flex gap-2">
                 <input 
                   type="text" 
@@ -1717,12 +1945,12 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\W/g, '').toUpperCase())}
                   placeholder="000000"
-                  className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-2 sm:px-4 py-4 text-xl sm:text-2xl font-mono font-bold tracking-[0.2em] text-center text-white focus:border-[#39FF14] outline-none transition-all placeholder:tracking-normal"
+                  className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-2 sm:px-4 py-4 text-xl sm:text-2xl font-mono font-bold tracking-[0.2em] text-center text-white focus:border-[#f59e0b] outline-none transition-all placeholder:tracking-normal"
                 />
                 <button 
                   onClick={handlePair}
                   disabled={loading || code.length !== 6}
-                  className="p-4 bg-[#39FF14] text-black rounded-xl active:scale-95 transition-all disabled:opacity-50 flex-shrink-0 min-w-[64px] flex items-center justify-center"
+                  className="p-4 bg-[#f59e0b] text-black rounded-xl active:scale-95 transition-all disabled:opacity-50 flex-shrink-0 min-w-[64px] flex items-center justify-center"
                 >
                   {loading ? <Zap className="w-6 h-6 animate-spin" /> : <ChevronRight className="w-6 h-6" />}
                 </button>
@@ -1751,7 +1979,217 @@ export default function App() {
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
   const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>([]);
   const [history, setHistory] = useState<DeliveryOrder[]>([]);
+  const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [bootLogs, setBootLogs] = useState<string[]>([]);
   const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
+
+  const addBootLog = (msg: string) => {
+    setBootLogs(prev => [...prev.slice(-3), `> ${msg}`]);
+  };
+
+  const fetchProfile = useCallback(async () => {
+    if (!user) return;
+    addBootLog('INIT PROTOCOL: PROFILE_SYNC');
+    try {
+      if (isSupabaseMocked()) {
+        addBootLog('DEBUG: USING_LOCAL_SIMULATOR');
+        setProfile({
+          id: user.id,
+          name: 'Elite_Rider_tata',
+          full_name: 'Tata Rider',
+          phone: '083 456 7890',
+          is_online: true,
+          vehicle_type: 'Road',
+          verification_status: 'verified',
+          rating: 4.8,
+          total_earnings: 1250,
+          total_deliveries: 42,
+          active_points: 156,
+          updated_at: new Date().toISOString()
+        } as unknown as RiderProfile);
+        setLoading(false);
+        return;
+      }
+      
+      addBootLog('FETCH: RIDER_TELEMETRY...');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await fetchWithRetry<{ data: RiderProfile; error: any }>(async () => {
+        const res = await getSupabase()
+          .from('rider_profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return res as any;
+      });
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (error && (error as any).code === 'PGRST116') {
+        addBootLog('WARN: NO_PROFILE - INITIALIZING...');
+        // Build initial profile
+        const newProfile: Partial<RiderProfile> = {
+          id: user.id,
+          name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Rider',
+          full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
+          phone: user.user_metadata?.phone || '',
+          is_online: false,
+          vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
+          verification_status: user.email === 'aviwenotununu4@gmail.com' ? 'verified' : 'pending',
+          rating: 5.0,
+          total_earnings: 0,
+          total_deliveries: 0,
+          active_points: 0,
+          updated_at: new Date().toISOString()
+        };
+        const { data: created, error: insertError } = await getSupabase().from('rider_profiles').upsert(newProfile).select().single();
+        if (created) {
+          addBootLog('SYNC: NEW_PROFILE_READY');
+          setProfile(created as RiderProfile);
+        }
+        if (insertError) addBootLog('ERR: PROFILE_INIT_FAIL');
+      } else if (data) {
+        addBootLog('SYNC: TELEMETRY_COMPLETE');
+        setProfile(data as RiderProfile);
+        if (!data.onboarding_complete) {
+          setShowOnboarding(true);
+        }
+      } else if (error) {
+        addBootLog('ERR: FETCH_FAILED');
+      }
+    } catch {
+      addBootLog('CRITICAL: SYNC_FAILURE');
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  const fetchConnectionsAndOrders = useCallback(async () => {
+    if (!user) return;
+    console.log('MISSION PROTOCOL: Scanning Sector Alpha for active uplinks...');
+    try {
+      let activeConnections: ShopConnection[] = [];
+
+      if (isSupabaseMocked()) {
+        console.log('MISSION PROTOCOL: Signal Simulator engaged.');
+        const mockConn = {
+          id: 'mock-conn',
+          rider_id: user.id,
+          shop_id: 's1',
+          shop_name: 'Test Burger Hub',
+          connection_code: '123456',
+          expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
+          created_at: new Date().toISOString()
+        } as unknown as ShopConnection;
+        setConnections([mockConn]);
+        activeConnections = [mockConn];
+        
+        if (profile?.is_online) {
+          setAvailableOrders(() => {
+            const mocks = [{
+              id: 'order-1',
+              customer_name: 'John Doe',
+              address: '55 Main Rd',
+              city: 'Cape Town',
+              delivery_status: 'finding_rider',
+              order_type: 'delivery',
+              product_name: 'Cheese Burger XL',
+              delivery_fee: 25,
+              total_price: 155,
+              created_at: new Date().toISOString(),
+              restaurant_name: 'Test Burger Hub',
+              shop_id: 's1',
+              distance_km: 2.3
+            }] as DeliveryOrder[];
+            return mocks;
+          });
+        }
+        return;
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: connData } = await fetchWithRetry<{ data: any[]; error?: any }>(async () => {
+        const res = await getSupabase()
+          .from('rider_connections')
+          .select('*, shop_name:shops(name)')
+          .eq('rider_id', user.id)
+          .order('expires_at', { ascending: false });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return res as any;
+      });
+      
+      if (connData) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        activeConnections = connData.map((c: any) => ({
+          ...c,
+          shop_name: c.shop_name?.name || 'Local Merchant'
+        })) as ShopConnection[];
+        setConnections(activeConnections);
+      }
+
+      if (!profile?.is_online) {
+        setAvailableOrders([]);
+        return;
+      }
+
+      const validShopIds = activeConnections
+        .filter(c => new Date(c.expires_at) > new Date())
+        .map(c => c.shop_id);
+
+      if (validShopIds.length === 0) {
+        setAvailableOrders([]);
+        return;
+      }
+
+      const { data: ordersData, error: ordersError } = await getSupabase()
+        .from('orders')
+        .select('*, shops(name)')
+        .eq('delivery_status', 'finding_rider')
+        .in('shop_id', validShopIds)
+        .order('created_at', { ascending: false });
+
+      if (ordersError) throw ordersError;
+
+      if (ordersData) {
+        const formatted = ordersData
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((item: any) => ({
+            ...item,
+            restaurant_name: item.shops?.name || 'Authorized Merchant',
+            distance_km: Math.floor(Math.random() * 5) + 1.2
+          }));
+        
+        const sorted = [...formatted].map(order => {
+           // Since we already filtered by validShopIds in the query, its always linked
+           const priority_multiplier = 1.5; 
+           const distance = order.distance_km || 1;
+           const fee = order.delivery_fee || 0;
+           const match_score = (fee / distance) * priority_multiplier;
+           return { ...order, match_score };
+        }).sort((a, b) => {
+           return b.match_score - a.match_score;
+        });
+
+        setSurgeMultiplier(Math.max(1.0, Math.min(2.5, 1.0 + (sorted.length / 8))));
+
+        setAvailableOrders(prev => {
+           if (sorted.length > prev.length) {
+              toast('NEW SIGNAL DETECTED', { 
+                description: 'A high-priority payload is waiting in your authorized sector.',
+                duration: 5000,
+                icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
+                style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
+              });
+           }
+           return sorted as DeliveryOrder[];
+        });
+      } else {
+        setAvailableOrders([]);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [user, profile]);
 
   // Granular Notifications Protocol
   useEffect(() => {
@@ -1761,7 +2199,7 @@ export default function App() {
         if (order.status === 'ready') {
           toast.success(`MISSION ALERT: Order #${order.id.slice(-4)} is READY for pickup at ${order.restaurant_name}!`, {
             duration: 5000,
-            icon: <Zap className="w-4 h-4 text-[#39FF14]" />
+            icon: <Zap className="w-4 h-4 text-[#f59e0b]" />
           });
         } else if (order.status === 'preparing') {
           toast.info(`Merchant is now preparing Order #${order.id.slice(-4)}.`);
@@ -1770,6 +2208,26 @@ export default function App() {
     });
     prevActiveOrdersRef.current = activeOrders;
   }, [activeOrders]);
+
+  // App Resilience Protocol: Sync on Visibility Change
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        addBootLog('SYS_RESUME: RE-ESTABLISHING Frequencies');
+        // Trigger manual sync of critical data
+        if (user) {
+          fetchProfile();
+          fetchConnectionsAndOrders();
+          // We can't easily call internal functions from here if they aren't exposed, 
+          // so we'll rely on the existing pulse listeners which will naturally resume, 
+          // or we can trigger a state update to force re-evaluation.
+          setNow(Date.now());
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [user, fetchProfile, fetchConnectionsAndOrders]);
 
   const activeMissionCount = activeOrders.length;
   // Location Tracking Protocol
@@ -1799,13 +2257,21 @@ export default function App() {
           updateLocation(pos.coords.latitude, pos.coords.longitude);
         },
         (err) => {
-          console.error('Geolocation error:', err);
-          // Fallback to mock movement
-          const mockLat = -33.9249 + (Math.random() - 0.5) * 0.01;
-          const mockLng = 18.4241 + (Math.random() - 0.5) * 0.01;
+          // Fallback logic for GPS signal failure
+          if (err.code === 1) { // Permission Denied
+             addBootLog('ERROR: GPS_PERM_DENIED');
+             toast.error('GPS AUTH FAILURE. Switch to simulator mode.', { id: 'gps-error' });
+          } else if (err.code === 2) { // Position Unavailable
+             addBootLog('SIGNAL_LOST: TRIANGULATING...');
+             toast.warning('SIGNAL INTERFERENCE DETECTED', { id: 'gps-warning' });
+          }
+          
+          // Fallback to mock movement to keep the UI valid
+          const mockLat = -33.9249 + (Math.random() - 0.5) * 0.001;
+          const mockLng = 18.4241 + (Math.random() - 0.5) * 0.001;
           updateLocation(mockLat, mockLng);
         },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
       );
     }
 
@@ -1814,15 +2280,42 @@ export default function App() {
     };
   }, [user, profile?.is_online, activeMissionCount]);
 
+  const loadingRef = useRef(loading);
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
   // Auth Listener
   useEffect(() => {
+    setTimeout(() => addBootLog('INIT PROTOCOL: AUTH_SEQUENCE'), 0);
+    const bootTimeout = setTimeout(() => {
+      if (loadingRef.current) {
+        addBootLog('ERR: TIMEOUT - FORCING SYSTEM BYPASS');
+        setLoading(false);
+      }
+    }, 12000); // 12s safety timeout
+
     try {
       getSupabase().auth.getSession().then(({ data: { session } }) => {
+        addBootLog(session ? 'AUTH: SESSION_RESTORED' : 'AUTH: NO_SESSION_DETECTED');
+        if (session) {
+          addBootLog('INITIALIZING TACTICAL OVERLAY');
+          addBootLog('CALIBRATING GEOLOCALIZATION VECTORS');
+          addBootLog('ESTABLISHING ENCRYPTED UPLINK');
+        }
         setUser(session?.user ?? null);
-        if (!session) setLoading(false);
+        if (!session) {
+          setLoading(false);
+          clearTimeout(bootTimeout);
+        }
+      }).catch(() => {
+        addBootLog('ERR: AUTH_FETCH_FAILED');
+        setLoading(false);
+        clearTimeout(bootTimeout);
       });
 
       const { data: { subscription } } = getSupabase().auth.onAuthStateChange((_event, session) => {
+        addBootLog(`EVENT: ${_event.toUpperCase()}`);
         setUser(session?.user ?? null);
         if (!session) {
           setProfile(null);
@@ -1830,16 +2323,20 @@ export default function App() {
         }
       });
 
-      return () => subscription.unsubscribe();
-    } catch (error) {
-      console.error(error);
+      return () => {
+        subscription.unsubscribe();
+        clearTimeout(bootTimeout);
+      };
+    } catch {
+      setTimeout(() => addBootLog('CRITICAL: AUTH_FAILURE'), 0);
       setTimeout(() => setLoading(false), 0);
+      clearTimeout(bootTimeout);
     }
   }, []);
 
   // Timer for countdowns
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 1000 * 60); // Update every minute
+    const interval = setInterval(() => setNow(Date.now()), 1000 * 30); // Update every 30s
     return () => clearInterval(interval);
   }, []);
 
@@ -1847,71 +2344,10 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     
-    const fetchProfile = async () => {
-      try {
-        if (isSupabaseMocked()) {
-          setProfile({
-            id: user.id,
-            name: 'Elite_Rider_tata',
-            full_name: 'Tata Rider',
-            phone: '083 456 7890',
-            is_online: true,
-            vehicle_type: 'Road',
-            verification_status: 'verified',
-            rating: 4.8,
-            total_earnings: 1250,
-            total_deliveries: 42,
-            active_points: 156,
-            updated_at: new Date().toISOString()
-          } as unknown as RiderProfile);
-          setLoading(false);
-          return;
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data, error } = await fetchWithRetry<{ data: any; error: any }>(() => (getSupabase()
-          .from('rider_profiles')
-          .select('*')
-          .eq('id', user.id)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .single() as any));
-
-        if (error && error.code === 'PGRST116') {
-          // Build initial profile
-          const newProfile: Partial<RiderProfile> = {
-            id: user.id,
-            name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Rider',
-            full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-            phone: user.user_metadata?.phone || '',
-            is_online: false,
-            vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
-            verification_status: user.email === 'aviwenotununu4@gmail.com' ? 'verified' : 'pending',
-            rating: 5.0,
-            total_earnings: 0,
-            total_deliveries: 0,
-            active_points: 0,
-            updated_at: new Date().toISOString()
-          };
-          const { data: created, error: insertError } = await getSupabase().from('rider_profiles').upsert(newProfile).select().single();
-          if (created) setProfile(created as RiderProfile);
-          if (insertError) {
-            console.error('Profile creation failed:', insertError);
-            toast.error('System failed to initialize rider profile. Check database permissions.');
-          }
-        } else if (data) {
-          setProfile(data as RiderProfile);
-        } else if (error) {
-          console.error('Profile fetch failed:', error);
-          toast.error('Failed to sync rider telemetry. Check your connection.');
-        }
-      } catch (error) {
-        console.error('Profile sync exception:', error);
-        toast.error('Critical telemetry sync failure.');
-      } finally {
-        setLoading(false);
-      }
+    const init = async () => {
+      await fetchProfile();
     };
-
-    fetchProfile();
+    init();
 
     let channel: import('@supabase/supabase-js').RealtimeChannel | undefined;
     try {
@@ -1926,133 +2362,16 @@ export default function App() {
     }
 
     return () => { channel?.unsubscribe(); };
-  }, [user]);
+  }, [user, fetchProfile]);
 
   // Connections & Orders Real-time
   useEffect(() => {
     if (!user) return;
 
-    let activeConnections: ShopConnection[] = [];
-
-    const fetchConnectionsAndOrders = async () => {
-      try {
-        if (isSupabaseMocked()) {
-          setConnections([{
-            id: 'mock-conn',
-            rider_id: user.id,
-            shop_id: 's1',
-            shop_name: 'Test Burger Hub',
-            expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
-            created_at: new Date().toISOString()
-          }] as unknown as ShopConnection[]);
-          
-          if (profile?.is_online) {
-            setAvailableOrders(prev => {
-              const mocks = [{
-                id: 'order-1',
-                customer_name: 'John Doe',
-                address: '55 Main Rd',
-                city: 'Cape Town',
-                delivery_status: 'finding_rider',
-                order_type: 'delivery',
-                product_name: 'Cheese Burger XL',
-                delivery_fee: 25,
-                total_price: 155,
-                created_at: new Date().toISOString(),
-                restaurant_name: 'Test Burger Hub',
-                distance_km: 2.3
-              }] as DeliveryOrder[];
-              if (prev.length === 0) {
-                toast('NEW MISSION DETECTED', { 
-                  duration: 4000,
-                  icon: <Zap className="w-4 h-4 text-[#39FF14]" />,
-                  style: { background: '#050505', color: '#39FF14', border: '1px solid #39FF14', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
-                });
-              }
-              return mocks;
-            });
-          }
-          return;
-        }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: connData } = await fetchWithRetry<{ data: any; error?: any }>(() => (getSupabase()
-          .from('rider_connections')
-          .select('*, shop_name:shops(name)')
-          .eq('rider_id', user.id)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .order('expires_at', { ascending: false }) as any));
-        
-        if (connData) {
-          activeConnections = connData.map(c => ({
-            ...c,
-            shop_name: c.shop_name?.name || 'Local Merchant'
-          })) as ShopConnection[];
-          setConnections(activeConnections);
-        }
-
-        if (!profile?.is_online) {
-          setAvailableOrders([]);
-          return;
-        }
-
-        const validConnections = activeConnections.filter(c => new Date(c.expires_at) > new Date());
-        const shopIds = validConnections.map(c => c.shop_id);
-        
-        let query = getSupabase()
-          .from('orders')
-          .select('*, restaurant_name')
-          .eq('delivery_status', 'finding_rider')
-          .eq('order_type', 'delivery')
-          .order('created_at', { ascending: false });
-          
-        // All freelancers and connected riders see orders assigned to them or unassigned global orders.
-        // For connected riders, we prioritize their shop's orders locally via sorting.
-        query = query.or(`rider_id.is.null,rider_id.eq.${user.id}`);
-
-        const { data: ordersData, error: ordersError } = await query;
-        if (ordersError) console.error('Orders fetch error:', ordersError);
-
-        if (ordersData) {
-          const expiredShopIds = activeConnections
-            .filter(c => new Date(c.expires_at) <= new Date())
-            .map(c => c.shop_id);
-
-          const formatted = ordersData
-            .filter(item => !expiredShopIds.includes(item.shop_id))
-            .map(item => ({
-              ...item,
-              restaurant_name: item.restaurant_name || 'Local Merchant',
-              distance_km: Math.floor(Math.random() * 5) + 1.2
-            }));
-          
-          // Prioritize linked shops, then by newest first (descending)
-          const sorted = [...formatted].sort((a, b) => {
-            const aIsLinked = shopIds.includes(a.shop_id);
-            const bIsLinked = shopIds.includes(b.shop_id);
-            if (aIsLinked && !bIsLinked) return -1;
-            if (!aIsLinked && bIsLinked) return 1;
-            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-          });
-          setAvailableOrders(prev => {
-             if (sorted.length > prev.length) {
-                toast('NEW MISSION DETECTED', { 
-                  duration: 4000,
-                  icon: <Zap className="w-4 h-4 text-[#39FF14]" />,
-                  style: { background: '#050505', color: '#39FF14', border: '1px solid #39FF14', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
-                });
-             }
-             return sorted as DeliveryOrder[];
-          });
-        } else {
-          setAvailableOrders([]);
-        }
-      } catch (e) {
-        console.error(e);
-      }
+    const init = async () => {
+      await fetchConnectionsAndOrders();
     };
-
-    fetchConnectionsAndOrders();
+    init();
 
     let ordersChannel: import('@supabase/supabase-js').RealtimeChannel | undefined;
     let connChannel: import('@supabase/supabase-js').RealtimeChannel | undefined;
@@ -2079,7 +2398,7 @@ export default function App() {
       ordersChannel?.unsubscribe(); 
       connChannel?.unsubscribe();
     };
-  }, [user, profile?.is_online]);
+  }, [user, profile?.is_online, fetchConnectionsAndOrders]);
 
   // Active Mission & History Sync
   useEffect(() => {
@@ -2194,17 +2513,51 @@ export default function App() {
     }
   };
 
+  const handleOnboardingComplete = async () => {
+    if (!user) return;
+    try {
+      if (!isSupabaseMocked()) {
+        await getSupabase()
+          .from('rider_profiles')
+          .update({ onboarding_complete: true })
+          .eq('id', user.id);
+      }
+      setProfile(prev => prev ? { ...prev, onboarding_complete: true } : null);
+      setShowOnboarding(false);
+      addBootLog('SYS_READY: OPERATOR_CERTIFIED');
+    } catch {
+      setShowOnboarding(false);
+    }
+  };
+
   const handleOrderAccept = async (orderId: string) => {
     if (!profile || !user) return;
+    
+    // Profit-Driven Guard: Efficiency Batching Limit
+    if (activeOrders.length >= 3) {
+      toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
+      return;
+    }
+
     try {
       if (isSupabaseMocked()) {
         const order = availableOrders.find(o => o.id === orderId);
         if (order) {
-          const accepted = { ...order, delivery_status: 'accepted' as const, rider_id: user.id };
+          const accepted = { 
+            ...order, 
+            delivery_status: 'accepted' as const, 
+            rider_id: user.id,
+            surge_multiplier: surgeMultiplier 
+          };
           setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
           setActiveOrders(prev => [...prev, accepted as DeliveryOrder]);
-          toast.success('Mission accepted. Navigation initialized.');
-          setView('active');
+          toast.success('Mission accepted. Navigation initialized.', {
+            description: surgeMultiplier > 1 ? `ROI Surge active: x${surgeMultiplier.toFixed(1)}` : undefined
+          });
+          setView('move'); // It used to be 'active' but looking at AppView type it might be different, 
+          // WAIT: looking at AppView definition on line 1834: 
+          // type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'merchant_dash';
+          // Previous edit set it to 'active' which isn't in the type. Fixing.
         }
         return;
       }
@@ -2213,6 +2566,7 @@ export default function App() {
         .update({ 
           delivery_status: 'accepted', 
           rider_id: user.id,
+          surge_multiplier: surgeMultiplier,
           updated_at: new Date().toISOString()
         })
         .eq('id', orderId)
@@ -2222,11 +2576,10 @@ export default function App() {
         .single();
 
       if (error || !data) {
-        console.error('Accept fail error', error);
         toast.error(`Error: ${error?.message || 'Mission already locked by another unit'}`);
       } else {
         toast.success('Mission accepted. Navigation initialized.');
-        setView('active');
+        setView('move');
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Accept failed';
@@ -2236,37 +2589,53 @@ export default function App() {
 
   const handlePair = async (code: string) => {
     if (!user || !profile) return;
+    addBootLog(`HANDSHAKE_INIT: CODE_${code}`);
+    
     try {
-      // Find the active connection with this code
-      const { data: connection, error: fetchError } = await getSupabase()
-        .from('rider_connections')
-        .select('*')
-        .eq('connection_code', code)
-        .eq('status', 'active')
-        .single();
-      
-      if (fetchError || !connection) {
-        toast.error('Uplink rejected. Invalid or inactive pairing cipher.');
+      if (isSupabaseMocked()) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        if (code === '000000') {
+          throw new Error('Uplink rejected. Testing failure protocol.');
+        }
+        toast.success(`Uplink established! Successfully paired with Alpha Grid. (24h Pass)`);
+        setView('hub');
+        await fetchConnectionsAndOrders();
         return;
       }
 
-      // Update connection with new expiry (24h from now)
+      const { data: connection, error: fetchError } = await getSupabase()
+        .from('rider_connections')
+        .select('*, shops(name)')
+        .eq('connection_code', code)
+        .gte('expires_at', new Date().toISOString())
+        .single();
+      
+      if (fetchError || !connection) {
+        throw new Error('Invalid or expired pairing cipher. Ensure the Merchant has generated a fresh sequence.');
+      }
+
       const { error: updateError } = await getSupabase()
         .from('rider_connections')
         .update({
           rider_id: user.id,
-          rider_name: profile.full_name || profile.name || 'Unknown Rider',
-          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          updated_at: new Date().toISOString()
         })
         .eq('id', connection.id);
       
       if (updateError) throw updateError;
 
-      toast.success(`Uplink established! Successfully paired with Shop. (24h Pass)`);
-      setView('profile');
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Pairing failed';
-      toast.error(message);
+      const shopName = connection.shops?.name || 'Authorized Merchant';
+      toast.success(`Uplink established!`, {
+        description: `Successfully tethered to ${shopName}. (24h Proxy active)`,
+        style: { background: '#050505', color: '#10b981', border: '1px solid #10b981' }
+      });
+      
+      setView('hub');
+      await fetchConnectionsAndOrders();
+    } catch (e: any) {
+      console.error('Pairing Protocol Error:', e);
+      throw e;
     }
   };
   const handleUpdateStatus = async (orderId: string, status: DeliveryStatus) => {
@@ -2280,6 +2649,12 @@ export default function App() {
       delivery_status: status, 
       updated_at: new Date().toISOString() 
     };
+
+    // ROI Protocol: Mandatory Proof of Delivery simulation
+    if (status === 'delivered') {
+      const confirmed = window.confirm("POD PROTOCOL: Has the asset been successfully delivered? Close proximity detected.");
+      if (!confirmed) return;
+    }
 
     try {
       if (isSupabaseMocked()) {
@@ -2309,13 +2684,23 @@ export default function App() {
         toast.error('Phase sync failed');
       } else {
         if (status === 'delivered') {
-          const profileUpdates = {
-            total_earnings: profile.total_earnings + orderToUpdate.delivery_fee,
-            total_deliveries: profile.total_deliveries + 1,
-            active_points: profile.active_points + 15,
-            updated_at: new Date().toISOString()
-          };
-          await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile.id);
+          const { error: rpcError } = await getSupabase().rpc('increment_rider_stats', {
+            p_rider_id: profile.id,
+            p_earnings: orderToUpdate.delivery_fee,
+            p_points: 15
+          });
+          
+          if (rpcError) {
+             console.warn('RPC failed, falling back to direct update', rpcError);
+             const profileUpdates = {
+               total_earnings: profile.total_earnings + orderToUpdate.delivery_fee,
+               total_deliveries: profile.total_deliveries + 1,
+               active_points: profile.active_points + 15,
+               updated_at: new Date().toISOString()
+             };
+             await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile.id);
+          }
+          
           toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
           // If no more orders, go back to dash
           if (activeOrders.length <= 1) setView('dash');
@@ -2331,23 +2716,55 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-center">
+      <div className="min-h-screen bg-black flex items-center justify-center font-mono">
+        <div className="text-center w-full max-w-xs px-6">
           <motion.div 
             animate={{ opacity: [0.3, 1, 0.3] }} 
-            transition={{ duration: 1, repeat: Infinity }}
-            className="text-[#39FF14] font-mono text-[10px] font-black uppercase tracking-[0.5em] mb-4"
+            transition={{ duration: 1.5, repeat: Infinity }}
+            className="text-[#f59e0b] text-[10px] font-black uppercase tracking-[0.6em] mb-8"
           >
-            BOOTING SYSTEM...
+            BOOTING_SYSTEM_v2.4
           </motion.div>
-          <div className="w-64 h-1 bg-zinc-900 rounded-full overflow-hidden">
+          
+          <div className="space-y-1 mb-10 min-h-[60px] text-left">
+            {bootLogs.map((log, i) => (
+              <motion.div 
+                key={i}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="text-zinc-600 text-[9px] font-bold uppercase tracking-wider overflow-hidden whitespace-nowrap"
+              >
+                {log}
+              </motion.div>
+            ))}
+            <motion.div 
+              animate={{ opacity: [0, 1] }} 
+              transition={{ repeat: Infinity, duration: 0.8 }}
+              className="w-1.5 h-3 bg-[#f59e0b] inline-block align-middle ml-1"
+            />
+          </div>
+
+          <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden mb-12 relative">
             <motion.div 
               initial={{ width: 0 }}
               animate={{ width: '100%' }}
-              transition={{ duration: 2 }}
-              className="h-full bg-[#39FF14] neon-glow"
+              transition={{ duration: 5, ease: "linear" }}
+              className="h-full bg-[#f59e0b] shadow-[0_0_15px_rgba(57,255,20,0.5)]"
             />
           </div>
+
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 6 }}
+          >
+            <button 
+              onClick={() => setLoading(false)}
+              className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600 border border-zinc-900 px-6 py-3 rounded-xl hover:border-[#f59e0b]/30 hover:text-[#f59e0b] transition-all bg-zinc-950/50"
+            >
+              Manual_Override_Bypass
+            </button>
+          </motion.div>
         </div>
       </div>
     );
@@ -2465,7 +2882,7 @@ NOTIFY pgrst, 'reload schema';
         <div className="w-full max-w-lg mb-8">
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 relative">
             <div className="flex justify-between items-center mb-3">
-              <span className="text-[10px] font-black uppercase tracking-widest text-[#39FF14]">SQL Setup Script</span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b]">SQL Setup Script</span>
               <button 
                 onClick={() => {
                   navigator.clipboard.writeText(setupSql);
@@ -2485,7 +2902,7 @@ NOTIFY pgrst, 'reload schema';
         <div className="flex flex-col w-full max-w-xs gap-3">
           <button 
             onClick={() => window.location.reload()}
-            className="w-full py-4 bg-[#39FF14] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
+            className="w-full py-4 bg-[#f59e0b] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
           >
             I've run the SQL, Retry
           </button>
@@ -2503,8 +2920,9 @@ NOTIFY pgrst, 'reload schema';
   if (role === 'merchant') return <MerchantDashboard onSwitchRole={() => setRole('rider')} />;
 
   return (
-    <div className="min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#39FF14] selection:text-black overflow-x-hidden relative">
+    <div className="min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative">
       <Toaster position="top-center" theme="dark" richColors />
+      {showOnboarding && <TacticalOnboarding onComplete={handleOnboardingComplete} />}
       
       {/* Background Map layer */}
       {view === 'move' && (
@@ -2520,18 +2938,18 @@ NOTIFY pgrst, 'reload schema';
         <div className="flex items-center gap-4">
           <div className={cn(
             "w-2 h-2 rounded-full",
-            profile.is_online ? "bg-[#39FF14] animate-pulse neon-glow" : "bg-zinc-800"
+            profile.is_online ? "bg-[#f59e0b] animate-pulse neon-glow" : "bg-zinc-800"
           )} />
           <div className="flex flex-col">
             <h1 className="font-headline font-black italic text-xl uppercase tracking-tighter leading-none">
-              Local<span className="text-[#39FF14]">Eats</span>
+              Local<span className="text-[#f59e0b]">Eats</span>
             </h1>
             {connections.length > 0 && (() => {
               const isExpired = new Date(connections[0].expires_at).getTime() < now;
               return (
                 <div className="flex items-center gap-1 mt-1">
                   <Globe className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-orange-500")} />
-                  <span className={cn("text-[7px] font-black uppercase tracking-widest", isExpired ? "text-red-500" : "text-[#39FF14]")}>{isExpired ? "PASS EXPIRED" : "CONNECTED"}</span>
+                  <span className={cn("text-[7px] font-black uppercase tracking-widest", isExpired ? "text-red-500" : "text-[#f59e0b]")}>{isExpired ? "PASS EXPIRED" : "CONNECTED"}</span>
                 </div>
               );
             })()}
@@ -2547,7 +2965,7 @@ NOTIFY pgrst, 'reload schema';
                <div className="hidden sm:flex flex-col items-end gap-1 px-4 border-r border-zinc-800">
                   <span className="text-[7px] text-zinc-500 font-black uppercase">Fleet Pass</span>
                   <div className="flex items-center gap-1 cursor-pointer" onClick={() => isExpired && setView('pair')}>
-                    <Clock className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-[#39FF14]")} />
+                    <Clock className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
                     <span className={cn("text-[10px] font-mono font-bold", isExpired ? "text-red-500" : "text-[#F0F0F0]")}>
                       {isExpired ? "EXPIRED - RE-PAIR" : `CONNECTED: ${hours}H ${mins}M`}
                     </span>
@@ -2561,7 +2979,7 @@ NOTIFY pgrst, 'reload schema';
           </div>
           <div 
             onClick={() => setView('hub')}
-            className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl cursor-pointer hover:border-[#39FF14]/50 transition-colors"
+            className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl cursor-pointer hover:border-[#f59e0b]/50 transition-colors"
           >
             <UserIcon className="w-6 h-6 text-zinc-400" />
           </div>
@@ -2580,14 +2998,14 @@ NOTIFY pgrst, 'reload schema';
               exit={{ y: "100%", opacity: 0 }}
               className="fixed bottom-28 left-4 right-4 pointer-events-auto z-[200]"
             >
-              <BentoCard glow className="bg-black/95 backdrop-blur-3xl border-2 border-[#39FF14] p-6 shadow-[0_0_80px_rgba(57,255,20,0.3)] ring-1 ring-white/10">
+              <BentoCard glow className="bg-black/95 backdrop-blur-3xl border-2 border-[#f59e0b] p-6 shadow-[0_0_80px_rgba(57,255,20,0.3)] ring-1 ring-white/10">
                 <div className="flex items-start justify-between mb-6">
                   <div className="flex items-center gap-4">
-                    <div className="p-4 bg-[#39FF14] rounded-2xl animate-pulse shadow-[0_0_20px_#39FF14]">
+                    <div className="p-4 bg-[#f59e0b] rounded-2xl animate-pulse shadow-[0_0_20px_#f59e0b]">
                       <Zap className="w-8 h-8 text-black" />
                     </div>
                     <div>
-                      <h3 className="text-[10px] font-black uppercase text-[#39FF14] tracking-[0.4em] mb-1">Drop-Off Protocol</h3>
+                      <h3 className="text-[10px] font-black uppercase text-[#f59e0b] tracking-[0.4em] mb-1">Drop-Off Protocol</h3>
                       <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter">
                         TEST SIGNAL
                       </p>
@@ -2595,7 +3013,7 @@ NOTIFY pgrst, 'reload schema';
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-[#39FF14] mb-1">Potential</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-1">Potential</p>
                     <p className="text-3xl font-mono font-bold text-white tracking-tighter">
                       R{Number(availableOrders[0].delivery_fee || 0).toFixed(2)}
                     </p>
@@ -2619,7 +3037,7 @@ NOTIFY pgrst, 'reload schema';
                     handleOrderAccept(availableOrders[0].id);
                     setView('move');
                   }}
-                  color="#39FF14"
+                  color="#f59e0b"
                 />
               </BentoCard>
             </motion.div>
@@ -2646,14 +3064,14 @@ NOTIFY pgrst, 'reload schema';
                       exit={{ opacity: 0, y: -20 }}
                       className="mb-8"
                     >
-                      <BentoCard glow className="bg-black/95 border-[#39FF14] p-5 shadow-[0_0_50px_rgba(57,255,20,0.2)]">
+                      <BentoCard glow className="bg-black/95 border-[#f59e0b] p-5 shadow-[0_0_50px_rgba(57,255,20,0.2)]">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex flex-col">
-                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#39FF14] mb-1 animate-pulse">Drop-Off Protocol</span>
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1 animate-pulse">Drop-Off Protocol</span>
                             <h2 className="text-xl font-headline font-black italic uppercase text-white">Target Sync Active</h2>
                           </div>
-                          <div className="p-3 bg-[#39FF14]/10 rounded-2xl">
-                            <Radar className="w-6 h-6 text-[#39FF14] animate-spin" />
+                          <div className="p-3 bg-[#f59e0b]/10 rounded-2xl">
+                            <Radar className="w-6 h-6 text-[#f59e0b] animate-spin" />
                           </div>
                         </div>
                         <div className="flex items-center gap-6">
@@ -2662,7 +3080,7 @@ NOTIFY pgrst, 'reload schema';
                         </div>
                         <button 
                           onClick={() => setView('move')}
-                          className="mt-6 w-full py-4 bg-[#39FF14] text-black font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
+                          className="mt-6 w-full py-4 bg-[#f59e0b] text-black font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
                         >
                           Establish Link <ArrowRight className="w-5 h-5" />
                         </button>
@@ -2670,10 +3088,42 @@ NOTIFY pgrst, 'reload schema';
                     </motion.div>
                   )}
                 </AnimatePresence>
+                
+                {/* Telemetry Health Protocol */}
+                <BentoCard className="bg-zinc-900/40 border-zinc-800/60 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center">
+                         <Radar className="w-5 h-5 text-orange-500" />
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-500 uppercase">System Integrity</h4>
+                        <div className="flex items-center gap-2">
+                           <span className="text-xs font-bold text-white uppercase italic">Telemetry Uplink</span>
+                           <div className="flex items-center gap-0.5">
+                              {[1,2,3,4].map(b => (
+                                <div key={b} className={cn("w-1 h-3 rounded-full bg-zinc-800", b <= 3 && "bg-orange-500")} />
+                              ))}
+                           </div>
+                        </div>
+                      </div>
+                    </div>
+                    <button 
+                       onClick={() => {
+                         addBootLog('MANUAL_SYNC_INIT');
+                         fetchProfile();
+                         fetchConnectionsAndOrders();
+                         toast.success('System recalibrated.', { icon: <Zap className="w-4 h-4" /> });
+                       }}
+                       className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-black uppercase px-3 py-2 rounded-lg transition-colors border border-zinc-700"
+                    >
+                      Recalibrate
+                    </button>
+                  </div>
+                </BentoCard>
 
                 <Dashboard 
                   profile={profile} 
-                  availableCount={availableOrders.length}
                   todayEarnings={history
                     .filter(o => o.updated_at.startsWith(new Date().toISOString().split('T')[0]))
                     .reduce((acc, curr) => acc + Number(curr.delivery_fee || 0), 0)}
@@ -2681,10 +3131,11 @@ NOTIFY pgrst, 'reload schema';
                   history={history}
                   onToggleOnline={toggleOnline} 
                   setView={setView}
+                  connectionCount={connections.length}
                 />
               </div>
             )}
-            {view === 'feed' && <OrdersFeed orders={availableOrders} onAccept={handleOrderAccept} isOnline={profile?.is_online || false} />}
+            {view === 'feed' && <OrdersFeed orders={availableOrders} onAccept={handleOrderAccept} isOnline={profile?.is_online || false} surgeMultiplier={surgeMultiplier} connectionCount={connections.length} />}
             {view === 'move' && (
               activeOrders.length > 0 ? (
                 <div className="relative h-[80vh] pointer-events-none">
@@ -2703,7 +3154,7 @@ NOTIFY pgrst, 'reload schema';
                 <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center opacity-40">
                   <Navigation className="w-16 h-16 mb-4 text-zinc-600" />
                   <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">No active operational mission</p>
-                  <button onClick={() => setView('feed')} className="mt-6 text-[10px] font-black uppercase text-[#39FF14] underline">Open Mission Feed</button>
+                  <button onClick={() => setView('feed')} className="mt-6 text-[10px] font-black uppercase text-[#f59e0b] underline">Open Mission Feed</button>
                 </div>
               )
             )}
@@ -2715,7 +3166,10 @@ NOTIFY pgrst, 'reload schema';
                 now={now}
                 onUpdateVehicle={updateVehicle} 
                 onLogout={() => getSupabase().auth.signOut()} 
-                onPair={() => setView('pair')}
+                onPair={() => {
+                  setView('pair');
+                  // We could pass code to PairingView if we had a state for it
+                }}
                 onSwitchRole={() => {
                   setRole('merchant');
                   setView('merchant_dash');
@@ -2730,42 +3184,37 @@ NOTIFY pgrst, 'reload schema';
                 }} 
               />
             )}
-            {view === 'pair' && <PairingView onBack={() => setView('profile')} onComplete={handlePair} />}
+            {view === 'pair' && <PairingView onBack={() => setView('hub')} onComplete={handlePair} />}
           </motion.div>
         </AnimatePresence>
       </main>
 
       {/* HUD Navigation */}
       {view !== 'merchant_dash' && (
-        <nav className="fixed bottom-0 left-0 right-0 h-24 bg-black/95 border-t border-zinc-900 backdrop-blur-2xl z-50 flex items-center justify-around px-4 pb-safe pointer-events-auto">
-          {[
-            { icon: Smartphone, label: 'HUD', view: 'dash' },
-            { icon: List, label: 'Feed', view: 'feed' },
-            { icon: Navigation, label: 'Move', view: 'move', alert: activeOrders.length > 0 },
-            { icon: BarChart3, label: 'Log', view: 'log' },
-            { icon: UserIcon, label: 'Hub', view: 'hub' },
-          ].map((item) => (
-            <button
-              key={item.view}
-              onClick={() => setView(item.view as AppView)}
-              className={cn(
-                "flex flex-col items-center justify-center gap-1.5 p-2 rounded-2xl transition-all relative",
-                view === item.view ? "text-[#39FF14]" : "text-zinc-500 hover:text-zinc-400"
-              )}
-            >
-              {item.alert && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(249,115,22,0.5)]" />}
-              <item.icon className={cn("w-6 h-6", view === item.view && "scale-110")} />
-              <span className={cn("text-[8px] font-black uppercase tracking-[0.2em]", view === item.view ? "opacity-100" : "opacity-40")}>
-                {item.label}
-              </span>
-              {view === item.view && (
-                <motion.div 
-                  layoutId="nav-indicator" 
-                  className="absolute -bottom-2 w-1 h-1 bg-[#39FF14] rounded-full glow" 
-                />
-              )}
-            </button>
-          ))}
+        <nav className="fixed bottom-0 left-0 w-full p-6 z-[60] pointer-events-auto">
+          <div className="max-w-md mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-[2.5rem] p-2 flex items-center justify-between shadow-2xl">
+            {[
+              { icon: BarChart3, label: 'Namba', view: 'dash' },
+              { icon: List, label: 'Mission', view: 'feed' },
+              { icon: Navigation, label: 'Vector', view: 'move', alert: activeOrders.length > 0 },
+              { icon: Smartphone, label: 'Comms', view: 'log' },
+              { icon: UserIcon, label: 'Base', view: 'hub' },
+            ].map((item) => (
+              <button
+                key={item.view}
+                onClick={() => setView(item.view as AppView)}
+                className={cn(
+                  "relative flex-1 flex flex-col items-center py-4 rounded-[2rem] transition-all duration-300", 
+                  view === item.view ? "bg-[#f59e0b] text-zinc-950 shadow-xl shadow-[#f59e0b]/20" : "text-zinc-500 hover:text-zinc-300"
+                )}
+              >
+                {item.alert && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(249,115,22,0.5)]" />}
+                <item.icon size={18} className={cn(view === item.view && "fill-current animate-pulse")} />
+                <span className="text-[8px] font-black uppercase mt-1.5 tracking-tighter">{item.label}</span>
+                {view === item.view && <motion.div layoutId="nav-glow" className="absolute -inset-1 bg-[#f59e0b]/20 blur-xl -z-10 rounded-full" />}
+              </button>
+            ))}
+          </div>
         </nav>
       )}
     </div>

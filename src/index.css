@@ -6,24 +6,24 @@
   --font-headline: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   
-  --color-primary-container: #39FF14;
-  --color-secondary-container: #fe6b00;
-  --color-tertiary-container: #00e0ff;
+  --color-primary-container: #f59e0b;
+  --color-secondary-container: #3b82f6;
+  --color-tertiary-container: #10b981;
   
   --radius-touch-target: 44px;
 }
 
 @layer utilities {
   .neon-glow {
-    filter: drop-shadow(0 0 8px rgba(57, 255, 20, 0.4));
+    filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.4));
   }
   
   .glow {
-    box-shadow: 0 0 20px rgba(57, 255, 20, 0.2);
+    box-shadow: 0 0 20px rgba(245, 158, 11, 0.2);
   }
 
   .text-glow {
-    text-shadow: 0 0 10px rgba(57, 255, 20, 0.3);
+    text-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
   }
 
   .pb-safe {
@@ -32,13 +32,13 @@
 }
 
 :root {
-  background-color: #050505;
+  background-color: #09090b;
   color: #F0F0F0;
 }
 
 body {
-  @apply font-body antialiased selection:bg-[#39FF14] selection:text-black;
-  background-color: #050505;
+  @apply font-body antialiased selection:bg-[#f59e0b] selection:text-black;
+  background-color: #09090b;
 }
 
 h1, h2, h3, h4, .font-headline {
@@ -55,14 +55,14 @@ h1, h2, h3, h4, .font-headline {
 }
 
 ::-webkit-scrollbar-track {
-  background: #050505;
+  background: #09090b;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1f1f1f;
+  background: #27272a;
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #39FF14;
+  background: #f59e0b;
 }

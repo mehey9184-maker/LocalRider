@@ -16,6 +16,8 @@ export interface RiderProfile {
   updated_at: string;
   current_latitude?: number;
   current_longitude?: number;
+  onboarding_complete?: boolean;
+  experience_level?: 'cadet' | 'operator' | 'commander';
 }
 
 export interface ShopConnection {
@@ -25,6 +27,7 @@ export interface ShopConnection {
   expires_at: string;
   created_at: string;
   shop_name?: string;
+  connection_code?: string;
 }
 
 export type DeliveryStatus = 'finding_rider' | 'accepted' | 'picked_up' | 'delivered' | 'cancelled';
@@ -45,6 +48,10 @@ export interface DeliveryOrder {
   shop_id: string;
   restaurant_name?: string; // Virtual field joined from shops table
   distance_km: number; // Mocked/calculated
+  match_score?: number; // Tactical algorithm score
+  surge_multiplier?: number; // ROI Multiplier
+  batch_id?: string; // Grouping missions
+  dropoff_photo_ref?: string; // Proof of delivery
   items?: string[]; // Optional list of items in the order
   merchant_rating?: number;
   merchant_feedback?: string;

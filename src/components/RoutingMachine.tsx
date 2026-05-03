@@ -43,7 +43,7 @@ export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps
       lineOptions: {
         extendToWaypoints: true,
         missingRouteTolerance: 0,
-        styles: [{ color: '#39FF14', weight: 6, opacity: 0.8 }] // Neon green
+        styles: [{ color: '#f59e0b', weight: 6, opacity: 0.8 }] // Amber 500
       },
       // @ts-expect-error - createMarker exists in leaflet-routing-machine options but types are incomplete
       createMarker: () => null, // Hide default markers
@@ -107,7 +107,7 @@ export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps
   }, [start, end]);
 
   if (useFallback && start && end) {
-    return <Polyline positions={[start, end]} color="#39FF14" weight={6} opacity={0.6} dashArray="10, 10" />;
+    return <Polyline positions={[start, end]} color="#f59e0b" weight={6} opacity={0.6} dashArray="10, 10" />;
   }
 
   return null;

@@ -7,7 +7,7 @@ interface QRScannerProps {
   onClose: () => void;
 }
 
-export function QRScanner({ onScan, onClose }: QRScannerProps) {
+export const QRScanner = React.memo(function QRScanner({ onScan, onClose }: QRScannerProps) {
   const [hasCamera, setHasCamera] = useState(true);
 
   const onScanRef = React.useRef(onScan);
@@ -17,12 +17,13 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
   }, [onScan]);
 
   useEffect(() => {
-    let scanner: Html5Qrcode;
+    let scanner: Html5Qrcode | null = null;
+    let isMounted = true;
 
     const startScanning = async () => {
       try {
         const cameras = await Html5Qrcode.getCameras();
-        if (cameras && cameras.length > 0) {
+        if (cameras && cameras.length > 0 && isMounted) {
           scanner = new Html5Qrcode('qr-reader-container');
           await scanner.start(
             { facingMode: 'environment' },
@@ -33,26 +34,33 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
             (decodedText) => {
               // Successfully decoded
               onScanRef.current(decodedText);
-              scanner.stop();
+              if (scanner) {
+                  scanner.stop().then(() => scanner?.clear()).catch(console.error);
+              }
             },
             () => {
               // Ignore typical parse errors while scanning
             }
           );
-        } else {
+        } else if (isMounted) {
           setHasCamera(false);
         }
       } catch (err: unknown) {
-        setHasCamera(false);
-        console.error('Camera access failed:', err);
+        if (isMounted) {
+            setHasCamera(false);
+            console.error('Camera access failed:', err);
+        }
       }
     };
 
     startScanning();
 
     return () => {
-      if (scanner && scanner.isScanning) {
-        scanner.stop().catch(console.error);
+      isMounted = false;
+      if (scanner) {
+        scanner.stop().then(() => {
+          scanner?.clear();
+        }).catch(err => console.error("Error stopping scanner", err));
       }
     };
   }, []);
@@ -88,4 +96,4 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
       </div>
     </div>
   );
-}
+});

@@ -9,21 +9,21 @@ import { DeliveryOrder } from '../types';
 import { cn } from '../lib/utils';
 
 const getInstructionIcon = (modifier?: string, type?: string) => {
-  if (type === 'DestinationReached') return <MapPin className="w-8 h-8 text-[#f59e0b]" />;
-  if (!modifier) return <ArrowUp className="w-8 h-8 text-[#f59e0b]" />;
+  if (type === 'DestinationReached') return <MapPin className="w-6 h-6 text-black" />;
+  if (!modifier) return <ArrowUp className="w-6 h-6 text-black" />;
   const lModifier = modifier.toLowerCase();
   if (lModifier.includes('left')) {
-    return lModifier.includes('sharp') ? <CornerUpLeft className="w-8 h-8 text-[#f59e0b]" /> : <ArrowLeft className="w-8 h-8 text-[#f59e0b]" />;
+    return lModifier.includes('sharp') ? <CornerUpLeft className="w-6 h-6 text-black" /> : <ArrowLeft className="w-6 h-6 text-black" />;
   }
   if (lModifier.includes('right')) {
-    return lModifier.includes('sharp') ? <CornerUpRight className="w-8 h-8 text-[#f59e0b]" /> : <ArrowRight className="w-8 h-8 text-[#f59e0b]" />;
+    return lModifier.includes('sharp') ? <CornerUpRight className="w-6 h-6 text-black" /> : <ArrowRight className="w-6 h-6 text-black" />;
   }
-  if (lModifier.includes('straight')) return <ArrowUp className="w-8 h-8 text-[#f59e0b]" />;
-  return <ArrowUp className="w-8 h-8 text-[#f59e0b]" />;
+  if (lModifier.includes('straight')) return <ArrowUp className="w-6 h-6 text-black" />;
+  return <ArrowUp className="w-6 h-6 text-black" />;
 };
 
 const mockRiderIcon = L.divIcon({
-  html: `<div style="background-color: #f59e0b; padding: 6px; border-radius: 50%; box-shadow: 0 0 10px #f59e0b; border: 2px solid #050505;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
+  html: `<div style="background-color: #22d3ee; padding: 6px; border-radius: 50%; box-shadow: 0 0 15px #22d3ee; border: 2px solid #050505;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
   className: 'rider-marker',
   iconSize: [36, 36],
   iconAnchor: [18, 18],
@@ -70,9 +70,11 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     : null;
 
   // Basic Signal Quality Logic
-  const signalQuality = Math.max(0, 100 - (Math.floor((localNow - lastUpdate) / 1000) * 10));
-  const isHealthy = signalQuality > 60;
-  const isStale = signalQuality < 30;
+  const timeSinceLastUpdate = Math.floor((localNow - lastUpdate) / 1000);
+  const signalQuality = Math.max(0, 100 - (timeSinceLastUpdate * 8));
+  const isHealthy = signalQuality > 70;
+  const isStale = signalQuality < 40;
+  const isInterference = signalQuality <= 70 && signalQuality >= 40;
 
   // Simple Coordinate Smoothing Ref
   const prevPos = useRef<[number, number] | null>(null);
@@ -81,8 +83,9 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     setGeoError(false);
     
     if (!navigator.geolocation) {
-      const mockLat = -33.9249 + (Math.random() - 0.5) * 0.01;
-      const mockLng = 18.4241 + (Math.random() - 0.5) * 0.01;
+      // Mock movement for demo if geolocation is missing
+      const mockLat = -33.9188 + (Math.random() - 0.5) * 0.005;
+      const mockLng = 18.4233 + (Math.random() - 0.5) * 0.005;
       setRiderPos([mockLat, mockLng]);
       setLastUpdate(Date.now());
       return null;
@@ -95,7 +98,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         
         // Jitter Reduction: Apply a 0.2 Alpha Low-Pass Filter if we have a previous position
         if (prevPos.current) {
-          const alpha = 0.2;
+          const alpha = 0.25; // Slightly more responsive
           const filteredLat = (alpha * newLat) + ((1 - alpha) * prevPos.current[0]);
           const filteredLng = (alpha * newLng) + ((1 - alpha) * prevPos.current[1]);
           setRiderPos([filteredLat, filteredLng]);
@@ -108,24 +111,15 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         setLastUpdate(Date.now());
       },
       (err) => {
-        // Handle empty error object or explicit permission denied
-        const isPermissionError = !err || Object.keys(err).length === 0 || err.code === 1;
-        
-        if (err?.code !== 3) {
-          console.warn("Geolocation warning, falling back to mock coordinates:", { 
-            code: err?.code, 
-            message: err?.message,
-            isPermissionError,
-            timestamp: new Date().toISOString()
-          });
+        // Permission Denied
+        if (err.code === 1) {
+          setGeoError(true);
+        } else if (err.code === 3) {
+          // Timeout - show interference but don't block
+          setLastUpdate(prev => prev - 5000); // artificially degrade signal
         }
-        
-        // Fallback to mock position instead of blocking the app
-        const mockLat = -33.9249 + (Math.random() - 0.5) * 0.01;
-        const mockLng = 18.4241 + (Math.random() - 0.5) * 0.01;
-        setRiderPos([mockLat, mockLng]);
       },
-      { enableHighAccuracy: false, timeout: 15000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
     );
     
     return watchId;
@@ -189,29 +183,70 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
   const currentInstruction = typedRouteInfo?.instructions?.[1] || typedRouteInfo?.instructions?.[0];
   const nextInstructionText = currentInstruction?.text || "Proceed to destination";
 
-  const rootClassName = `absolute inset-0 bg-[#050505] overflow-hidden pointer-events-auto transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`;
+  const rootClassName = `absolute inset-0 z-0 overflow-hidden pointer-events-auto transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`;
+
+  // If signal is lost (not online), pause tracking visually or show overlay
+  if (!isOnline) {
+    return (
+      <div className={`${rootClassName} flex items-center justify-center bg-[#050505]/90 backdrop-blur-sm z-[900]`}>
+        <div className="flex flex-col items-center gap-4 text-zinc-500 bg-black/90 backdrop-blur-3xl p-10 rounded-[2rem] border border-[#f59e0b]/30 shadow-[0_0_100px_rgba(245,158,11,0.15)] text-center max-w-sm mx-4">
+          <div className="relative">
+            <Zap className="w-16 h-16 animate-pulse text-[#f59e0b] opacity-50" />
+            <div className="absolute inset-0 bg-[#f59e0b]/10 blur-2xl animate-pulse" />
+          </div>
+          <div>
+            <p className="text-sm font-sans font-medium text-white mb-2">Signal Lost</p>
+            <p className="text-xs text-zinc-400 font-sans leading-relaxed">
+              System is offline. Awaiting uplink restoration...
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (geoError) {
     return (
       <div className={`${rootClassName} flex items-center justify-center bg-[#050505] z-[999]`}>
-         <div className="flex flex-col items-center gap-6 text-zinc-500 bg-black/90 backdrop-blur-3xl p-10 rounded-[2rem] border border-red-500/30 shadow-[0_0_100px_rgba(239,68,68,0.15)] text-center max-w-sm mx-4">
+         <div className="flex flex-col items-center gap-6 text-zinc-500 bg-black/95 backdrop-blur-3xl p-10 rounded-[2.5rem] border-2 border-red-500/40 shadow-[0_0_120px_rgba(239,68,68,0.2)] text-center max-w-sm mx-4 relative overflow-hidden">
+            {/* Background Glitch Effect */}
+            <div className="absolute inset-0 bg-red-500/5 opacity-50" />
+            
             <div className="relative">
-              <Zap className="w-16 h-16 animate-pulse text-red-500" />
-              <div className="absolute inset-0 bg-red-500/20 blur-2xl animate-pulse" />
+              <div className="absolute inset-0 bg-red-500/40 blur-3xl animate-pulse rounded-full" />
+              <div className="relative bg-black p-6 rounded-full border border-red-500/20">
+                <Radar className="w-16 h-16 animate-spin-slow text-red-500" />
+              </div>
+              <Activity className="absolute -top-2 -right-2 w-8 h-8 text-red-500 animate-bounce" />
             </div>
-            <div>
-              <p className="text-sm font-black uppercase tracking-[0.3em] text-red-500 mb-2 italic">Permission Required</p>
-              <p className="text-xs text-zinc-400 font-bold leading-relaxed uppercase tracking-wider">
-                Uplink failed. Orbital permission denied or signal blocked by atmospheric interference.<br/>
-                <span className="text-[10px] text-zinc-600 mt-2 block">Enable Geolocation in your browser settings.</span>
+
+            <div className="relative z-10">
+              <h2 className="text-[18px] font-black uppercase tracking-[0.4em] text-red-500 mb-3 italic">Uplink Denied</h2>
+              <p className="text-[11px] text-zinc-400 font-bold leading-relaxed uppercase tracking-widest px-4">
+                Orbital positioning requires active authorization. Location services are restricted or signal is blocked by heavy interference.
               </p>
+              
+              <div className="mt-6 flex flex-col gap-3">
+                <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/10 text-left">
+                  <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-black">01</div>
+                  <p className="text-[10px] uppercase font-black tracking-wider text-zinc-300">Open Browser Settings</p>
+                </div>
+                <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/10 text-left">
+                  <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-black">02</div>
+                  <p className="text-[10px] uppercase font-black tracking-wider text-zinc-300">Allow "Location" for this site</p>
+                </div>
+              </div>
             </div>
+
             <button 
               onClick={requestGeolocation}
-              className="mt-2 w-full py-5 bg-red-500 text-black font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-white transition-all active:scale-95 shadow-[0_10px_30px_rgba(239,68,68,0.3)]"
+              className="mt-4 w-full py-5 bg-red-600 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-red-500 transition-all active:scale-95 shadow-[0_15px_40px_rgba(220,38,38,0.4)] flex items-center justify-center gap-3"
             >
-              Re-Authorize Uplink
+              <Zap className="w-5 h-5 fill-current" />
+              Reset Connection
             </button>
+            
+            <p className="text-[9px] text-zinc-600 font-black uppercase tracking-widest mt-4">Security Protocol • Error Signal: 403_GEO_BLOCKED</p>
          </div>
       </div>
     );
@@ -236,12 +271,11 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         center={riderPos} 
         zoom={activeOrder ? 16 : 14} 
         zoomControl={false}
-        className="w-full h-full grayscale invert brightness-50 contrast-125 opacity-70"
+        className="w-full h-full"
       >
         <TileLayer
-          url="https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
-          subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
-          attribution="&copy; Google Maps"
+          url={`https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}@2x?access_token=${import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || ''}`}
+          attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
         />
         
         <Marker position={riderPos} icon={mockRiderIcon} zIndexOffset={100} />
@@ -252,13 +286,13 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
             <Polyline 
               positions={[riderPos, targetPos] as [number, number][]} 
               pathOptions={{ 
-                color: '#f59e0b', 
+                color: isPickedUp ? '#f59e0b' : '#3b82f6', 
                 dashArray: '10, 15', 
                 weight: 2,
-                opacity: 0.4
+                opacity: 0.8
               }} 
             />
-            <RoutingMachine start={riderPos} end={targetPos} onRouteFound={handleRouteFound} />
+            <RoutingMachine start={riderPos} end={targetPos} color={isPickedUp ? '#f59e0b' : '#3b82f6'} onRouteFound={handleRouteFound} />
           </>
         )}
       </MapContainer>
@@ -298,18 +332,44 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
       )}
 
       {/* Platform HUD */}
-      <div className="absolute top-24 right-6 flex flex-col gap-2 z-[400] pointer-events-none">
+      <div className="absolute top-24 right-6 flex flex-col gap-2 z-[400] pointer-events-none items-end">
         <div className={cn(
-          "px-3 py-1.5 rounded-full border flex items-center gap-2 transition-all duration-500",
+          "px-3 py-1.5 rounded-full border flex items-center gap-3 transition-all duration-500 backdrop-blur-md shadow-lg",
           isHealthy ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500" :
           isStale ? "bg-red-500/10 border-red-500/30 text-red-500 animate-pulse" :
-          "bg-orange-500/10 border-orange-500/30 text-orange-500"
+          "bg-amber-500/10 border-amber-500/30 text-amber-500"
         )}>
-          <Radar size={12} className={isHealthy ? "" : "animate-spin"} />
-          <span className="text-[10px] font-black uppercase tracking-widest leading-none">
-            {isHealthy ? "Uplink Secure" : isStale ? "Signal Lost" : "Interference"}
+          <div className="flex items-end gap-0.5 h-3">
+             {[...Array(4)].map((_, i) => (
+                <div 
+                  key={i} 
+                  className={cn(
+                    "w-0.5 rounded-full transition-all duration-300",
+                    i === 0 ? "h-1" : i === 1 ? "h-1.5" : i === 2 ? "h-2" : "h-3",
+                    (isHealthy) || 
+                    (isInterference && i < 3) || 
+                    (signalQuality > 20 && i < 2) || 
+                    (signalQuality > 0 && i < 1)
+                      ? "bg-current" : "bg-white/10"
+                  )}
+                />
+             ))}
+          </div>
+          <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
+            {isHealthy ? "Link Stable" : isStale ? "No Signal" : "Weak Uplink"}
           </span>
+          <Radar size={10} className={isHealthy ? "opacity-50" : "animate-spin"} />
         </div>
+        
+        {isStale && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-[8px] font-black uppercase tracking-widest text-red-500 bg-red-500/10 px-2 py-1 rounded border border-red-500/20"
+          >
+            GPS Jitter Detected
+          </motion.div>
+        )}
       </div>
 
       {/* Navigation HUD Overlay - Only shows when active mission */}
@@ -328,26 +388,30 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
                   initial={{ opacity: 0, x: -50 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: -50 }}
-                  className="bg-black border-2 border-[#f59e0b] p-6 rounded-[2rem] flex items-center gap-6 shadow-[20px_20px_60px_rgba(0,0,0,1)] ring-8 ring-[#f59e0b]/5 pointer-events-auto cursor-pointer active:scale-95 transition-transform"
+                  className="bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-xl flex items-center gap-4 shadow-xl pointer-events-auto cursor-pointer active:bg-zinc-800 transition-colors max-h-[80px]"
                 >
-                  <div className="p-4 bg-[#f59e0b] rounded-2xl relative overflow-hidden shrink-0 shadow-[0_0_20px_rgba(57,255,20,0.4)]">
+                  <div className="p-2 bg-[#f59e0b] rounded-lg relative overflow-hidden shrink-0 shadow-sm flex items-center justify-center">
                      {getInstructionIcon(currentInstruction.modifier, currentInstruction.type)}
                   </div>
-                  <div className="flex flex-col pr-4">
-                    <p className="text-2xl font-headline font-black italic text-[#f59e0b] uppercase leading-none tracking-tighter mb-1">
+                  <div className="flex flex-col pr-2 flex-1">
+                    <p className="text-[14px] font-sans font-medium text-white line-clamp-1 break-all leading-tight">
                       {nextInstructionText}
                     </p>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 mt-0.5">
                       {currentInstruction.distance && (
-                        <p className="text-lg font-mono font-bold text-white tabular-nums">
+                        <p className="text-[12px] font-sans font-medium text-zinc-300">
                           {(currentInstruction.distance > 1000) ? `${(currentInstruction.distance/1000).toFixed(1)} km` : `${Math.round(currentInstruction.distance)}m`}
                         </p>
                       )}
-                      <div className="w-1 h-1 bg-[#f59e0b]/50 rounded-full" />
-                      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">
-                        {etaMins} MIN • {distKm} KM
+                      {currentInstruction.distance && <div className="w-1 h-1 bg-zinc-500 rounded-full" />}
+                      <p className="text-[12px] font-sans font-medium text-zinc-400">
+                        {distKm} KM
                       </p>
                     </div>
+                  </div>
+                  <div className="flex flex-col items-center justify-center pl-3 border-l border-zinc-800 shrink-0 min-w-[50px]">
+                    <span className="text-[20px] font-black leading-none text-[#22d3ee] drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">{etaMins}</span>
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#22d3ee]/80 mt-1">MIN</span>
                   </div>
                 </motion.div>
               )}

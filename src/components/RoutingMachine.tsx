@@ -14,13 +14,14 @@ L.Icon.Default.mergeOptions({
 interface RoutingMachineProps {
   start: [number, number] | null;
   end: [number, number];
+  color?: string;
   onRouteFound: (route: { 
     summary?: { totalTime: number; totalDistance: number }; 
     instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
   }) => void;
 }
 
-export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps) {
+export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: RoutingMachineProps) {
   const map = useMap();
   const routingControlRef = useRef<L.Routing.Control | null>(null);
   const [useFallback, setUseFallback] = useState(false);
@@ -46,7 +47,7 @@ export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps
       lineOptions: {
         extendToWaypoints: true,
         missingRouteTolerance: 0,
-        styles: [{ color: '#f59e0b', weight: 6, opacity: 0.8 }] // Amber 500
+        styles: [{ color: color, weight: 6, opacity: 0.8 }]
       },
       // @ts-expect-error - createMarker exists in leaflet-routing-machine options but types are incomplete
       createMarker: () => null, // Hide default markers
@@ -106,7 +107,7 @@ export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps
       routingControlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]); // only re-run if the map instance changes
+  }, [map, color]); // re-run if map instance or color changes
 
   // Update waypoints dynamically
   useEffect(() => {
@@ -119,7 +120,7 @@ export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps
   }, [start, end]);
 
   if (useFallback && start && end) {
-    return <Polyline positions={[start, end]} color="#f59e0b" weight={6} opacity={0.6} dashArray="10, 10" />;
+    return <Polyline positions={[start, end]} color={color} weight={6} opacity={0.6} dashArray="10, 10" />;
   }
 
   return null;

@@ -26,7 +26,8 @@ import {
   WifiOff,
   Activity,
   Plus,
-  Rocket
+  Rocket,
+  Minimize2
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -371,6 +372,18 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
   setView: (view: AppView) => void,
   connectionCount: number
 }) => {
+  const [shiftCount, setShiftCount] = useState(() => {
+    return parseInt(localStorage.getItem('shiftCount') || '0', 10);
+  });
+
+  useEffect(() => {
+    if (profile.is_online && shiftCount < 3) {
+      const newCount = shiftCount + 1;
+      localStorage.setItem('shiftCount', newCount.toString());
+      // we do not update state immediately to allow them to see it during this session
+    }
+  }, [profile.is_online, shiftCount]);
+
   const getRank = (pts: number) => {
     if (pts >= 7500) return { title: 'GOLD', next: 10000, target: 10000, progress: 100, color: 'text-[#f59e0b]' };
     if (pts >= 2500) return { title: 'SILVER', next: 7500, target: 7500, progress: ((pts - 2500) / 5000) * 100, color: 'text-zinc-300' };
@@ -412,17 +425,17 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
       )}
 
       {/* Power Toggle */}
-      <button 
-        onClick={() => {
-          onToggleOnline();
-          if (navigator.vibrate) navigator.vibrate(50);
-        }}
-        className={cn(
-          "w-full h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-green-500/20",
-          profile.is_online ? "bg-zinc-900 border border-zinc-900/50" : "bg-zinc-900/40 border border-zinc-800/40"
-        )}
-      >
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-2">
+        <button 
+          onClick={() => {
+            onToggleOnline();
+            if (navigator.vibrate) navigator.vibrate(50);
+          }}
+          className={cn(
+            "w-full min-h-[60px] px-4 py-3 rounded-xl flex items-center justify-start gap-3 transition-colors active:bg-zinc-800 hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-green-500/20",
+            profile.is_online ? "bg-zinc-900 border border-zinc-900/50" : "bg-zinc-900/40 border border-zinc-800/40"
+          )}
+        >
           <div className={cn(
             "flex items-center justify-center transition-colors shadow-sm",
             profile.is_online ? "text-green-500" : "text-zinc-600"
@@ -437,8 +450,21 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
               {profile.is_online ? 'Syncing local missions' : 'Ready for activation'}
             </span>
           </div>
-        </div>
-      </button>
+        </button>
+
+        {profile.is_online && shiftCount < 3 && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-green-500/10 border border-green-500/20 p-4 rounded-xl flex items-start gap-3 mt-2 mx-1"
+          >
+            <div className="w-2 h-2 mt-1.5 rounded-full bg-green-500 animate-ping shrink-0" />
+            <p className="text-[12px] font-sans text-green-400 font-medium leading-relaxed">
+              You're active! New missions will appear here when your linked shops broadcast them.
+            </p>
+          </motion.div>
+        )}
+      </div>
 
       {/* Stats Bento */}
       <div className="space-y-6">
@@ -796,31 +822,42 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
   };
 
   return (
-    <div className="h-[calc(100vh-100px)] flex flex-col pt-24 pointer-events-none max-w-lg mx-auto">
+    <div className="h-[calc(100vh-60px)] flex flex-col pt-24 pointer-events-none max-w-lg mx-auto">
       {/* Multi-Order Selector */}
       {displayOrders.length > 1 && (
-        <div className="bg-black/60 backdrop-blur-3xl border-b border-white/5 p-4 flex gap-3 overflow-x-auto no-scrollbar pointer-events-auto shadow-2xl">
-          {displayOrders.map((o, idx) => (
-            <button
-              key={o.id}
-              onClick={() => setActiveIndex(idx)}
-              className={cn(
-                "px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all whitespace-nowrap border-2 shrink-0 flex items-center gap-3 shadow-lg",
-                activeIndex === idx 
-                  ? "bg-[#f59e0b] text-black border-[#f59e0b] scale-105" 
-                  : "bg-zinc-900 text-zinc-500 border-zinc-800"
-              )}
+        <div className="bg-black/60 backdrop-blur-3xl border-b border-white/5 p-4 pointer-events-auto shadow-2xl">
+          <div className="flex items-center justify-between mb-3 px-1">
+            <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] flex items-center gap-1.5">
+              <Zap className="w-3 h-3" /> Auto-Routed Sequence
+            </span>
+            <button 
+              onClick={optimizeRoute}
+              className="text-[10px] uppercase font-bold text-zinc-500 hover:text-white transition-colors"
             >
-              <div className={cn("w-2 h-2 rounded-full", o.delivery_status === 'picked_up' ? "bg-red-500" : "bg-green-500")} />
-              SEQ_{idx + 1} • {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
+              Re-optimize
             </button>
-          ))}
-          <button 
-            onClick={optimizeRoute}
-            className="px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest bg-zinc-900 text-[#f59e0b] border-2 border-zinc-800 whitespace-nowrap flex items-center gap-2 active:scale-95 shadow-lg"
-          >
-            <Zap className="w-3.5 h-3.5" /> Optimize
-          </button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto no-scrollbar relative w-full items-center">
+            {/* Connecting line behind buttons */}
+            <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-zinc-800 -z-10 -translate-y-1/2" />
+            
+            {displayOrders.map((o, idx) => (
+              <button
+                key={o.id}
+                onClick={() => setActiveIndex(idx)}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border-2 shrink-0 flex items-center gap-2",
+                  activeIndex === idx 
+                    ? "bg-[#f59e0b] text-black border-[#f59e0b] shadow-[0_0_15px_rgba(245,158,11,0.4)]" 
+                    : "bg-zinc-900/90 text-zinc-400 border-zinc-800"
+                )}
+              >
+                <div className={cn("w-1.5 h-1.5 rounded-full", activeIndex === idx ? "bg-black" : (o.delivery_status === 'picked_up' ? "bg-red-500" : "bg-green-500"))} />
+                {activeIndex === idx && "CURRENT • "}
+                {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -844,23 +881,24 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         )}
       </div>
 
-      <div className="bg-black/95 backdrop-blur-3xl p-8 border-t-2 border-[#f59e0b]/40 pb-16 pointer-events-auto shadow-[0_-30px_80px_rgba(0,0,0,0.9)] rounded-t-[3rem]">
-        <div className="flex items-center justify-between mb-10 px-2">
-          <div className="flex items-center gap-5 flex-1 min-w-0 mr-4">
-            <div className="p-4 bg-zinc-900 border-2 border-zinc-800 rounded-3xl shrink-0 shadow-[0_0_20px_rgba(245,158,11,0.15)] ring-4 ring-black">
-              <MapPin className="w-8 h-8 text-[#f59e0b]" />
+      <div className="bg-black/60 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2rem] mt-auto border-t border-white/10">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3 flex-1 min-w-0 mr-4">
+            <div className="flex items-center justify-center w-10 h-10 bg-[#f59e0b] rounded-[10px] shrink-0 shadow-sm">
+              <MapPin className="w-5 h-5 text-black" />
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[11px] font-black text-[#f59e0b] uppercase tracking-[0.3em] mb-1 italic">Mission Objective</p>
-              <p className="text-xl font-headline font-black italic text-zinc-100 uppercase truncate w-full tracking-tighter leading-tight">{isPickedUp ? 'Drop-Off' : 'Pick-Up'}</p>
-              <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest truncate">{targetAddress}</p>
+            <div className="flex flex-col min-w-0">
+              <span className="text-[13px] font-sans text-zinc-400 tracking-normal mb-0.5">Mission Objective</span>
+              <span className="text-[16px] font-sans font-medium text-white truncate w-full leading-snug">
+                {isPickedUp ? 'Drop-Off' : 'Pick-Up'} • {targetAddress}
+              </span>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-[10px] font-black text-zinc-600 uppercase tracking-widest font-mono mb-1">PULSE ETA</p>
-            <p className="text-3xl font-mono font-black text-white tracking-tighter">
-              {Math.floor(currentOrder.distance_km * 2)}:15
-            </p>
+          <div className="text-right flex flex-col items-end shrink-0 pl-3">
+            <span className="text-[13px] font-sans text-zinc-400 tracking-normal mb-0.5">ETA</span>
+            <span className="text-[16px] font-sans font-medium text-white tracking-tight">
+              {String(Math.max(0, Math.floor((Number(currentOrder?.distance_km) || 0) * 2))).padStart(2, '0')}:15
+            </span>
           </div>
         </div>
 
@@ -1991,7 +2029,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
             className="flex items-center gap-2 text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/30 px-4 py-2 rounded-2xl bg-[#f59e0b]/5 active:scale-95 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
-            Connect Now
+            Sync with Shop
           </button>
         </div>
         
@@ -2012,17 +2050,17 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
                 <div 
                   key={conn.id} 
                   className={cn(
-                    "w-full h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800",
+                    "w-full min-h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800",
                     isExpired ? "bg-zinc-900/40 border border-red-900/30 grayscale" : "bg-zinc-900 border border-zinc-800"
                   )}
                 >
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center justify-center shadow-sm">
+                  <div className="flex items-center justify-start gap-3 flex-1 min-w-0">
+                    <div className="flex items-center justify-center shadow-sm shrink-0">
                       <Globe className={cn("w-6 h-6", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
                     </div>
-                    <div className="flex flex-col items-start leading-[1.2]">
+                    <div className="flex flex-col items-start leading-[1.2] truncate w-full">
                       <span className={cn(
-                        "text-[16px] font-sans font-medium tracking-normal",
+                        "text-[16px] font-sans font-medium tracking-normal truncate w-full",
                         isExpired ? "text-zinc-500" : "text-white"
                       )}>
                         {conn.shop_name || 'Merchant ' + conn.shop_id.slice(0, 4)}
@@ -2030,7 +2068,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
                       <div className="flex items-center gap-2 mt-0.5">
                          <span className={cn(
                            "text-[13px] font-sans tracking-normal",
-                           isExpired ? "text-red-500/80" : "text-zinc-400" // using #a1a1aa which is zinc-400, providing excellent contrast
+                           isExpired ? "text-red-500/80" : "text-zinc-400"
                          )}>
                            {isExpired ? 'Sync required' : 'Uplink active'}
                          </span>
@@ -2048,7 +2086,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
                       </div>
                     </div>
                   </div>
-                  <div className="text-right flex flex-col items-end leading-[1.2]">
+                  <div className="text-right flex flex-col items-end leading-[1.2] pl-3 shrink-0">
                     <span className={cn(
                       "text-[14px] font-sans font-medium tracking-normal",
                       isExpired ? "text-red-500/50" : "text-zinc-400"
@@ -2143,10 +2181,21 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     try {
       await onComplete(code);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Uplink rejected. Invalid code.';
-      toast.error(msg);
+      const msg = err instanceof Error ? err.message : 'Uplink rejected.';
+      toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Sync failed. Please verify the code.' : msg);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenScanner = async () => {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        await navigator.mediaDevices.getUserMedia({ video: true });
+      }
+      setShowScanner(true);
+    } catch {
+      toast.error('Camera access required for QR pairing');
     }
   };
 
@@ -2157,8 +2206,8 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     try {
       await onComplete(scannedCode.slice(0, 6));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || 'Uplink rejected. Invalid scan.';
-      toast.error(msg);
+      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || 'Invalid scan.';
+      toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Invalid QR code. Please scan a valid Merchant QR.' : msg);
     } finally {
       setLoading(false);
     }
@@ -2181,7 +2230,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
             <BentoCard className="p-8 text-center bg-[#151515]">
               <div className="mb-6 flex justify-center">
                 <button 
-                  onClick={() => setShowScanner(true)}
+                  onClick={handleOpenScanner}
                   className="p-6 bg-[#f59e0b] rounded-3xl relative active:scale-95 transition-all text-black hover:bg-[#32e612]"
                 >
                   <QrCode className="w-24 h-24 text-black mx-auto" />
@@ -2822,7 +2871,11 @@ export default function App() {
       if (isSupabaseMocked()) {
         const newStatus = !profile.is_online;
         setProfile({ ...profile, is_online: newStatus });
-        toast.info(newStatus ? 'Hub active' : 'Hub deactivated');
+        if (newStatus) {
+          toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
+        } else {
+          toast.info('System Standby. Taking a break.');
+        }
         return;
       }
 
@@ -2831,7 +2884,13 @@ export default function App() {
         .update({ is_online: !profile.is_online, updated_at: new Date().toISOString() })
         .eq('id', profile.id);
       if (error) toast.error('Failed to sync system status');
-      else toast.success(profile.is_online ? 'Hub deactivated' : 'Hub active');
+      else {
+        if (!profile.is_online) {
+          toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
+        } else {
+          toast.success('System Standby. Taking a break.');
+        }
+      }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Sync failed';
       toast.error(message);
@@ -2905,7 +2964,6 @@ export default function App() {
         .update({ 
           delivery_status: 'accepted', 
           rider_id: user.id,
-          surge_multiplier: surgeMultiplier,
           updated_at: new Date().toISOString()
         })
         .eq('id', orderId)
@@ -2953,7 +3011,7 @@ export default function App() {
         throw new Error('Invalid or expired pairing cipher. Ensure the Merchant has generated a fresh sequence.');
       }
 
-      const { error: updateError } = await getSupabase()
+      let { error: updateError } = await getSupabase()
         .from('rider_connections')
         .update({
           rider_id: user.id,
@@ -2962,6 +3020,19 @@ export default function App() {
         })
         .eq('id', connection.id);
       
+      // Fallback for stale schema cache (PGRST error) missing the updated_at column
+      if (updateError && updateError.message?.includes('Could not find') && updateError.message?.includes('updated_at')) {
+        console.warn('Schema cache stale, retrying Handshake without updated_at column...', updateError);
+        const retryResult = await getSupabase()
+          .from('rider_connections')
+          .update({
+            rider_id: user.id,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+          })
+          .eq('id', connection.id);
+        updateError = retryResult.error;
+      }
+
       if (updateError) throw updateError;
 
       // Stability Update: Handshake Verification
@@ -3305,7 +3376,7 @@ NOTIFY pgrst, 'reload schema';
       )}
       
       {/* HUD Header */}
-      <header className="fixed top-0 left-0 right-0 h-20 bg-black/80 backdrop-blur-xl border-b border-zinc-900 z-50 flex items-center justify-between px-6 pointer-events-auto">
+      <header className="fixed top-0 left-0 right-0 h-[60px] bg-black/60 backdrop-blur-md border-b border-white/5 z-50 flex items-center justify-between px-4 sm:px-6 pointer-events-auto transition-colors">
         <div className="flex items-center gap-4">
           <div className={cn(
             "w-2 h-2 rounded-full",
@@ -3358,7 +3429,7 @@ NOTIFY pgrst, 'reload schema';
       </header>
 
       {/* Main Container */}
-      <main className="pt-20 w-full max-w-md mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none">
+      <main className="pt-[60px] w-full max-w-md mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none">
         
         {/* Mission Pulse Overlay */}
         <AnimatePresence>
@@ -3394,11 +3465,11 @@ NOTIFY pgrst, 'reload schema';
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">ETA Vector</span>
-                    <span className="text-xl font-mono font-bold text-white">{Math.floor(availableOrders[0].distance_km * 3)}:00 M</span>
+                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor((Number(availableOrders[0].distance_km) || 0) * 3))}:00 M</span>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-1">Range</span>
-                    <span className="text-xl font-mono font-bold text-white">{availableOrders[0].distance_km} KM</span>
+                    <span className="text-xl font-mono font-bold text-white">{Number(availableOrders[0].distance_km) || 0} KM</span>
                   </div>
                 </div>
 
@@ -3454,7 +3525,7 @@ NOTIFY pgrst, 'reload schema';
                           onClick={() => setView('move')}
                           className="mt-6 w-full py-4 bg-[#f59e0b] text-black font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
                         >
-                          Establish Link <ArrowRight className="w-5 h-5" />
+                          Resume Route <ArrowRight className="w-5 h-5" />
                         </button>
                       </BentoCard>
                     </motion.div>
@@ -3519,14 +3590,15 @@ NOTIFY pgrst, 'reload schema';
             )}
             {view === 'move' && (
               activeOrders.length > 0 ? (
-                <div className="relative h-[80vh] pointer-events-none">
+                <div className="absolute inset-0 z-0 pointer-events-none">
                   {/* Floating Instruction Module is inside AppMapBackground */}
-                  <div className="absolute top-0 right-0 p-4 pointer-events-auto">
+                  <div className="absolute top-20 right-4 p-4 pointer-events-auto z-50">
                     <button 
                       onClick={() => setView('dash')}
-                      className="p-4 bg-black/80 backdrop-blur-xl border border-zinc-800 rounded-full text-zinc-400 hover:text-white"
+                      className="px-4 py-3 bg-black/60 backdrop-blur-md border border-white/10 rounded-full text-zinc-400 hover:text-white shadow-xl pointer-events-auto flex items-center gap-2 active:scale-95 transition-all"
                     >
-                      <LogOut className="w-6 h-6 rotate-180" />
+                      <Minimize2 className="w-4 h-4" />
+                      <span className="text-[10px] uppercase font-black tracking-widest">Back to Hub</span>
                     </button>
                   </div>
                   <ActiveMissionView orders={activeOrders} onUpdateStatus={handleUpdateStatus} />

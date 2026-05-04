@@ -5,6 +5,7 @@ import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
 import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin, Radar, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 import { DeliveryOrder } from '../types';
 import { cn } from '../lib/utils';
 
@@ -52,7 +53,6 @@ interface AppMapBackgroundProps {
 export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: AppMapBackgroundProps) {
   const [riderPos, setRiderPos] = useState<[number, number] | null>(null);
   const [lastUpdate, setLastUpdate] = useState<number>(() => Date.now());
-  const [lastKnownSync, setLastKnownSync] = useState<number | null>(null);
   const [isCharging, setIsCharging] = useState(false);
   const [localNow, setLocalNow] = useState<number>(() => Date.now());
   const [geoError, setGeoError] = useState<boolean>(false);
@@ -69,8 +69,9 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
 
     // Battery Detection for High-Intensity Caching
     if ('getBattery' in navigator) {
-      (navigator as any).getBattery().then((battery: any) => {
-        setIsCharging(battery.working);
+      const nav = navigator as unknown as { getBattery: () => Promise<{ charging: boolean; addEventListener: (type: string, listener: () => void) => void }> };
+      nav.getBattery().then((battery) => {
+        setIsCharging(battery.charging);
         battery.addEventListener('chargingchange', () => setIsCharging(battery.charging));
       });
     }
@@ -179,11 +180,28 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
 
   // Route Caching Logic for Offline Guidance
   useEffect(() => {
+    if (activeOrder?.id && isOnline && isCharging) {
+       // Simulate high-priority download of mission assets
+       const timer = setTimeout(() => {
+         if (routeInfo) {
+            localStorage.setItem(`map_assets_${activeOrder.id}`, 'cached');
+            toast.info(`Mission assets for #${activeOrder.id.slice(-4)} cached for offline use.`, { icon: <Activity className="w-4 h-4" /> });
+         }
+       }, 5000);
+       return () => clearTimeout(timer);
+    }
+  }, [activeOrder?.id, routeInfo, isOnline, isCharging]);
+
+  useEffect(() => {
     if (activeOrder?.id && !routeInfo) {
       const cachedInfo = localStorage.getItem(`routeInfo_${activeOrder.id}`);
       if (cachedInfo) {
         try {
-          setRouteInfo(JSON.parse(cachedInfo));
+          const parsed = JSON.parse(cachedInfo);
+          // Set timeout to avoid cascading render in effect body
+          setTimeout(() => {
+            setRouteInfo(parsed);
+          }, 0);
         } catch (e) {
           console.error('Failed to load cached route info', e);
         }

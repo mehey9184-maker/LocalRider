@@ -27,7 +27,10 @@ import {
   Activity,
   Plus,
   Rocket,
-  Minimize2
+  Minimize2,
+  Mic,
+  MicOff,
+  LifeBuoy
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -363,16 +366,131 @@ const AuthView = () => {
 
 // --- Main App Views ---
 
-const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleOnline, setView, connectionCount }: { 
+const SOSButton = ({ riderName }: { riderName: string }) => {
+  const handleSOS = async () => {
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
+    
+    let locationUrl = 'Location unknown';
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject);
+      });
+      locationUrl = `https://www.google.com/maps?q=${pos.coords.latitude},${pos.coords.longitude}`;
+    } catch {
+      // Fallback location gathering
+    }
+
+    const message = `EMERGENCY: Rider ${riderName} needs help at ${locationUrl}`;
+    
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'SOS EMERGENCY',
+          text: message,
+          url: locationUrl
+        });
+        toast.success('SOS Signal Broadcasted');
+      } catch (err) {
+        if (err instanceof Error && err.name !== 'AbortError') {
+          window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+        }
+      }
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+    }
+  };
+
+  return (
+    <button 
+      onClick={handleSOS}
+      className="p-4 bg-red-600/20 border-2 border-red-500/50 rounded-2xl flex flex-col items-center gap-2 active:scale-95 transition-all text-red-500 group relative overflow-hidden"
+    >
+      <div className="absolute inset-0 bg-red-500/10 animate-pulse" />
+      <LifeBuoy className="w-6 h-6 animate-bounce relative z-10" />
+      <span className="text-[10px] font-black uppercase tracking-widest relative z-10">One-Tap SOS</span>
+    </button>
+  );
+};
+
+const VoiceController = ({ onCommand }: { onCommand: (cmd: string) => void }) => {
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      if (recognitionRef.current) {
+        recognitionRef.current.continuous = true;
+        recognitionRef.current.interimResults = false;
+        recognitionRef.current.lang = 'en-US';
+
+        recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
+          const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
+          console.log('Voice Command Detected:', transcript);
+          onCommand(transcript);
+          if (navigator.vibrate) navigator.vibrate(30);
+        };
+
+        recognitionRef.current.onerror = () => setIsListening(false);
+        recognitionRef.current.onend = () => setIsListening(false);
+      }
+    }
+  }, [onCommand]);
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      toast.error('Voice Uplink Unavailable on this device.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      recognitionRef.current.start();
+      setIsListening(true);
+      toast.info('Voice Command Active. Say "Order Picked Up" or "Delivered"', { duration: 3000 });
+    }
+  };
+
+  return (
+    <button 
+      onClick={toggleListening}
+      className={cn(
+        "p-4 rounded-2xl flex flex-col items-center gap-2 border-2 transition-all active:scale-95 group relative overflow-hidden",
+        isListening ? "bg-blue-600/20 border-blue-500/50 text-blue-500" : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-zinc-700"
+      )}
+    >
+      {isListening && <div className="absolute inset-0 bg-blue-500/10 animate-pulse" />}
+      {isListening ? <Mic className="w-6 h-6 animate-pulse relative z-10" /> : <MicOff className="w-6 h-6 relative z-10" />}
+      <span className="text-[10px] font-black uppercase tracking-widest relative z-10">
+        {isListening ? 'Listening...' : 'Hands-Free'}
+      </span>
+    </button>
+  );
+};
+const Dashboard = ({ 
+  profile, 
+  todayEarnings, 
+  totalDeliveries, 
+  history, 
+  activeOrders,
+  onToggleOnline, 
+  onUpdateStatus,
+  setView, 
+  connectionCount 
+}: { 
   profile: RiderProfile, 
   todayEarnings: number,
   totalDeliveries: number,
   history: DeliveryOrder[],
+  activeOrders: DeliveryOrder[],
   onToggleOnline: () => void,
+  onUpdateStatus: (id: string, status: DeliveryStatus) => void,
   setView: (view: AppView) => void,
   connectionCount: number
 }) => {
-  const [shiftCount, setShiftCount] = useState(() => {
+  const [shiftCount] = useState(() => {
     return parseInt(localStorage.getItem('shiftCount') || '0', 10);
   });
 
@@ -424,6 +542,33 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
         </BentoCard>
       )}
 
+      {/* Safety & Performance Protocols */}
+      <div className="grid grid-cols-2 gap-4">
+        <SOSButton riderName={profile.name} />
+        <VoiceController onCommand={(cmd) => {
+          if (cmd.includes('picked up') || cmd.includes('order picked') || cmd.includes('collected')) {
+             const target = activeOrders.find(o => o.delivery_status === 'accepted');
+             if (target) {
+               toast.info('Voice Protocol: Processing Pick-Up...');
+               onUpdateStatus(target.id, 'picked_up');
+               if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+             } else {
+               toast.error('No pending pick-ups in sector.');
+             }
+          }
+          if (cmd.includes('delivered') || cmd.includes('dropped off') || cmd.includes('complete')) {
+             const target = activeOrders.find(o => o.delivery_status === 'picked_up');
+             if (target) {
+               toast.info('Voice Protocol: Confirming Delivery...');
+               onUpdateStatus(target.id, 'delivered');
+               if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+             } else {
+               toast.error('No active payloads to drop off.');
+             }
+          }
+        }} />
+      </div>
+
       {/* Power Toggle */}
       <div className="flex flex-col gap-2">
         <button 
@@ -438,7 +583,7 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
         >
           <div className={cn(
             "flex items-center justify-center transition-colors shadow-sm",
-            profile.is_online ? "text-green-500" : "text-zinc-600"
+            profile.is_online ? "text-green-500 animate-pulse" : "text-zinc-600"
           )}>
             <Power className="w-6 h-6" />
           </div>
@@ -810,6 +955,12 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
     return displayOrders[targetIdx] || displayOrders[0];
   }, [displayOrders, activeIndex]);
 
+  const etaDisplay = useMemo(() => {
+    const rawDist = Number(currentOrder?.distance_km);
+    const validDist = isNaN(rawDist) ? 0 : rawDist;
+    return String(Math.max(0, Math.floor(validDist * 2))).padStart(2, '0');
+  }, [currentOrder?.distance_km]);
+
   if (!currentOrder) return null;
 
   const isPickedUp = currentOrder.delivery_status === 'picked_up';
@@ -822,10 +973,10 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
   };
 
   return (
-    <div className="h-[calc(100vh-60px)] flex flex-col pt-24 pointer-events-none max-w-lg mx-auto">
+    <div className="h-screen flex flex-col pointer-events-none max-w-lg mx-auto">
       {/* Multi-Order Selector */}
       {displayOrders.length > 1 && (
-        <div className="bg-black/60 backdrop-blur-3xl border-b border-white/5 p-4 pointer-events-auto shadow-2xl">
+        <div className="bg-black/40 backdrop-blur-md border-b border-white/5 p-4 pointer-events-auto shadow-2xl mt-[60px]">
           <div className="flex items-center justify-between mb-3 px-1">
             <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] flex items-center gap-1.5">
               <Zap className="w-3 h-3" /> Auto-Routed Sequence
@@ -881,7 +1032,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         )}
       </div>
 
-      <div className="bg-black/60 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2rem] mt-auto border-t border-white/10">
+      <div className="bg-black/40 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2.5rem] mt-auto border-t border-white/10 ring-1 ring-white/5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3 flex-1 min-w-0 mr-4">
             <div className="flex items-center justify-center w-10 h-10 bg-[#f59e0b] rounded-[10px] shrink-0 shadow-sm">
@@ -890,14 +1041,14 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
             <div className="flex flex-col min-w-0">
               <span className="text-[13px] font-sans text-zinc-400 tracking-normal mb-0.5">Mission Objective</span>
               <span className="text-[16px] font-sans font-medium text-white truncate w-full leading-snug">
-                {isPickedUp ? 'Drop-Off' : 'Pick-Up'} • {targetAddress}
+                {isPickedUp ? 'Drop-Off' : 'Pick-Up'} • {targetAddress || 'Calculating Vector...'}
               </span>
             </div>
           </div>
           <div className="text-right flex flex-col items-end shrink-0 pl-3">
             <span className="text-[13px] font-sans text-zinc-400 tracking-normal mb-0.5">ETA</span>
             <span className="text-[16px] font-sans font-medium text-white tracking-tight">
-              {String(Math.max(0, Math.floor((Number(currentOrder?.distance_km) || 0) * 2))).padStart(2, '0')}:15
+              {etaDisplay}:15
             </span>
           </div>
         </div>
@@ -2262,10 +2413,12 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     }
   }, [onComplete]);
 
+  const handleCloseScanner = useCallback(() => setShowScanner(false), []);
+
   return (
     <>
       <div className="p-6 h-full min-h-[100dvh] pb-32 overflow-y-auto no-scrollbar flex flex-col">
-         <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 mb-8 group">
+         <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 mb-8 group pointer-events-auto">
            <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#f59e0b] transition-colors" />
            <span className="text-[10px] font-black uppercase tracking-widest">Return to Hub</span>
          </button>
@@ -2276,7 +2429,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
          </div>
 
          <div className="space-y-8 flex-1">
-            <BentoCard className="p-8 text-center bg-[#151515]">
+            <BentoCard className="p-8 text-center bg-[#151515] pointer-events-auto">
               <div className="mb-6 flex justify-center">
                 <button 
                   onClick={handleOpenScanner}
@@ -2301,7 +2454,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
               </div>
             </div>
 
-            <BentoCard className="p-6">
+            <BentoCard className="p-6 pointer-events-auto">
               <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-4">Option B: Pairing Cipher</p>
               <div className="flex gap-2">
                 <input 
@@ -2324,7 +2477,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
             </BentoCard>
          </div>
       </div>
-      {showScanner && <QRScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
+      {showScanner && <QRScanner onScan={handleScan} onClose={handleCloseScanner} />}
     </>
   );
 };
@@ -3189,6 +3342,12 @@ export default function App() {
     }
   };
 
+  const handlePairCallback = useCallback(async (code: string) => {
+    await handlePair(code);
+  }, [handlePair]);
+
+  const handleBackToHub = useCallback(() => setView('hub'), []);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center font-mono">
@@ -3417,11 +3576,13 @@ NOTIFY pgrst, 'reload schema';
       
       {/* Background Map layer */}
       {view === 'move' && (
-        <AppMapBackground 
-            isOnline={profile.is_online} 
-            activeOrder={activeOrders.length > 0 ? activeOrders[0] : null} 
-            isVisible={true}
-        />
+        <div className="fixed inset-0 z-0">
+          <AppMapBackground 
+              isOnline={profile.is_online} 
+              activeOrder={activeOrders.length > 0 ? activeOrders[0] : null} 
+              isVisible={true}
+          />
+        </div>
       )}
       
       {/* HUD Header */}
@@ -3514,11 +3675,11 @@ NOTIFY pgrst, 'reload schema';
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">ETA Vector</span>
-                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor((Number(availableOrders[0].distance_km) || 0) * 3))}:00 M</span>
+                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor(Number(availableOrders[0].distance_km || 0) * 3))}:00 M</span>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-1">Range</span>
-                    <span className="text-xl font-mono font-bold text-white">{Number(availableOrders[0].distance_km) || 0} KM</span>
+                    <span className="text-xl font-mono font-bold text-white">{Number(availableOrders[0].distance_km || 0).toFixed(1)} KM</span>
                   </div>
                 </div>
 
@@ -3621,7 +3782,9 @@ NOTIFY pgrst, 'reload schema';
                     .reduce((acc, curr) => acc + Number(curr.delivery_fee || 0), 0)}
                   totalDeliveries={profile.total_deliveries}
                   history={history}
+                  activeOrders={activeOrders}
                   onToggleOnline={toggleOnline} 
+                  onUpdateStatus={handleUpdateStatus}
                   setView={setView}
                   connectionCount={connections.length}
                 />
@@ -3639,12 +3802,12 @@ NOTIFY pgrst, 'reload schema';
             )}
             {view === 'move' && (
               activeOrders.length > 0 ? (
-                <div className="absolute inset-0 z-0 pointer-events-none">
+                <div className="fixed inset-0 z-20 pointer-events-none flex flex-col">
                   {/* Floating Instruction Module is inside AppMapBackground */}
                   <div className="absolute top-20 right-4 p-4 pointer-events-auto z-50">
                     <button 
                       onClick={() => setView('dash')}
-                      className="px-4 py-3 bg-black/60 backdrop-blur-md border border-white/10 rounded-full text-zinc-400 hover:text-white shadow-xl pointer-events-auto flex items-center gap-2 active:scale-95 transition-all"
+                      className="px-4 py-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full text-zinc-400 hover:text-white shadow-xl pointer-events-auto flex items-center gap-2 active:scale-95 transition-all"
                     >
                       <Minimize2 className="w-4 h-4" />
                       <span className="text-[10px] uppercase font-black tracking-widest">Back to Hub</span>
@@ -3686,7 +3849,7 @@ NOTIFY pgrst, 'reload schema';
                 }} 
               />
             )}
-            {view === 'pair' && <PairingView onBack={() => setView('hub')} onComplete={handlePair} />}
+            {view === 'pair' && <PairingView onBack={handleBackToHub} onComplete={handlePairCallback} />}
           </motion.div>
         </AnimatePresence>
       </main>

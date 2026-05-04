@@ -41,13 +41,17 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
         try {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed)) {
-            setCachedRoute(parsed.map(p => L.latLng(p.lat, p.lng)));
+            const routes = parsed.map(p => L.latLng(p.lat, p.lng));
+            // Defer update to avoid cascading render
+            setTimeout(() => {
+              setCachedRoute(routes);
             
-            // Also notify listener about cached info if we seem to be in fallback mode
-            const savedInfo = localStorage.getItem(`routeInfo_${cacheId}`);
-            if (savedInfo) {
-               onRouteFound(JSON.parse(savedInfo));
-            }
+              // Also notify listener about cached info if we seem to be in fallback mode
+              const savedInfo = localStorage.getItem(`routeInfo_${cacheId}`);
+              if (savedInfo) {
+                onRouteFound(JSON.parse(savedInfo));
+              }
+            }, 0);
           }
         } catch (e) {
           console.error('Failed to load cached route', e);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, Marker } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
@@ -158,8 +158,10 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     };
   }, [requestGeolocation]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleRouteFound = useCallback((route: any) => {
+  const handleRouteFound = useCallback((route: { 
+    summary?: { totalTime: number; totalDistance: number }; 
+    instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
+  }) => {
     // Sanitize route info to avoid circular structures in state (important for motion/react-leaflet)
     if (route) {
       const sanitized = {
@@ -245,11 +247,19 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         <Marker position={riderPos} icon={mockRiderIcon} zIndexOffset={100} />
         
         {targetPos && (
-          <Marker position={targetPos} icon={isPickedUp ? mockCustomerIcon : mockMerchantIcon} />
-        )}
-        
-        {targetPos && (
-          <RoutingMachine start={riderPos} end={targetPos} onRouteFound={handleRouteFound} />
+          <>
+            <Marker position={targetPos} icon={isPickedUp ? mockCustomerIcon : mockMerchantIcon} />
+            <Polyline 
+              positions={[riderPos, targetPos] as [number, number][]} 
+              pathOptions={{ 
+                color: '#f59e0b', 
+                dashArray: '10, 15', 
+                weight: 2,
+                opacity: 0.4
+              }} 
+            />
+            <RoutingMachine start={riderPos} end={targetPos} onRouteFound={handleRouteFound} />
+          </>
         )}
       </MapContainer>
 

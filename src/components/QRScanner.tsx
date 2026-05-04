@@ -10,6 +10,12 @@ interface QRScannerProps {
 export function QRScanner({ onScan, onClose }: QRScannerProps) {
   const [hasCamera, setHasCamera] = useState(true);
 
+  const onScanRef = React.useRef(onScan);
+
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
   useEffect(() => {
     let scanner: Html5Qrcode;
 
@@ -26,7 +32,7 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
             },
             (decodedText) => {
               // Successfully decoded
-              onScan(decodedText);
+              onScanRef.current(decodedText);
               scanner.stop();
             },
             () => {
@@ -49,7 +55,7 @@ export function QRScanner({ onScan, onClose }: QRScannerProps) {
         scanner.stop().catch(console.error);
       }
     };
-  }, [onScan]);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">

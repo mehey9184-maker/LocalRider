@@ -26,6 +26,7 @@ export interface ShopConnection {
   shop_id: string;
   expires_at: string;
   created_at: string;
+  updated_at?: string;
   shop_name?: string;
   connection_code?: string;
 }

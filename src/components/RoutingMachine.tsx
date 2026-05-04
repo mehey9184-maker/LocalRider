@@ -14,7 +14,10 @@ L.Icon.Default.mergeOptions({
 interface RoutingMachineProps {
   start: [number, number] | null;
   end: [number, number];
-  onRouteFound: (route: unknown) => void;
+  onRouteFound: (route: { 
+    summary?: { totalTime: number; totalDistance: number }; 
+    instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
+  }) => void;
 }
 
 export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps) {
@@ -52,33 +55,42 @@ export function RoutingMachine({ start, end, onRouteFound }: RoutingMachineProps
 
     routingControlRef.current = routingControl;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handleRouteError = (e: any) => {
+    // Type helper for routing events
+    interface RoutingEvent {
+      message?: string;
+      error?: { message?: string };
+      routes?: { 
+        summary?: { totalTime: number; totalDistance: number }; 
+        instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
+      }[];
+    }
+    
+    const control = routingControl as L.Routing.Control & { 
+      on: (event: string, fn: (e: RoutingEvent) => void) => void;
+      off: (event: string, fn: (e: RoutingEvent) => void) => void;
+    };
+
+    const handleRouteError = (e: RoutingEvent) => {
       // Silence standard log if we can, and force fallback
       const errorMsg = e?.message || e?.error?.message || 'Unknown routing error';
       console.warn('MISSION CRITICAL: Routing uplink failed. Engaging visual line fallback.', errorMsg);
       setUseFallback(true);
     };
 
-    const handleRouteFound = (e: unknown) => {
-      const event = e as { routes?: unknown[] };
-      if (event.routes && event.routes.length > 0) {
+    const handleRouteFound = (e: RoutingEvent) => {
+      if (e.routes && e.routes.length > 0) {
         setUseFallback(false);
-        onRouteFound(event.routes[0]);
+        onRouteFound(e.routes[0]);
       }
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (routingControl as any).on('routingerror', handleRouteError);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (routingControl as any).on('routesfound', handleRouteFound);
+    control.on('routingerror', handleRouteError);
+    control.on('routesfound', handleRouteFound);
 
     return () => {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (routingControl as any).off('routingerror', handleRouteError);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (routingControl as any).off('routesfound', handleRouteFound);
+        control.off('routingerror', handleRouteError);
+        control.off('routesfound', handleRouteFound);
         if (map && routingControlRef.current) {
           try {
              routingControlRef.current.getPlan().setWaypoints([]);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
 import { 
   Smartphone, 
   Bike, 
@@ -24,6 +24,8 @@ import {
   Gift,
   Radar,
   WifiOff,
+  Activity,
+  Plus,
   Rocket
 } from 'lucide-react';
 import { 
@@ -34,6 +36,8 @@ import {
   Tooltip,
   CartesianGrid
 } from 'recharts';
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
+import L from 'leaflet';
 import { Toaster, toast } from 'sonner';
 import { getSupabase, isSupabaseMocked } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -43,10 +47,21 @@ import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/AppMapBackground';
 import { TacticalOnboarding } from './components/TacticalOnboarding';
 
+import { QRCodeSVG } from 'qrcode.react';
+
 // --- Components ---
 
 
 // --- Utilities ---
+
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1 * Math.PI/180) *
+            Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
 const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 1000, timeoutMs = 8000): Promise<T> => {
   try {
@@ -55,10 +70,11 @@ const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 100
       new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
     ]);
   } catch (error) {
-    if (retries > 0 && (error instanceof TypeError || (error instanceof Error && error.message === 'timeout'))) {
+    if (retries > 0 && (error instanceof TypeError || (error instanceof Error && (error.message === 'timeout' || error.message.includes('fetch'))))) {
+      const nextDelay = delay * 2; // Exponential backoff
       console.warn(`Fetch failure, retrying in ${delay}ms... (${retries} attempts left)`);
       await new Promise(res => setTimeout(res, delay));
-      return fetchWithRetry(fn, retries - 1, delay, timeoutMs);
+      return fetchWithRetry(fn, retries - 1, nextDelay, timeoutMs);
     }
     throw error;
   }
@@ -83,8 +99,8 @@ const TelemetryData = ({ label, value, unit }: { label: string, value: string | 
   <div className="flex flex-col">
     <span className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] mb-1">{label}</span>
     <div className="flex items-baseline gap-1">
-      <span className="text-2xl font-mono font-bold text-[#F0F0F0] tabular-nums tracking-tighter">{value}</span>
-      {unit && <span className="text-[10px] text-zinc-400 font-bold uppercase">{unit}</span>}
+      <span className="text-4xl md:text-5xl font-mono font-bold text-[#F0F0F0] tabular-nums tracking-tighter">{value}</span>
+      {unit && <span className="text-xs text-zinc-400 font-bold uppercase">{unit}</span>}
     </div>
   </div>
 );
@@ -100,11 +116,30 @@ const BentoCard = ({ children, className, glow = false, ...props }: { children: 
   </div>
 );
 
-const SwipeButton = ({ label, onComplete, color = "#f59e0b" }: { label: string, onComplete: () => void, color?: string }) => {
+const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken }: { label: string, onComplete: () => void, color?: string, resetToken?: string | number }) => {
   const [isComplete, setIsComplete] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [maxDrag, setMaxDrag] = useState(260);
+  const x = useMotionValue(0);
+
+  useEffect(() => {
+    if (resetToken !== undefined) {
+      setTimeout(() => {
+        setIsComplete(false);
+        x.set(0);
+      }, 0);
+    }
+  }, [resetToken, x]);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      const handleWidth = 72;
+      setMaxDrag(containerRef.current.offsetWidth - handleWidth - 12);
+    }
+  }, []);
 
   return (
-    <div className="relative h-20 bg-zinc-900/50 border-2 border-zinc-800 rounded-2xl overflow-hidden p-1.5 select-none">
+    <div ref={containerRef} className="relative h-20 bg-zinc-900/50 border-2 border-zinc-800 rounded-2xl overflow-hidden p-1.5 select-none">
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <span className="text-xs font-black uppercase italic tracking-[0.3em] text-zinc-600">
           {label}
@@ -112,16 +147,24 @@ const SwipeButton = ({ label, onComplete, color = "#f59e0b" }: { label: string, 
       </div>
       <motion.div
         drag="x"
-        dragConstraints={{ left: 0, right: 260 }}
+        dragConstraints={{ left: 0, right: maxDrag }}
         dragElastic={0.1}
+        style={{ x, backgroundColor: isComplete ? '#fff' : color, touchAction: 'none' }}
         onDragEnd={(_, info) => {
-          if (info.offset.x > 200) {
+          if (info.offset.x > maxDrag * 0.75) {
             setIsComplete(true);
             onComplete();
+            if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+          } else {
+            // Spring back if not complete
+            animate(x, 0, { type: "spring", stiffness: 400, damping: 25 });
           }
         }}
-        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square bg-[#f59e0b] rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_0_20px_rgba(57,255,20,0.4)]"
-        style={{ backgroundColor: isComplete ? '#fff' : color }}
+        animate={!isComplete ? {
+          scale: [1, 1.05, 1],
+          transition: { repeat: Infinity, duration: 2, ease: "easeInOut", repeatDelay: 3 }
+        } : {}}
+        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_0_20px_rgba(57,255,20,0.4)] touch-action-none"
       >
         <ArrowRight className="w-8 h-8 text-black" />
       </motion.div>
@@ -370,27 +413,30 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
 
       {/* Power Toggle */}
       <button 
-        onClick={onToggleOnline}
+        onClick={() => {
+          onToggleOnline();
+          if (navigator.vibrate) navigator.vibrate(50);
+        }}
         className={cn(
-          "w-full p-8 rounded-[2.5rem] border-2 flex items-center justify-between transition-all active:scale-[0.98] group",
-          profile.is_online 
-            ? "bg-[#f59e0b]/5 border-[#f59e0b] shadow-[0_0_40px_rgba(245,158,11,0.15)]" 
-            : "bg-zinc-900 border-zinc-800 text-zinc-600"
+          "w-full h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-green-500/20",
+          profile.is_online ? "bg-zinc-900 border border-zinc-900/50" : "bg-zinc-900/40 border border-zinc-800/40"
         )}
       >
-        <div className="flex flex-col items-start gap-1">
-          <span className={cn("text-3xl font-headline font-black italic tracking-tighter uppercase", profile.is_online ? "text-[#f59e0b]" : "text-zinc-600")}>
-            {profile.is_online ? 'SYSTEM ONLINE' : 'SYSTEM STANDBY'}
-          </span>
-          <span className="text-[11px] font-black uppercase tracking-[0.2em] opacity-60">
-            {profile.is_online ? 'SYNCING LOCAL MISSIONS' : 'READY FOR ACTIVATION'}
-          </span>
-        </div>
-        <div className={cn(
-          "p-5 rounded-3xl transition-all shadow-lg group-hover:scale-110",
-          profile.is_online ? "bg-[#f59e0b] text-black" : "bg-zinc-800 text-zinc-700"
-        )}>
-          <Power className="w-8 h-8" />
+        <div className="flex items-center gap-4">
+          <div className={cn(
+            "flex items-center justify-center transition-colors shadow-sm",
+            profile.is_online ? "text-green-500" : "text-zinc-600"
+          )}>
+            <Power className="w-6 h-6" />
+          </div>
+          <div className="flex flex-col items-start leading-[1.2]">
+            <span className={cn("text-[16px] font-sans font-medium tracking-normal", profile.is_online ? "text-white" : "text-zinc-400")}>
+              {profile.is_online ? 'System Online' : 'System Standby'}
+            </span>
+            <span className={cn("text-[13px] font-sans mt-0.5 tracking-normal", profile.is_online ? "text-zinc-400" : "text-zinc-500")}>
+              {profile.is_online ? 'Syncing local missions' : 'Ready for activation'}
+            </span>
+          </div>
         </div>
       </button>
 
@@ -502,8 +548,29 @@ const Dashboard = ({ profile, todayEarnings, totalDeliveries, history, onToggleO
   );
 };
 
-const OrdersFeed = ({ orders, onAccept, isOnline, surgeMultiplier, connectionCount }: { orders: DeliveryOrder[], onAccept: (id: string) => void, isOnline: boolean, surgeMultiplier: number, connectionCount: number }) => {
+const OrdersFeed = ({ 
+  orders, 
+  onAccept, 
+  isOnline, 
+  surgeMultiplier, 
+  connectionCount,
+  onRefresh
+}: { 
+  orders: DeliveryOrder[], 
+  onAccept: (id: string) => void, 
+  isOnline: boolean, 
+  surgeMultiplier: number, 
+  connectionCount: number,
+  onRefresh: () => void
+}) => {
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await onRefresh();
+    setTimeout(() => setIsRefreshing(false), 1000);
+  };
 
   return (
     <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
@@ -511,10 +578,18 @@ const OrdersFeed = ({ orders, onAccept, isOnline, surgeMultiplier, connectionCou
         <div className="flex items-center justify-between">
            <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Live Missions</h2>
            {isOnline && (
-              <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-4 py-2 rounded-2xl flex items-center gap-2">
-                <div className="w-2 h-2 bg-[#f59e0b] rounded-full animate-pulse shadow-[0_0_8px_#f59e0b]" />
-                <span className="text-[11px] font-black text-[#f59e0b] tracking-widest">{orders.length} READY</span>
-              </div>
+              <button 
+                onClick={handleRefresh}
+                className={cn(
+                  "bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-4 py-2 rounded-2xl flex items-center gap-2 transition-all active:scale-90",
+                  isRefreshing && "animate-pulse brightness-150"
+                )}
+              >
+                <Radar className={cn("w-3 h-3 text-[#f59e0b]", isRefreshing && "animate-spin")} />
+                <span className="text-[11px] font-black text-[#f59e0b] tracking-widest">
+                  {isRefreshing ? 'SCANNING...' : 'SCAN AGAIN'}
+                </span>
+              </button>
            )}
         </div>
         <div className="flex items-center gap-3">
@@ -677,8 +752,9 @@ const OrdersFeed = ({ orders, onAccept, isOnline, surgeMultiplier, connectionCou
                 </div>
 
                 <SwipeButton 
-                  label="Initiate Mission Vector" 
+                  label="SLIDE TO ACCEPT" 
                   onComplete={() => setConfirmId(order.id)} 
+                  resetToken={confirmId || 'reset'}
                 />
               </BentoCard>
             </motion.div>
@@ -789,9 +865,10 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         </div>
 
         <SwipeButton 
-          label={isPickedUp ? "Complete Mission Uplink" : "Confirm Cargo Pickup"}
+          label={isPickedUp ? "SLIDE TO COMPLETE" : "SLIDE TO PICK UP"}
           onComplete={() => onUpdateStatus(currentOrder.id, isPickedUp ? 'delivered' : 'picked_up')}
           color={isPickedUp ? "#f59e0b" : "#f58220"}
+          resetToken={currentOrder.delivery_status}
         />
       </div>
     </div>
@@ -808,12 +885,21 @@ const StarRating = ({ rating }: { rating: number }) => (
 
 const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
   const chartData = useMemo(() => {
+    // Group history by day of week
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    return Array.from({ length: 7 }, (_, i) => ({
-      name: days[i],
-      yield: 100 + (i * 25)
+    const earningsByDay = new Array(7).fill(0);
+    
+    history.forEach(order => {
+      const date = new Date(order.updated_at);
+      const dayIndex = date.getDay();
+      earningsByDay[dayIndex] += Number(order.delivery_fee || 0);
+    });
+
+    return days.map((name, i) => ({
+      name,
+      yield: earningsByDay[i] || (i * 10) // Smooth fallback for empty days in demo
     }));
-  }, []);
+  }, [history]);
 
   return (
     <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
@@ -926,22 +1012,48 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
   </div>
 );
 
+const RecenterMap = ({ coords }: { coords: [number, number] }) => {
+  const map = useMap();
+  const prevCoords = useRef<[number, number]>(coords);
+  
+  useEffect(() => {
+    if (prevCoords.current[0] !== coords[0] || prevCoords.current[1] !== coords[1]) {
+      map.setView(coords, 15);
+      prevCoords.current = coords;
+    }
+  }, [coords, map]);
+  
+  return null;
+};
+
 const RiderTrackingMap = ({ 
   riderCoords
 }: { 
   riderCoords: [number, number]
 }) => {
+  const customIcon = L.icon({
+    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+  });
+
   return (
-    <div className="w-full h-56 bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-200/10 relative group mb-6 shadow-2xl">
-      <iframe
-        width="100%"
-        height="100%"
-        frameBorder="0"
-        style={{ border: 0 }}
-        src={`https://maps.google.com/maps?q=${riderCoords[0]},${riderCoords[1]}&t=&z=15&ie=UTF8&iwloc=&output=embed`}
-        allowFullScreen
-      ></iframe>
-      <div className="absolute top-4 left-4 flex gap-2 pointer-events-none">
+    <div className="w-full h-56 bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-200/10 relative group mb-6 shadow-2xl z-0">
+      <MapContainer 
+        center={riderCoords} 
+        zoom={15} 
+        style={{ height: '100%', width: '100%' }}
+        zoomControl={false}
+        attributionControl={false}
+      >
+        <TileLayer
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        />
+        <Marker position={riderCoords} icon={customIcon} />
+        <RecenterMap coords={riderCoords} />
+      </MapContainer>
+      <div className="absolute top-4 left-4 flex gap-2 pointer-events-none z-10">
         <div className="bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/20 flex items-center gap-2">
           <div className="w-1.5 h-1.5 bg-[#f59e0b] rounded-full animate-pulse" />
           Live Vector
@@ -1077,7 +1189,7 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
     if (isSupabaseMocked()) return;
     
     const channel = getSupabase()
-      .channel('merchant_updates')
+      .channel(`merchant_updates_${Math.random()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchData();
       })
@@ -1086,7 +1198,9 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
       })
       .subscribe();
     
-    return () => { channel.unsubscribe(); };
+    return () => { 
+      getSupabase().removeChannel(channel); 
+    };
   }, []);
 
   const handleUpdateStatus = async (id: string, status: string) => {
@@ -1166,7 +1280,7 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
 
   return (
     <div className="bg-[#F8F9FA] min-h-screen text-zinc-900 font-sans pb-32">
-      {/* Top Navigation Bar */}
+       {/* Top Navigation Bar */}
       <header className="bg-white border-b border-zinc-200 h-16 flex items-center justify-between px-6 sticky top-0 z-50">
         <div className="flex items-center gap-8">
            <div className="flex items-center gap-2">
@@ -1178,11 +1292,11 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
               </h1>
            </div>
            
-           <nav className="hidden md:flex items-center gap-6">
+           <nav className="hidden lg:flex items-center gap-6">
               {['Dashboard', 'Menu', 'Orders', 'Marketing', 'Coupons', 'Payments', 'Insights', 'Riders', 'Settings'].map(tab => (
                 <button 
                   key={tab}
-                  onClick={() => setActiveTab(tab.toLowerCase() as 'dashboard' | 'menu' | 'orders' | 'marketing' | 'coupons' | 'payments' | 'insights' | 'riders' | 'settings')}
+                  onClick={() => setActiveTab(tab.toLowerCase() as typeof activeTab)}
                   className={cn(
                     "text-xs font-bold uppercase tracking-widest transition-colors",
                     activeTab === tab.toLowerCase() ? "text-[#f58220]" : "text-zinc-500 hover:text-zinc-800"
@@ -1195,15 +1309,35 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
         </div>
 
         <div className="flex items-center gap-4">
-           <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-full">
+           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-full">
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               <span className="text-[10px] font-black uppercase text-green-700">Accepting Orders</span>
            </div>
-           <button onClick={onSwitchRole} className="p-2 text-zinc-400 hover:text-zinc-600">
+           <button onClick={onSwitchRole} className="p-2 text-zinc-400 hover:text-zinc-600 bg-zinc-50 rounded-xl">
               <LogOut className="w-5 h-5" />
            </button>
         </div>
       </header>
+
+      {/* IMPROVEMENT #8 — Merchant Secondary Mobile Navigation */}
+      <div className="lg:hidden bg-white border-b border-zinc-100 sticky top-16 z-40 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-2 px-4 py-3 min-w-max">
+          {['Dashboard', 'Menu', 'Orders', 'Marketing', 'Coupons', 'Riders', 'Insights', 'Settings'].map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab.toLowerCase() as typeof activeTab)}
+              className={cn(
+                "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                activeTab === tab.toLowerCase() 
+                  ? "bg-[#f58220] text-white shadow-lg shadow-[#f58220]/20" 
+                  : "bg-zinc-50 text-zinc-500 border border-zinc-100"
+              )}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Main Content Area */}
       <div className="max-w-7xl mx-auto p-6 md:p-8">
@@ -1342,7 +1476,17 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
 
              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="md:col-span-1 space-y-6">
-                   <BentoCard className="bg-zinc-900 border-zinc-800 p-8 text-white">
+                   <BentoCard className="bg-zinc-900 border-zinc-800 p-8 text-white relative overflow-hidden">
+                      {/* FEATURE #1 — QR Code for pairing */}
+                      <div className="absolute -right-12 -bottom-12 opacity-10 group-hover:opacity-20 transition-opacity rotate-12">
+                         <QRCodeSVG 
+                           value={pairingCode} 
+                           size={200} 
+                           bgColor="#000000" 
+                           fgColor="#f59e0b" 
+                         />
+                      </div>
+
                       <div className="flex items-center gap-3 mb-6">
                          <div className="p-2 bg-[#f58220]/20 rounded-lg">
                             <Zap className="w-5 h-5 text-[#f58220]" />
@@ -1350,11 +1494,23 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
                          <h3 className="text-sm font-black uppercase tracking-widest">Active Tether</h3>
                       </div>
 
-                      <div className="text-center py-6">
-                         <div className="text-4xl font-headline font-black italic tracking-widest text-[#f59e0b] mb-2 uppercase">
-                            {pairingCode}
+                      <div className="flex flex-col items-center justify-center py-6 gap-6">
+                         <div className="bg-white p-4 rounded-3xl shadow-[0_0_30px_rgba(245,130,32,0.3)]">
+                            <QRCodeSVG 
+                              value={pairingCode} 
+                              size={160} 
+                              bgColor="#FFFFFF" 
+                              fgColor="#000000" 
+                              level="H"
+                            />
                          </div>
-                         <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Current Pairing Cipher</p>
+                         
+                         <div className="text-center">
+                            <div className="text-4xl font-headline font-black italic tracking-widest text-[#f59e0b] mb-2 uppercase">
+                               {pairingCode}
+                            </div>
+                            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Current Pairing Cipher</p>
+                         </div>
                       </div>
 
                       <button 
@@ -1427,7 +1583,79 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
                 </div>
              </div>
           </div>
-        ) : activeTab === 'settings' ? (
+         ) : activeTab === 'insights' ? (
+           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+             <div className="flex flex-col gap-1">
+                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Sector <span className="text-[#f58220]">Analytics</span></h2>
+                <p className="text-zinc-500 text-sm">Review operational telemetry and merchant node ROI performance.</p>
+             </div>
+
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm min-h-[400px]">
+                   <h3 className="text-sm font-black uppercase tracking-widest text-zinc-400 mb-8">Order Volume (24H Pulse)</h3>
+                   <div className="h-[300px]">
+                     <ResponsiveContainer width="100%" height="100%">
+                       <AreaChart data={[
+                         { time: '08:00', orders: 12 },
+                         { time: '10:00', orders: 18 },
+                         { time: '12:00', orders: 42 },
+                         { time: '14:00', orders: 25 },
+                         { time: '16:00', orders: 31 },
+                         { time: '18:00', orders: 58 },
+                         { time: '20:00', orders: 45 },
+                         { time: '22:00', orders: 15 },
+                       ]}>
+                         <defs>
+                           <linearGradient id="colorOrders" x1="0" y1="0" x2="0" y2="1">
+                             <stop offset="5%" stopColor="#f58220" stopOpacity={0.3}/>
+                             <stop offset="95%" stopColor="#f58220" stopOpacity={0}/>
+                           </linearGradient>
+                         </defs>
+                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                         <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} />
+                         <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', background: '#000', color: '#fff' }} />
+                         <Area type="monotone" dataKey="orders" stroke="#f58220" strokeWidth={3} fillOpacity={1} fill="url(#colorOrders)" />
+                       </AreaChart>
+                     </ResponsiveContainer>
+                   </div>
+                </BentoCard>
+
+                <div className="space-y-6">
+                   <div className="grid grid-cols-2 gap-4">
+                      <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
+                         <p className="text-[10px] font-black uppercase text-zinc-400 mb-2">Avg Prep Time</p>
+                         <p className="text-3xl font-headline font-black italic">14.8 <span className="text-[10px] uppercase font-bold text-zinc-500">Mins</span></p>
+                      </BentoCard>
+                      <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
+                         <p className="text-[10px] font-black uppercase text-zinc-400 mb-2">Completion Rate</p>
+                         <p className="text-3xl font-headline font-black italic">98.4<span className="text-[10px] uppercase font-bold text-zinc-500">%</span></p>
+                      </BentoCard>
+                   </div>
+                   
+                   <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
+                      <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-widest mb-6">Heatmap: Order Clusters</h4>
+                      <div className="space-y-4">
+                         {[
+                           { area: 'Sector Alpha (Downtown)', freq: 45, trend: '+12%' },
+                           { area: 'Sector Beta (Residential)', freq: 32, trend: '-5%' },
+                           { area: 'Sector Gamma (Business)', freq: 28, trend: '+18%' }
+                         ].map(item => (
+                            <div key={item.area} className="space-y-2">
+                               <div className="flex justify-between items-center text-[11px] font-bold">
+                                  <span>{item.area}</span>
+                                  <span className={cn(item.trend.startsWith('+') ? "text-green-600" : "text-red-500")}>{item.trend}</span>
+                               </div>
+                               <div className="w-full h-2 bg-zinc-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-[#f58220]" style={{ width: `${item.freq}%` }} />
+                               </div>
+                            </div>
+                         ))}
+                      </div>
+                   </BentoCard>
+                </div>
+             </div>
+           </div>
+         ) : activeTab === 'settings' ? (
           <div className="max-w-2xl mx-auto space-y-8">
             <BentoCard className="bg-white border-zinc-200 p-8 shadow-sm">
                <h2 className="text-2xl font-black italic uppercase tracking-tighter mb-8">System Configuration</h2>
@@ -1781,59 +2009,54 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
               const minsLeft = Math.max(0, Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60)));
               
               return (
-                <BentoCard 
+                <div 
                   key={conn.id} 
                   className={cn(
-                    "p-4 border-zinc-800/40 transition-all",
-                    isExpired ? "bg-red-500/5 border-red-500/20 grayscale" : "bg-zinc-900/10"
+                    "w-full h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800",
+                    isExpired ? "bg-zinc-900/40 border border-red-900/30 grayscale" : "bg-zinc-900 border border-zinc-800"
                   )}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "p-2 rounded-lg",
-                        isExpired ? "bg-red-500/10" : "bg-[#f59e0b]/10"
-                      )}>
-                        <Globe className={cn("w-4 h-4", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
-                      </div>
-                      <div>
-                        <h4 className={cn(
-                          "text-xs font-black uppercase italic",
-                          isExpired ? "text-zinc-500" : "text-zinc-200"
-                        )}>
-                          {conn.shop_name || 'Merchant ' + conn.shop_id.slice(0, 4)}
-                        </h4>
-                        <div className="flex items-center gap-2">
-                           <p className={cn(
-                             "text-[9px] font-mono",
-                             isExpired ? "text-red-500/60" : "text-zinc-500"
-                           )}>
-                             {isExpired ? 'SIGNAL CUT' : 'UPLINK ACTIVE'}
-                           </p>
-                           {isExpired && (
-                             <button 
-                                onClick={() => onPair(conn.connection_code)}
-                                className="text-[8px] font-black uppercase text-red-500 border border-red-500/20 px-1.5 py-0.5 rounded bg-red-500/5 animate-pulse"
-                             >
-                                 Reset Time
-                             </button>
-                           )}
-                        </div>
-                      </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center justify-center shadow-sm">
+                      <Globe className={cn("w-6 h-6", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
                     </div>
-                    <div className="text-right">
+                    <div className="flex flex-col items-start leading-[1.2]">
                       <span className={cn(
-                        "text-[10px] font-mono font-bold",
-                        isExpired ? "text-red-600" : "text-orange-500"
+                        "text-[16px] font-sans font-medium tracking-normal",
+                        isExpired ? "text-zinc-500" : "text-white"
                       )}>
-                        {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
+                        {conn.shop_name || 'Merchant ' + conn.shop_id.slice(0, 4)}
                       </span>
-                      <p className="text-[8px] text-zinc-600 font-black uppercase">
-                        {isExpired ? 'EXPIRED' : 'Until Expiry'}
-                      </p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                         <span className={cn(
+                           "text-[13px] font-sans tracking-normal",
+                           isExpired ? "text-red-500/80" : "text-zinc-400" // using #a1a1aa which is zinc-400, providing excellent contrast
+                         )}>
+                           {isExpired ? 'Sync required' : 'Uplink active'}
+                         </span>
+                         {isExpired && (
+                           <button 
+                              onClick={() => {
+                                onPair(conn.connection_code);
+                                if (navigator.vibrate) navigator.vibrate(50);
+                              }}
+                              className="text-[11px] font-sans font-medium text-red-400 bg-red-400/10 px-2 py-0.5 rounded animate-pulse"
+                           >
+                               Renew
+                           </button>
+                         )}
+                      </div>
                     </div>
                   </div>
-                </BentoCard>
+                  <div className="text-right flex flex-col items-end leading-[1.2]">
+                    <span className={cn(
+                      "text-[14px] font-sans font-medium tracking-normal",
+                      isExpired ? "text-red-500/50" : "text-zinc-400"
+                    )}>
+                      {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
+                    </span>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -1934,7 +2157,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     try {
       await onComplete(scannedCode.slice(0, 6));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : (err as any)?.message || 'Uplink rejected. Invalid scan.';
+      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || 'Uplink rejected. Invalid scan.';
       toast.error(msg);
     } finally {
       setLoading(false);
@@ -2019,11 +2242,41 @@ export default function App() {
   const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<'rider' | 'merchant'>('rider');
-  const [view, setView] = useState<AppView>('dash');
+  const [view, setView] = useState<AppView>(() => {
+    return (localStorage.getItem('localeats_view') as AppView) || 'dash';
+  });
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
-  const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>([]);
+  const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
+    const saved = localStorage.getItem('localeats_active_orders');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [history, setHistory] = useState<DeliveryOrder[]>([]);
   const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  // Network Detection
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      toast.success('Uplink Re-established. Signal secure.');
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+      toast.error('Signal Loss Detected. Orbital telemetry suspended.');
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // State Persistence Protocol
+  useEffect(() => {
+    localStorage.setItem('localeats_view', view);
+    localStorage.setItem('localeats_active_orders', JSON.stringify(activeOrders));
+  }, [view, activeOrders]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [bootLogs, setBootLogs] = useState<string[]>([]);
   const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
@@ -2057,19 +2310,16 @@ export default function App() {
       }
       
       addBootLog('FETCH: RIDER_TELEMETRY...');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await fetchWithRetry<{ data: RiderProfile; error: any }>(async () => {
+      const { data, error } = await fetchWithRetry<{ data: RiderProfile | null; error: { code: string; message: string } | null }>(async () => {
         const res = await getSupabase()
           .from('rider_profiles')
           .select('*')
           .eq('id', user.id)
           .single();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return res as any;
+        return res as { data: RiderProfile | null; error: { code: string; message: string } | null };
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (error && (error as any).code === 'PGRST116') {
+      if (error && error.code === 'PGRST116') {
         addBootLog('WARN: NO_PROFILE - INITIALIZING...');
         // Build initial profile
         const newProfile: Partial<RiderProfile> = {
@@ -2197,11 +2447,18 @@ export default function App() {
       if (ordersData) {
         const formatted = ordersData
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .map((item: any) => ({
-            ...item,
-            restaurant_name: item.shops?.name || 'Authorized Merchant',
-            distance_km: Math.floor(Math.random() * 5) + 1.2
-          }));
+          .map((item: any) => {
+            const shopLat = item.shop_latitude || -33.9249;
+            const shopLng = item.shop_longitude || 18.4241;
+            const riderLat = profile?.current_latitude || -33.9100; // default near shop if missing
+            const riderLng = profile?.current_longitude || 18.4100;
+            
+            return {
+              ...item,
+              restaurant_name: item.shops?.name || 'Authorized Merchant',
+              distance_km: item.distance_km || haversineDistance(riderLat, riderLng, shopLat, shopLng)
+            };
+          });
         
         const sorted = [...formatted].map(order => {
            // Since we already filtered by validShopIds in the query, its always linked
@@ -2271,16 +2528,21 @@ export default function App() {
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [user, fetchProfile, fetchConnectionsAndOrders]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
-  const activeMissionCount = activeOrders.length;
-  // Location Tracking Protocol
+  const lastLocationUpdateRef = useRef<number>(0);
   useEffect(() => {
-    if (!user || !profile?.is_online || activeMissionCount === 0) return;
+    if (!user || !profile?.is_online || activeOrders.length === 0) return;
 
     let watchId: number;
 
     const updateLocation = async (lat: number, lng: number) => {
+      // PERF #6 — Throttle the location update to once every 15 seconds minimum
+      const now = Date.now();
+      if (now - lastLocationUpdateRef.current < 15000) return;
+      lastLocationUpdateRef.current = now;
+
       try {
         await getSupabase()
           .from('rider_profiles')
@@ -2322,7 +2584,7 @@ export default function App() {
     return () => {
       if (watchId) navigator.geolocation.clearWatch(watchId);
     };
-  }, [user, profile?.is_online, activeMissionCount]);
+  }, [user, profile?.is_online, activeOrders.length]);
 
   const loadingRef = useRef(loading);
   useEffect(() => {
@@ -2384,65 +2646,96 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Profile Sync
+  // --- REAL-TIME FLEET ORCHESTRATOR ---
+  useEffect(() => {
+    if (!user || isSupabaseMocked()) return;
+
+    const channels: import('@supabase/supabase-js').RealtimeChannel[] = [];
+
+    // Protocol: Profile Synchronization
+    const profileChannel = getSupabase()
+      .channel(`profile:${user.id}_${Math.random()}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'rider_profiles', 
+        filter: `id=eq.${user.id}` 
+      }, (payload) => {
+        setProfile(payload.new as RiderProfile);
+      })
+      .subscribe();
+    channels.push(profileChannel);
+
+    // Protocol: Sector Missions (Public)
+    const publicOrdersChannel = getSupabase()
+      .channel(`public_orders_${Math.random()}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'orders', 
+        filter: 'order_type=eq.delivery' 
+      }, () => {
+        fetchConnectionsAndOrders();
+      })
+      .subscribe();
+    channels.push(publicOrdersChannel);
+
+    // Protocol: Relay Connections
+    const connChannel = getSupabase()
+      .channel(`rider_connections:${user.id}_${Math.random()}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'rider_connections', 
+        filter: `rider_id=eq.${user.id}` 
+      }, () => {
+        fetchConnectionsAndOrders();
+      })
+      .subscribe();
+    channels.push(connChannel);
+
+    // Protocol: Active Mission Directives
+    const missionChannel = getSupabase()
+      .channel(`rider_orders:${user.id}_${Math.random()}`)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'orders', 
+        filter: `rider_id=eq.${user.id}` 
+      }, () => {
+        // Full refresh on mission state change
+        fetchConnectionsAndOrders();
+        // fetchData is also called by its own effect, but we trigger standard refresh here
+      })
+      .subscribe();
+    channels.push(missionChannel);
+
+    return () => {
+      channels.forEach(ch => {
+        getSupabase().removeChannel(ch);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  // Initial Fetches
   useEffect(() => {
     if (!user) return;
-    
     const init = async () => {
       await fetchProfile();
     };
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
-    let channel: import('@supabase/supabase-js').RealtimeChannel | undefined;
-    try {
-      channel = getSupabase()
-        .channel(`profile:${user.id}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_profiles', filter: `id=eq.${user.id}` }, (payload) => {
-          setProfile(payload.new as RiderProfile);
-        })
-        .subscribe();
-    } catch (e) {
-      console.error(e);
-    }
-
-    return () => { channel?.unsubscribe(); };
-  }, [user, fetchProfile]);
-
-  // Connections & Orders Real-time
   useEffect(() => {
     if (!user) return;
-
     const init = async () => {
       await fetchConnectionsAndOrders();
     };
     init();
-
-    let ordersChannel: import('@supabase/supabase-js').RealtimeChannel | undefined;
-    let connChannel: import('@supabase/supabase-js').RealtimeChannel | undefined;
-
-    try {
-      ordersChannel = getSupabase()
-        .channel('public_orders')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: 'order_type=eq.delivery' }, () => {
-          fetchConnectionsAndOrders();
-        })
-        .subscribe();
-
-      connChannel = getSupabase()
-        .channel(`rider_connections:${user.id}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_connections', filter: `rider_id=eq.${user.id}` }, () => {
-          fetchConnectionsAndOrders();
-        })
-        .subscribe();
-    } catch (e) {
-      console.error(e);
-    }
-
-    return () => { 
-      ordersChannel?.unsubscribe(); 
-      connChannel?.unsubscribe();
-    };
-  }, [user, profile?.is_online, fetchConnectionsAndOrders]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, profile?.is_online]);
 
   // Active Mission & History Sync
   useEffect(() => {
@@ -2505,32 +2798,34 @@ export default function App() {
     };
 
     fetchData();
-
-    let channel: import('@supabase/supabase-js').RealtimeChannel | undefined;
-    try {
-      channel = getSupabase()
-        .channel(`rider_orders:${user.id}`)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `rider_id=eq.${user.id}` }, () => {
-          fetchData();
-        })
-        .subscribe();
-    } catch (e) {
-      console.error(e);
-    }
-
-    return () => { channel?.unsubscribe(); };
   }, [user]);
 
   // Actions
   const toggleOnline = async () => {
     if (!profile) return;
     
+    // IMPROVEMENT #7 — Prevent going offline during active mission
+    if (profile.is_online && activeOrders.length > 0) {
+      toast.error('Mission Active. Protocol requires completion before shutdown.', {
+        description: 'Complete pending deliveries first.',
+        icon: <ShieldAlert className="text-red-500" />
+      });
+      return;
+    }
+
     if (profile.verification_status !== 'verified') {
       toast.error('Identity Verification Pending. Access to Missions blocked until Fleet HQ authorizes.');
       return;
     }
 
     try {
+      if (isSupabaseMocked()) {
+        const newStatus = !profile.is_online;
+        setProfile({ ...profile, is_online: newStatus });
+        toast.info(newStatus ? 'Hub active' : 'Hub deactivated');
+        return;
+      }
+
       const { error } = await getSupabase()
         .from('rider_profiles')
         .update({ is_online: !profile.is_online, updated_at: new Date().toISOString() })
@@ -2669,6 +2964,20 @@ export default function App() {
       
       if (updateError) throw updateError;
 
+      // Stability Update: Handshake Verification
+      const { data: verification, error: verifyError } = await getSupabase()
+        .from('rider_connections')
+        .select('rider_id')
+        .eq('id', connection.id)
+        .single();
+
+      if (verifyError || verification?.rider_id !== user.id) {
+        throw new Error('Handshake failed. Verification of the uplink was unsuccessful. Please try again.');
+      }
+
+      // Haptic Feedback Trigger!
+      if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
+
       const shopName = connection.shops?.name || 'Authorized Merchant';
       toast.success(`Uplink established!`, {
         description: `Successfully tethered to ${shopName}. (24h Proxy active)`,
@@ -2677,9 +2986,10 @@ export default function App() {
       
       setView('hub');
       await fetchConnectionsAndOrders();
-    } catch (e: any) {
-      console.error('Pairing Protocol Error:', e);
-      throw e;
+    } catch (err: unknown) {
+      const error = err as Error & { message?: string };
+      console.error('Pairing Protocol Error:', error);
+      throw error;
     }
   };
   const handleUpdateStatus = async (orderId: string, status: DeliveryStatus) => {
@@ -2695,10 +3005,11 @@ export default function App() {
     };
 
     // ROI Protocol: Mandatory Proof of Delivery simulation
-    if (status === 'delivered') {
-      const confirmed = window.confirm("POD PROTOCOL: Has the asset been successfully delivered? Close proximity detected.");
-      if (!confirmed) return;
-    }
+    // Optimization: Swipe gesture in UI is sufficient confirmation
+    // if (status === 'delivered') {
+    //   const confirmed = window.confirm("POD PROTOCOL: Has the asset been successfully delivered? Close proximity detected.");
+    //   if (!confirmed) return;
+    // }
 
     try {
       if (isSupabaseMocked()) {
@@ -2792,7 +3103,7 @@ export default function App() {
             <motion.div 
               initial={{ width: 0 }}
               animate={{ width: '100%' }}
-              transition={{ duration: 5, ease: "linear" }}
+              transition={{ duration: 2.5, ease: "linear" }}
               className="h-full bg-[#f59e0b] shadow-[0_0_15px_rgba(57,255,20,0.5)]"
             />
           </div>
@@ -2800,7 +3111,7 @@ export default function App() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            transition={{ delay: 6 }}
+            transition={{ delay: 3 }}
           >
             <button 
               onClick={() => setLoading(false)}
@@ -2872,7 +3183,8 @@ CREATE TABLE IF NOT EXISTS public.rider_connections (
   connection_code text NOT NULL,
   status text DEFAULT 'active',
   expires_at timestamp with time zone,
-  created_at timestamp with time zone DEFAULT now()
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now()
 );
 
 -- 2. Enable RLS
@@ -2966,6 +3278,21 @@ NOTIFY pgrst, 'reload schema';
   return (
     <div className="min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative">
       <Toaster position="top-center" theme="dark" richColors />
+      
+      {/* IMPROVEMENT #9 — Offline Detection Banner */}
+      <AnimatePresence>
+        {isOffline && (
+          <motion.div 
+            initial={{ y: -100 }}
+            animate={{ y: 0 }}
+            exit={{ y: -100 }}
+            className="fixed top-0 left-0 right-0 z-[1100] bg-red-600 text-white py-3 px-6 flex items-center justify-center gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl"
+          >
+            <WifiOff className="w-4 h-4 animate-pulse" />
+            Signal Loss: Orbital Telemetry Offline • Attempting Re-sync
+          </motion.div>
+        )}
+      </AnimatePresence>
       {showOnboarding && <TacticalOnboarding onComplete={handleOnboardingComplete} />}
       
       {/* Background Map layer */}
@@ -3076,12 +3403,13 @@ NOTIFY pgrst, 'reload schema';
                 </div>
 
                 <SwipeButton 
-                  label="Accept Mission Cipher"
+                  label="SLIDE TO ACCEPT"
                   onComplete={() => {
                     handleOrderAccept(availableOrders[0].id);
                     setView('move');
                   }}
                   color="#f59e0b"
+                  resetToken={availableOrders[0].id}
                 />
               </BentoCard>
             </motion.div>
@@ -3179,7 +3507,16 @@ NOTIFY pgrst, 'reload schema';
                 />
               </div>
             )}
-            {view === 'feed' && <OrdersFeed orders={availableOrders} onAccept={handleOrderAccept} isOnline={profile?.is_online || false} surgeMultiplier={surgeMultiplier} connectionCount={connections.length} />}
+            {view === 'feed' && (
+              <OrdersFeed 
+                orders={availableOrders} 
+                onAccept={handleOrderAccept} 
+                isOnline={profile?.is_online || false} 
+                surgeMultiplier={surgeMultiplier} 
+                connectionCount={connections.length} 
+                onRefresh={fetchConnectionsAndOrders}
+              />
+            )}
             {view === 'move' && (
               activeOrders.length > 0 ? (
                 <div className="relative h-[80vh] pointer-events-none">
@@ -3238,11 +3575,11 @@ NOTIFY pgrst, 'reload schema';
         <nav className="fixed bottom-0 left-0 w-full p-6 z-[60] pointer-events-auto">
           <div className="max-w-md mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-[2.5rem] p-2 flex items-center justify-between shadow-2xl">
             {[
-              { icon: BarChart3, label: 'Namba', view: 'dash' },
-              { icon: List, label: 'Mission', view: 'feed' },
-              { icon: Navigation, label: 'Vector', view: 'move', alert: activeOrders.length > 0 },
-              { icon: Smartphone, label: 'Comms', view: 'log' },
-              { icon: UserIcon, label: 'Base', view: 'hub' },
+              { icon: BarChart3, label: 'HOME', view: 'dash' },
+              { icon: List, label: 'ORDERS', view: 'feed' },
+              { icon: Navigation, label: 'ACTIVE', view: 'move', alert: activeOrders.length > 0 },
+              { icon: Smartphone, label: 'HISTORY', view: 'log' },
+              { icon: UserIcon, label: 'PROFILE', view: 'hub' },
             ].map((item) => (
               <button
                 key={item.view}

@@ -23,7 +23,7 @@ const getInstructionIcon = (modifier?: string, type?: string) => {
 };
 
 const mockRiderIcon = L.divIcon({
-  html: `<div style="background-color: #22d3ee; padding: 6px; border-radius: 50%; box-shadow: 0 0 15px #22d3ee; border: 2px solid #050505;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
+  html: `<div style="background-color: #3b82f6; padding: 6px; border-radius: 50%; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); border: 2px solid #050505;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="18.5" cy="17.5" r="3.5"/><path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/></svg></div>`,
   className: 'rider-marker',
   iconSize: [36, 36],
   iconAnchor: [18, 18],
@@ -56,6 +56,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
   const [isCharging, setIsCharging] = useState(false);
   const [localNow, setLocalNow] = useState<number>(() => Date.now());
   const [geoError, setGeoError] = useState<boolean>(false);
+  const [isFallback, setIsFallback] = useState<boolean>(false);
   const [routeInfo, setRouteInfo] = useState<unknown>(null);
   const [isNetworkOffline, setIsNetworkOffline] = useState(!navigator.onLine);
 
@@ -318,7 +319,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
       <MapContainer 
         center={riderPos} 
         zoom={activeOrder ? 16 : 14} 
-        zoomControl={false}
+        zoomControl={true}
         className="w-full h-full"
       >
         <TileLayer
@@ -345,6 +346,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
               end={targetPos} 
               color={isPickedUp ? '#f59e0b' : '#3b82f6'} 
               cacheId={activeOrder?.id}
+              onFallback={setIsFallback}
               onRouteFound={handleRouteFound} 
             />
           </>
@@ -385,6 +387,25 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         </div>
       )}
 
+      {/* Offline Mode Persistent Banner */}
+      <AnimatePresence>
+        {isNetworkOffline && (
+          <motion.div 
+            initial={{ y: -50, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -50, opacity: 0 }}
+            className="absolute top-20 left-0 right-0 z-[500] flex justify-center pointer-events-none"
+          >
+            <div className="bg-blue-600/90 backdrop-blur-md px-6 py-2 rounded-full border border-blue-400/30 flex items-center gap-3 shadow-2xl">
+              <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white">
+                Offline Mode • Navigating via Cached Uplink
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Platform HUD */}
       <div className="absolute top-24 right-6 flex flex-col gap-2 z-[400] pointer-events-none items-end">
         <div className={cn(
@@ -417,14 +438,37 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
           <Radar size={10} className={isHealthy && !isNetworkOffline ? "opacity-50" : "animate-spin"} />
         </div>
         
-        {isNetworkOffline && activeOrder && (
+        {activeOrder && (
           <motion.div 
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full text-blue-400"
+            className={cn(
+              "flex items-center gap-2 px-3 py-1 rounded-full border transition-colors duration-300",
+              routeInfo ? "bg-blue-500/10 border-blue-500/20 text-blue-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"
+            )}
           >
-            <Zap size={10} className="fill-current" />
-            <span className="text-[8px] font-black uppercase tracking-widest">Roadmap Cached</span>
+            <Zap size={10} className={cn("fill-current", !routeInfo && "animate-pulse")} />
+            <span className="text-[8px] font-black uppercase tracking-widest">
+              {routeInfo ? "Mission Data Cached" : isNetworkOffline ? "Offline Available" : "Caching Protocol..."}
+            </span>
+          </motion.div>
+        )}
+
+        {isCharging && !isNetworkOffline && (
+          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full text-emerald-400">
+            <Activity size={10} className="animate-pulse" />
+            <span className="text-[8px] font-black uppercase tracking-widest">Pre-Caching Map Tiles</span>
+          </div>
+        )}
+
+        {isFallback && activeOrder && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl text-amber-500 whitespace-nowrap"
+          >
+            <Activity size={12} className="animate-pulse" />
+            <span className="text-[9px] font-black uppercase tracking-widest leading-none">Straight-line guide active</span>
           </motion.div>
         )}
 

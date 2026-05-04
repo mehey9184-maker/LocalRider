@@ -16,17 +16,22 @@ interface RoutingMachineProps {
   end: [number, number];
   color?: string;
   cacheId?: string; // Optional ID to cache the route for offline use
+  onFallback?: (isFallback: boolean) => void;
   onRouteFound: (route: { 
     summary?: { totalTime: number; totalDistance: number }; 
     instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
   }) => void;
 }
 
-export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onRouteFound }: RoutingMachineProps) {
+export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallback, onRouteFound }: RoutingMachineProps) {
   const map = useMap();
   const routingControlRef = useRef<L.Routing.Control | null>(null);
   const [useFallback, setUseFallback] = useState(false);
   const [cachedRoute, setCachedRoute] = useState<L.LatLng[] | null>(null);
+
+  useEffect(() => {
+    if (onFallback) onFallback(useFallback);
+  }, [useFallback, onFallback]);
 
   // Load cached route once on mount or if cacheId changes
   useEffect(() => {

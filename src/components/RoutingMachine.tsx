@@ -15,16 +15,41 @@ interface RoutingMachineProps {
   start: [number, number] | null;
   end: [number, number];
   color?: string;
+  cacheId?: string; // Optional ID to cache the route for offline use
   onRouteFound: (route: { 
     summary?: { totalTime: number; totalDistance: number }; 
     instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
   }) => void;
 }
 
-export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: RoutingMachineProps) {
+export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onRouteFound }: RoutingMachineProps) {
   const map = useMap();
   const routingControlRef = useRef<L.Routing.Control | null>(null);
   const [useFallback, setUseFallback] = useState(false);
+  const [cachedRoute, setCachedRoute] = useState<L.LatLng[] | null>(null);
+
+  // Load cached route once on mount or if cacheId changes
+  useEffect(() => {
+    if (cacheId) {
+      const saved = localStorage.getItem(`route_${cacheId}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            setCachedRoute(parsed.map(p => L.latLng(p.lat, p.lng)));
+            
+            // Also notify listener about cached info if we seem to be in fallback mode
+            const savedInfo = localStorage.getItem(`routeInfo_${cacheId}`);
+            if (savedInfo) {
+               onRouteFound(JSON.parse(savedInfo));
+            }
+          }
+        } catch (e) {
+          console.error('Failed to load cached route', e);
+        }
+      }
+    }
+  }, [cacheId, onRouteFound]);
 
   useEffect(() => {
     if (!map || !start || !end) return;
@@ -43,7 +68,10 @@ export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: 
       routeWhileDragging: false,
       addWaypoints: false,
       fitSelectedRoutes: true,
-      show: false, // Hide the default text instructions
+      show: false, 
+      containerClassName: 'hidden',
+      // @ts-expect-error - itineraryClassName is valid but not in all type defs
+      itineraryClassName: 'hidden',
       lineOptions: {
         extendToWaypoints: true,
         missingRouteTolerance: 0,
@@ -62,7 +90,8 @@ export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: 
       error?: { message?: string };
       routes?: { 
         summary?: { totalTime: number; totalDistance: number }; 
-        instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
+        instructions?: { text: string; type?: string; modifier?: string; distance?: number }[];
+        coordinates?: L.LatLng[];
       }[];
     }
     
@@ -72,16 +101,23 @@ export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: 
     };
 
     const handleRouteError = (e: RoutingEvent) => {
-      // Silence standard log if we can, and force fallback
       const errorMsg = e?.message || e?.error?.message || 'Unknown routing error';
-      console.warn('MISSION CRITICAL: Routing uplink failed. Engaging visual line fallback.', errorMsg);
+      console.warn('MISSION CRITICAL: Routing uplink failed. Engaging offline roadmap.', errorMsg);
       setUseFallback(true);
     };
 
     const handleRouteFound = (e: RoutingEvent) => {
       if (e.routes && e.routes.length > 0) {
+        const route = e.routes[0];
         setUseFallback(false);
-        onRouteFound(e.routes[0]);
+        
+        // Cache the route for offline mode
+        if (cacheId && route.coordinates) {
+          localStorage.setItem(`route_${cacheId}`, JSON.stringify(route.coordinates));
+          setCachedRoute(route.coordinates);
+        }
+        
+        onRouteFound(route);
       }
     };
 
@@ -97,7 +133,6 @@ export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: 
              routingControlRef.current.getPlan().setWaypoints([]);
           } catch {
             // Error when clearing plan waypoints usually means the control was already partially destroyed
-            // We can safely ignore it.
           }
           map.removeControl(routingControlRef.current);
         }
@@ -107,7 +142,7 @@ export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: 
       routingControlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, color]); // re-run if map instance or color changes
+  }, [map, color, cacheId]); // re-run if map instance, color or cacheId changes
 
   // Update waypoints dynamically
   useEffect(() => {
@@ -119,8 +154,21 @@ export function RoutingMachine({ start, end, color = '#3b82f6', onRouteFound }: 
     }
   }, [start, end]);
 
+  if (useFallback && cachedRoute) {
+    return <Polyline positions={cachedRoute} color={color} weight={6} opacity={0.6} />;
+  }
+
+  // Final fallback: Straight-line guide if no cache exists
   if (useFallback && start && end) {
-    return <Polyline positions={[start, end]} color={color} weight={6} opacity={0.6} dashArray="10, 10" />;
+    return (
+      <Polyline 
+        positions={[start, end]} 
+        color={color} 
+        weight={4} 
+        opacity={0.3} 
+        dashArray="5, 10" 
+      />
+    );
   }
 
   return null;

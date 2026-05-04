@@ -67,3 +67,9 @@ h1, h2, h3, h4, .font-headline {
 ::-webkit-scrollbar-thumb:hover {
   background: #f59e0b;
 }
+
+/* Hide verbose routing instructions to keep UI clean */
+.leaflet-routing-container,
+.leaflet-routing-error {
+  display: none !important;
+}

@@ -2101,6 +2101,55 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
         )}
       </section>
 
+      {/* Offline Roadmap Cache (New) */}
+      <section className="space-y-4">
+        <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600 ml-2">Offline Roadmap Cache</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <Radar className="w-16 h-16 text-blue-500" />
+          </div>
+          
+          <div className="flex items-center gap-3 mb-6 relative z-10">
+            <div className="p-2.5 bg-blue-500/10 rounded-xl border border-blue-500/20">
+              <Zap className="w-5 h-5 text-blue-500 fill-current" />
+            </div>
+            <div>
+              <p className="text-[12px] font-black uppercase tracking-[0.1em] text-white">Cache Layer: Alpha</p>
+              <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500 mt-0.5">Orbital Data Persistent</p>
+            </div>
+          </div>
+
+          <div className="space-y-3 relative z-10">
+            <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[11px] font-black uppercase tracking-wider text-zinc-300">Route Coordinates</span>
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-tighter text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">Cached</span>
+            </div>
+            
+            <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
+              <div className="flex items-center gap-3">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                <span className="text-[11px] font-black uppercase tracking-wider text-zinc-300">Mission Metadata</span>
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-tighter text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">Cached</span>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center justify-between pt-4 border-t border-zinc-800/50">
+            <div className="flex flex-col">
+              <span className="text-[8px] font-black uppercase text-zinc-600 tracking-tighter">Availability</span>
+              <span className="text-[10px] font-black uppercase text-blue-400 tracking-wider">Mission-Ready</span>
+            </div>
+            <div className="text-right">
+              <span className="text-[8px] font-black uppercase text-zinc-600 tracking-tighter">Sync Priority</span>
+              <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">High</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="space-y-4">
         <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600 ml-2">Vehicle Configuration</h3>
         <div className="grid grid-cols-4 gap-2">

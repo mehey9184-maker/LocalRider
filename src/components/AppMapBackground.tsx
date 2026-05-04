@@ -3,7 +3,7 @@ import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
-import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin, Radar } from 'lucide-react';
+import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin, Radar, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DeliveryOrder } from '../types';
 import { cn } from '../lib/utils';
@@ -52,9 +52,33 @@ interface AppMapBackgroundProps {
 export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: AppMapBackgroundProps) {
   const [riderPos, setRiderPos] = useState<[number, number] | null>(null);
   const [lastUpdate, setLastUpdate] = useState<number>(() => Date.now());
+  const [lastKnownSync, setLastKnownSync] = useState<number | null>(null);
+  const [isCharging, setIsCharging] = useState(false);
   const [localNow, setLocalNow] = useState<number>(() => Date.now());
   const [geoError, setGeoError] = useState<boolean>(false);
   const [routeInfo, setRouteInfo] = useState<unknown>(null);
+  const [isNetworkOffline, setIsNetworkOffline] = useState(!navigator.onLine);
+
+  // Sync Network & Battery State
+  useEffect(() => {
+    const handleOnline = () => setIsNetworkOffline(false);
+    const handleOffline = () => setIsNetworkOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Battery Detection for High-Intensity Caching
+    if ('getBattery' in navigator) {
+      (navigator as any).getBattery().then((battery: any) => {
+        setIsCharging(battery.working);
+        battery.addEventListener('chargingchange', () => setIsCharging(battery.charging));
+      });
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Impulse Clock for Signal HUD
   useEffect(() => {
@@ -152,6 +176,20 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     };
   }, [requestGeolocation]);
 
+  // Route Caching Logic for Offline Guidance
+  useEffect(() => {
+    if (activeOrder?.id && !routeInfo) {
+      const cachedInfo = localStorage.getItem(`routeInfo_${activeOrder.id}`);
+      if (cachedInfo) {
+        try {
+          setRouteInfo(JSON.parse(cachedInfo));
+        } catch (e) {
+          console.error('Failed to load cached route info', e);
+        }
+      }
+    }
+  }, [activeOrder?.id, routeInfo]);
+
   const handleRouteFound = useCallback((route: { 
     summary?: { totalTime: number; totalDistance: number }; 
     instructions?: { text: string; type?: string; modifier?: string; distance?: number }[] 
@@ -169,11 +207,16 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
             })) 
           : []
       };
+      
+      if (activeOrder?.id) {
+        localStorage.setItem(`routeInfo_${activeOrder.id}`, JSON.stringify(sanitized));
+      }
+      
       setRouteInfo(sanitized);
     } else {
       setRouteInfo(null);
     }
-  }, []);
+  }, [activeOrder?.id]);
 
   const typedRouteInfo = routeInfo as { summary: { totalTime: number, totalDistance: number }, instructions: { text: string, type?: string, modifier?: string, distance?: number }[] } | null;
   const etaMins = typedRouteInfo ? Math.ceil(typedRouteInfo.summary.totalTime / 60) : 0;
@@ -185,8 +228,8 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
 
   const rootClassName = `absolute inset-0 z-0 overflow-hidden pointer-events-auto transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`;
 
-  // If signal is lost (not online), pause tracking visually or show overlay
-  if (!isOnline) {
+  // If signal is lost (not online), we still show the map if there is an active order
+  if ((!isOnline || isNetworkOffline) && !activeOrder) {
     return (
       <div className={`${rootClassName} flex items-center justify-center bg-[#050505]/90 backdrop-blur-sm z-[900]`}>
         <div className="flex flex-col items-center gap-4 text-zinc-500 bg-black/90 backdrop-blur-3xl p-10 rounded-[2rem] border border-[#f59e0b]/30 shadow-[0_0_100px_rgba(245,158,11,0.15)] text-center max-w-sm mx-4">
@@ -195,10 +238,15 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
             <div className="absolute inset-0 bg-[#f59e0b]/10 blur-2xl animate-pulse" />
           </div>
           <div>
-            <p className="text-sm font-sans font-medium text-white mb-2">Signal Lost</p>
+            <p className="text-sm font-sans font-medium text-white mb-2">{isNetworkOffline ? 'Network Missing' : 'Signal Lost'}</p>
             <p className="text-xs text-zinc-400 font-sans leading-relaxed">
-              System is offline. Awaiting uplink restoration...
+              {isNetworkOffline ? 'Switching to local cache protocols. Awaiting uplink...' : 'System is offline. Awaiting activation...'}
             </p>
+            {lastUpdate && (
+              <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mt-4">
+                Last Contact: {new Date(lastUpdate).toLocaleTimeString()}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -292,7 +340,13 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
                 opacity: 0.8
               }} 
             />
-            <RoutingMachine start={riderPos} end={targetPos} color={isPickedUp ? '#f59e0b' : '#3b82f6'} onRouteFound={handleRouteFound} />
+            <RoutingMachine 
+              start={riderPos} 
+              end={targetPos} 
+              color={isPickedUp ? '#f59e0b' : '#3b82f6'} 
+              cacheId={activeOrder?.id}
+              onRouteFound={handleRouteFound} 
+            />
           </>
         )}
       </MapContainer>
@@ -335,7 +389,8 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
       <div className="absolute top-24 right-6 flex flex-col gap-2 z-[400] pointer-events-none items-end">
         <div className={cn(
           "px-3 py-1.5 rounded-full border flex items-center gap-3 transition-all duration-500 backdrop-blur-md shadow-lg",
-          isHealthy ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500" :
+          isHealthy && !isNetworkOffline ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500" :
+          isNetworkOffline ? "bg-blue-500/10 border-blue-500/30 text-blue-500" :
           isStale ? "bg-red-500/10 border-red-500/30 text-red-500 animate-pulse" :
           "bg-amber-500/10 border-amber-500/30 text-amber-500"
         )}>
@@ -346,7 +401,8 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
                   className={cn(
                     "w-0.5 rounded-full transition-all duration-300",
                     i === 0 ? "h-1" : i === 1 ? "h-1.5" : i === 2 ? "h-2" : "h-3",
-                    (isHealthy) || 
+                    (!isNetworkOffline && isHealthy) || 
+                    (isNetworkOffline && i < 4) ||
                     (isInterference && i < 3) || 
                     (signalQuality > 20 && i < 2) || 
                     (signalQuality > 0 && i < 1)
@@ -356,12 +412,23 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
              ))}
           </div>
           <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
-            {isHealthy ? "Link Stable" : isStale ? "No Signal" : "Weak Uplink"}
+            {isHealthy && !isNetworkOffline ? "Link Stable" : isNetworkOffline ? "Local Cache" : isStale ? "No Signal" : "Weak Uplink"}
           </span>
-          <Radar size={10} className={isHealthy ? "opacity-50" : "animate-spin"} />
+          <Radar size={10} className={isHealthy && !isNetworkOffline ? "opacity-50" : "animate-spin"} />
         </div>
         
-        {isStale && (
+        {isNetworkOffline && activeOrder && (
+          <motion.div 
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full text-blue-400"
+          >
+            <Zap size={10} className="fill-current" />
+            <span className="text-[8px] font-black uppercase tracking-widest">Roadmap Cached</span>
+          </motion.div>
+        )}
+
+        {(isStale || isNetworkOffline) && !isHealthy && (
           <motion.div 
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}

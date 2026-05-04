@@ -289,18 +289,28 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
 
             <div className="relative z-10">
               <h2 className="text-[18px] font-black uppercase tracking-[0.4em] text-red-500 mb-3 italic">Uplink Denied</h2>
+              <div className="mb-4 inline-flex items-center gap-2 px-3 py-1 bg-red-500/10 border border-red-500/20 rounded-lg">
+                <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                <span className="text-[9px] font-black uppercase tracking-widest text-red-500">Signal Status: CRITICAL_FAILURE</span>
+              </div>
               <p className="text-[11px] text-zinc-400 font-bold leading-relaxed uppercase tracking-widest px-4">
                 Orbital positioning requires active authorization. Location services are restricted or signal is blocked by heavy interference.
               </p>
               
               <div className="mt-6 flex flex-col gap-3">
-                <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/10 text-left">
-                  <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-black">01</div>
-                  <p className="text-[10px] uppercase font-black tracking-wider text-zinc-300">Open Browser Settings</p>
+                <div className="flex items-center gap-4 bg-white/5 p-4 rounded-xl border border-white/10 text-left group hover:bg-white/10 transition-colors">
+                  <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-black text-[#f59e0b] shadow-inner">01</div>
+                  <div className="flex flex-col">
+                    <p className="text-[11px] uppercase font-black tracking-wider text-white">Browser Settings</p>
+                    <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-tight">Access site permissions menu</p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 bg-white/5 p-3 rounded-xl border border-white/10 text-left">
-                  <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-black">02</div>
-                  <p className="text-[10px] uppercase font-black tracking-wider text-zinc-300">Allow "Location" for this site</p>
+                <div className="flex items-center gap-4 bg-white/5 p-4 rounded-xl border border-white/10 text-left group hover:bg-white/10 transition-colors">
+                  <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-xs font-black text-[#f59e0b] shadow-inner">02</div>
+                  <div className="flex flex-col">
+                    <p className="text-[11px] uppercase font-black tracking-wider text-white">Enable Location</p>
+                    <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-tight">Toggle "Always Allow" for LocalEats</p>
+                  </div>
                 </div>
               </div>
             </div>

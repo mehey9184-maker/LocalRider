@@ -583,15 +583,20 @@ const Dashboard = ({
         >
           <div className={cn(
             "flex items-center justify-center transition-colors shadow-sm",
-            profile.is_online ? "text-green-500 animate-pulse" : "text-zinc-600"
+            profile.is_online ? "text-green-500" : "text-zinc-600"
           )}>
             <Power className="w-6 h-6" />
           </div>
           <div className="flex flex-col items-start leading-[1.2]">
-            <span className={cn("text-[16px] font-sans font-medium tracking-normal", profile.is_online ? "text-white" : "text-zinc-400")}>
-              {profile.is_online ? 'System Online' : 'System Standby'}
-            </span>
-            <span className={cn("text-[13px] font-sans mt-0.5 tracking-normal", profile.is_online ? "text-zinc-400" : "text-zinc-500")}>
+            <div className="flex items-center gap-2">
+              <span className={cn("text-[16px] font-sans font-medium tracking-normal", profile.is_online ? "text-white" : "text-zinc-400")}>
+                {profile.is_online ? 'System Online' : 'System Standby'}
+              </span>
+              {profile.is_online && (
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+              )}
+            </div>
+            <span className={cn("text-[13px] font-sans mt-0.5 tracking-normal", profile.is_online ? "text-zinc-400 animate-pulse" : "text-zinc-500")}>
               {profile.is_online ? 'Syncing local missions' : 'Ready for activation'}
             </span>
           </div>
@@ -976,7 +981,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
     <div className="h-screen flex flex-col pointer-events-none max-w-lg mx-auto">
       {/* Multi-Order Selector */}
       {displayOrders.length > 1 && (
-        <div className="bg-black/40 backdrop-blur-md border-b border-white/5 p-4 pointer-events-auto shadow-2xl mt-[60px]">
+        <div className="bg-black/60 backdrop-blur-md border-b border-white/5 p-4 pointer-events-auto shadow-2xl mt-[60px]">
           <div className="flex items-center justify-between mb-3 px-1">
             <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] flex items-center gap-1.5">
               <Zap className="w-3 h-3" /> Auto-Routed Sequence
@@ -1032,7 +1037,7 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         )}
       </div>
 
-      <div className="bg-black/40 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2.5rem] mt-auto border-t border-white/10 ring-1 ring-white/5">
+      <div className="bg-black/60 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2.5rem] mt-auto border-t border-white/10 ring-1 ring-white/5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3 flex-1 min-w-0 mr-4">
             <div className="flex items-center justify-center w-10 h-10 bg-[#f59e0b] rounded-[10px] shrink-0 shadow-sm">

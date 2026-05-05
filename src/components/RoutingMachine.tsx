@@ -29,6 +29,19 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
   const [useFallback, setUseFallback] = useState(false);
   const [cachedRoute, setCachedRoute] = useState<L.LatLng[] | null>(null);
 
+  // Distance calculating utility (Haversine)
+  const getDistance = (p1: [number, number], p2: [number, number]) => {
+    const R = 6371; // km
+    const dLat = (p2[0] - p1[0]) * Math.PI / 180;
+    const dLon = (p2[1] - p1[1]) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(p1[0] * Math.PI / 180) * Math.cos(p2[0] * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
   useEffect(() => {
     if (onFallback) onFallback(useFallback);
   }, [useFallback, onFallback]);
@@ -63,12 +76,22 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
   useEffect(() => {
     if (!map || !start || !end) return;
 
+    // Guard: Prevent OSRM from choking on massive distances (Inter-city Routing)
+    const dist = getDistance(start, end);
+    if (dist > 50) {
+      console.warn(`DISTANCE_GUARD: Waypoint separation ${dist.toFixed(1)}km exceeds OSRM threshold. Engaging straight-line guide.`);
+      setUseFallback(true);
+      return;
+    }
+
     const router = L.Routing.osrmv1({
-          serviceUrl: 'https://router.project-osrm.org/route/v1'
+          serviceUrl: 'https://router.project-osrm.org/route/v1',
+          useHints: false // Helps avoid some failures on demo server
         });
 
     // Create the routing control once
-    const routingControl = L.Routing.control({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const routingControl = (L.Routing as any).control({
       waypoints: [
         L.latLng(start[0], start[1]),
         L.latLng(end[0], end[1])
@@ -79,14 +102,12 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
       fitSelectedRoutes: true,
       show: false, 
       containerClassName: 'hidden',
-      // @ts-expect-error - itineraryClassName is valid but not in all type defs
       itineraryClassName: 'hidden',
       lineOptions: {
         extendToWaypoints: true,
         missingRouteTolerance: 0,
         styles: [{ color: color, weight: 6, opacity: 0.8 }]
       },
-      // @ts-expect-error - createMarker exists in leaflet-routing-machine options but types are incomplete
       createMarker: () => null, // Hide default markers
       draggableWaypoints: false
     }).addTo(map);

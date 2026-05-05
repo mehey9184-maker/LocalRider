@@ -59,6 +59,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
   const [isFallback, setIsFallback] = useState<boolean>(false);
   const [routeInfo, setRouteInfo] = useState<unknown>(null);
   const [isNetworkOffline, setIsNetworkOffline] = useState(!navigator.onLine);
+  const [isJittery, setIsJittery] = useState(false);
 
   // Sync Network & Battery State
   useEffect(() => {
@@ -90,9 +91,9 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
 
   const isPickedUp = activeOrder?.delivery_status === 'picked_up';
   
-  // Fake destination around Cape Town
+  // Fake destination around Tembisa
   const targetPos: [number, number] | null = activeOrder 
-    ? (isPickedUp ? [-33.9249, 18.4241] : [-33.9188, 18.4233]) 
+    ? (isPickedUp ? [-25.9894, 28.2148] : [-25.9864, 28.2168]) 
     : null;
 
   // Basic Signal Quality Logic
@@ -109,9 +110,9 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     setGeoError(false);
     
     if (!navigator.geolocation) {
-      // Mock movement for demo if geolocation is missing
-      const mockLat = -33.9188 + (Math.random() - 0.5) * 0.005;
-      const mockLng = 18.4233 + (Math.random() - 0.5) * 0.005;
+      // Mock movement for demo if geolocation is missing (Tembisa Sector)
+      const mockLat = -25.9864 + (Math.random() - 0.5) * 0.005;
+      const mockLng = 28.2198 + (Math.random() - 0.5) * 0.005;
       setRiderPos([mockLat, mockLng]);
       setLastUpdate(Date.now());
       return null;
@@ -164,7 +165,8 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     };
 
     if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then(() => {
+      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then((status) => {
+        setIsJittery(status.state === 'prompt');
         startWatching();
       }).catch(() => {
          startWatching();
@@ -190,7 +192,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
        }, 5000);
        return () => clearTimeout(timer);
     }
-  }, [activeOrder?.id, routeInfo, isOnline, isCharging]);
+  }, [activeOrder, routeInfo, isOnline, isCharging]);
 
   useEffect(() => {
     if (activeOrder?.id && !routeInfo) {
@@ -207,7 +209,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         }
       }
     }
-  }, [activeOrder?.id, routeInfo]);
+  }, [activeOrder, routeInfo]);
 
   const handleRouteFound = useCallback((route: { 
     summary?: { totalTime: number; totalDistance: number }; 
@@ -235,7 +237,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     } else {
       setRouteInfo(null);
     }
-  }, [activeOrder?.id]);
+  }, [activeOrder]);
 
   const typedRouteInfo = routeInfo as { summary: { totalTime: number, totalDistance: number }, instructions: { text: string, type?: string, modifier?: string, distance?: number }[] } | null;
   const etaMins = typedRouteInfo ? Math.ceil(typedRouteInfo.summary.totalTime / 60) : 0;
@@ -372,7 +374,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
             <RoutingMachine 
               start={riderPos} 
               end={targetPos} 
-              color={isPickedUp ? '#f59e0b' : '#3b82f6'} 
+              color={isNetworkOffline ? '#22d3ee' : (isPickedUp ? '#f59e0b' : '#3b82f6')} 
               cacheId={activeOrder?.id}
               onFallback={setIsFallback}
               onRouteFound={handleRouteFound} 
@@ -500,13 +502,17 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
           </motion.div>
         )}
 
-        {(isStale || isNetworkOffline) && !isHealthy && (
+        {(isInterference || isNetworkOffline) && !isHealthy && (
           <motion.div 
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="text-[8px] font-black uppercase tracking-widest text-red-500 bg-red-500/10 px-2 py-1 rounded border border-red-500/20"
+            className={cn(
+              "text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded border shadow-xl flex items-center gap-2",
+              isNetworkOffline ? "text-[#22d3ee] bg-black/80 border-[#22d3ee]/40" : "text-red-500 bg-black/80 border-red-500/40 animate-pulse"
+            )}
           >
-            GPS Jitter Detected
+            {isNetworkOffline ? <Map size={10} /> : <Activity size={10} />}
+            {isNetworkOffline ? "Local Vector Source" : "GPS Jitter Detected"}
           </motion.div>
         )}
       </div>

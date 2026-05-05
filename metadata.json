@@ -1,6 +1,6 @@
 {
   "name": "LocalEats Rider",
-  "description": "A high-performance, mobile-first delivery application for cyclists using Supabase as the realtime backend.",
+  "description": "Tembisa Pilot: A high-performance, mobile-first delivery application for cyclists using Supabase as the realtime backend. Localized for Tembisa sector operations.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": []
 }

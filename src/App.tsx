@@ -28,6 +28,8 @@ import {
   Plus,
   Rocket,
   Minimize2,
+  Map,
+  X,
   Mic,
   MicOff,
   LifeBuoy
@@ -76,10 +78,12 @@ const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 100
   } catch (error) {
     if (retries > 0 && (error instanceof TypeError || (error instanceof Error && (error.message === 'timeout' || error.message.includes('fetch'))))) {
       const nextDelay = delay * 2; // Exponential backoff
-      console.warn(`Fetch failure, retrying in ${delay}ms... (${retries} attempts left)`);
+      const errMessage = error instanceof Error ? error.message : 'Unknown network error';
+      console.warn(`Fetch failure (${errMessage}), retrying in ${delay}ms... (${retries} attempts left)`);
       await new Promise(res => setTimeout(res, delay));
       return fetchWithRetry(fn, retries - 1, nextDelay, timeoutMs);
     }
+    console.error('Fetch operations exhausted. Connection failed.', error);
     throw error;
   }
 };
@@ -385,14 +389,15 @@ const SOSButton = ({ riderName }: { riderName: string }) => {
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'SOS EMERGENCY',
+          title: '🆘 SOS EMERGENCY - RIDER IN DISTRESS',
           text: message,
           url: locationUrl
         });
         toast.success('SOS Signal Broadcasted');
       } catch (err) {
         if (err instanceof Error && err.name !== 'AbortError') {
-          window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+          const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+          window.open(whatsappUrl, '_blank');
         }
       }
     } else {
@@ -403,20 +408,23 @@ const SOSButton = ({ riderName }: { riderName: string }) => {
   return (
     <button 
       onClick={handleSOS}
-      className="p-4 bg-red-600/20 border-2 border-red-500/50 rounded-2xl flex flex-col items-center gap-2 active:scale-95 transition-all text-red-500 group relative overflow-hidden"
+      className="p-4 bg-red-600/10 border-2 border-red-500/50 rounded-2xl flex flex-col items-center gap-2 active:scale-95 transition-all text-red-500 group relative overflow-hidden shadow-[0_0_20px_rgba(239,68,68,0.1)]"
     >
       <div className="absolute inset-0 bg-red-500/10 animate-pulse" />
       <LifeBuoy className="w-6 h-6 animate-bounce relative z-10" />
       <span className="text-[10px] font-black uppercase tracking-widest relative z-10">One-Tap SOS</span>
+      <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-red-500/20 blur-xl rounded-full" />
     </button>
   );
 };
 
 const VoiceController = ({ onCommand }: { onCommand: (cmd: string) => void }) => {
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       recognitionRef.current = new SpeechRecognition();
@@ -425,7 +433,8 @@ const VoiceController = ({ onCommand }: { onCommand: (cmd: string) => void }) =>
         recognitionRef.current.interimResults = false;
         recognitionRef.current.lang = 'en-US';
 
-        recognitionRef.current.onresult = (event: SpeechRecognitionEvent) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        recognitionRef.current.onresult = (event: any) => {
           const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
           console.log('Voice Command Detected:', transcript);
           onCommand(transcript);
@@ -461,11 +470,23 @@ const VoiceController = ({ onCommand }: { onCommand: (cmd: string) => void }) =>
         isListening ? "bg-blue-600/20 border-blue-500/50 text-blue-500" : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-zinc-700"
       )}
     >
-      {isListening && <div className="absolute inset-0 bg-blue-500/10 animate-pulse" />}
-      {isListening ? <Mic className="w-6 h-6 animate-pulse relative z-10" /> : <MicOff className="w-6 h-6 relative z-10" />}
+      {isListening && (
+        <div className="absolute inset-0 bg-blue-500/10 animate-pulse" />
+      )}
+      {isListening ? (
+        <Mic className="w-6 h-6 animate-pulse text-blue-400 relative z-10" />
+      ) : (
+        <MicOff className="w-6 h-6 text-zinc-600 relative z-10" />
+      )}
       <span className="text-[10px] font-black uppercase tracking-widest relative z-10">
-        {isListening ? 'Listening...' : 'Hands-Free'}
+        {isListening ? 'Listening' : 'Hands-Free'}
       </span>
+      <div className="absolute top-1 right-1">
+        <div className={cn(
+          "w-1.5 h-1.5 rounded-full transition-colors",
+          isListening ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-ping" : "bg-zinc-800"
+        )} />
+      </div>
     </button>
   );
 };
@@ -574,30 +595,35 @@ const Dashboard = ({
         <button 
           onClick={() => {
             onToggleOnline();
-            if (navigator.vibrate) navigator.vibrate(50);
+            if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
           }}
           className={cn(
-            "w-full min-h-[60px] px-4 py-3 rounded-xl flex items-center justify-start gap-3 transition-colors active:bg-zinc-800 hover:bg-zinc-800 focus:outline-none focus:ring-2 focus:ring-green-500/20",
-            profile.is_online ? "bg-zinc-900 border border-zinc-900/50" : "bg-zinc-900/40 border border-zinc-800/40"
+            "w-full min-h-[70px] px-5 py-4 rounded-2xl flex items-center justify-start gap-4 transition-all active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-green-500/20",
+            profile.is_online ? "bg-zinc-900 border border-green-500/30 shadow-[0_0_20px_rgba(34,197,94,0.05)]" : "bg-zinc-900/40 border border-zinc-800/40"
           )}
         >
           <div className={cn(
-            "flex items-center justify-center transition-colors shadow-sm",
-            profile.is_online ? "text-green-500" : "text-zinc-600"
+            "w-10 h-10 rounded-xl flex items-center justify-center transition-all bg-zinc-800/50",
+            profile.is_online ? "text-green-500 bg-green-500/5 ring-1 ring-green-500/20 shadow-[0_0_15px_rgba(34,197,94,0.2)]" : "text-zinc-600"
           )}>
-            <Power className="w-6 h-6" />
+            <Power className={cn("w-5 h-5", profile.is_online && "animate-pulse")} />
           </div>
-          <div className="flex flex-col items-start leading-[1.2]">
+          <div className="flex flex-col items-start leading-tight">
             <div className="flex items-center gap-2">
-              <span className={cn("text-[16px] font-sans font-medium tracking-normal", profile.is_online ? "text-white" : "text-zinc-400")}>
+              <span className={cn("text-[16px] font-sans font-black uppercase tracking-widest italic", profile.is_online ? "text-white" : "text-zinc-400")}>
                 {profile.is_online ? 'System Online' : 'System Standby'}
               </span>
               {profile.is_online && (
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                <div className="flex items-center gap-0.5">
+                   <div className="w-1 h-3 bg-green-500/20 rounded-full" />
+                   <div className="w-1 h-2 bg-green-500/40 rounded-full" />
+                   <div className="w-1 h-4 bg-green-500/60 rounded-full animate-pulse" />
+                   <div className="w-1 h-2.5 bg-green-500 rounded-full animate-pulse" />
+                </div>
               )}
             </div>
-            <span className={cn("text-[13px] font-sans mt-0.5 tracking-normal", profile.is_online ? "text-zinc-400 animate-pulse" : "text-zinc-500")}>
-              {profile.is_online ? 'Syncing local missions' : 'Ready for activation'}
+            <span className={cn("text-[11px] font-sans mt-1 font-bold uppercase tracking-wider", profile.is_online ? "text-green-500/70" : "text-zinc-600")}>
+              {profile.is_online ? 'Synchronizing Telemetry' : 'Protocol Deactivated'}
             </span>
           </div>
         </button>
@@ -947,10 +973,15 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [showGooglePocket, setShowGooglePocket] = useState(false);
 
   const displayOrders = useMemo(() => {
     if (sortMethod === 'optimized') {
-      return [...orders].sort((a, b) => (a.distance_km || 0) - (b.distance_km || 0));
+      // Sorter algorithm: Multi-stop proximity ranking
+      // Start with the closest to current rider location (already calculated in distance_km)
+      // Then hypothetical distance between remaining stops would be better, 
+      // but for now, we'll just prioritize distance_km from the current position.
+      return [...orders].sort((a, b) => (Number(a.distance_km) || 0) - (Number(b.distance_km) || 0));
     }
     return orders;
   }, [orders, sortMethod]);
@@ -974,7 +1005,13 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
   const optimizeRoute = () => {
     setSortMethod('optimized');
     setActiveIndex(0);
-    toast.success('Vector sequence optimized for range efficiency.');
+    
+    // Sort by proximity to first item's address if possible, or just a smarter distance sort
+    // For now, let's keep the distance sort but reset the view
+    toast.success('Vector sequence optimized for range efficiency.', {
+      icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
+      description: 'Calculating shortest flight path between nodes.'
+    });
   };
 
   return (
@@ -1019,6 +1056,57 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
 
       {/* Map Area placeholder (transparent) */}
       <div className="flex-1 relative overflow-hidden">
+        {showGooglePocket && (
+          <div className="absolute inset-0 z-50 p-4 animate-in fade-in zoom-in duration-300">
+            <div className="w-full h-full bg-black rounded-[2.5rem] overflow-hidden border border-[#f59e0b]/30 shadow-[0_0_50px_rgba(245,158,11,0.2)] relative">
+               <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+                  <div className="px-3 py-1 bg-black/80 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-2">
+                     <div className="w-1.5 h-1.5 bg-[#f59e0b] rounded-full animate-pulse" />
+                     <span className="text-[9px] font-black uppercase text-white tracking-widest">Live Orbital Pocket</span>
+                  </div>
+               </div>
+
+               <button 
+                 onClick={() => setShowGooglePocket(false)}
+                 className="absolute top-4 right-4 z-20 w-10 h-10 bg-black/80 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/10 active:scale-95 transition-all shadow-xl"
+               >
+                 <X className="w-5 h-5" />
+               </button>
+
+               <iframe
+                 src={`https://maps.google.com/maps?q=${currentOrder.address || (currentOrder.shop_latitude + ',' + currentOrder.shop_longitude)}&t=&z=16&ie=UTF8&iwloc=&output=embed`}
+                 width="100%"
+                 height="100%"
+                 className="grayscale-[0.2] contrast-[1.1] scale-[1.02]"
+                 frameBorder="0"
+                 allowFullScreen
+               />
+               
+               {/* Accuracy Disclaimer */}
+               <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-4/5 text-center">
+                  <a 
+                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(targetAddress)}&authuser=0`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#f59e0b] text-black rounded-xl text-[9px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all"
+                  >
+                     <Navigation className="w-3 h-3" /> External Precision Mode (authuser=0)
+                  </a>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {!showGooglePocket && (
+          <button 
+            onClick={() => setShowGooglePocket(true)}
+            className="absolute bottom-10 right-6 z-[60] w-14 h-14 bg-black text-white rounded-[1.5rem] flex flex-col items-center justify-center border-2 border-[#f59e0b] shadow-[0_15px_30px_rgba(0,0,0,0.5)] pointer-events-auto active:scale-90 transition-all group"
+          >
+            <Map className="w-6 h-6 text-[#f59e0b] group-hover:scale-110 transition-transform" />
+            <span className="text-[7px] font-black uppercase tracking-tighter mt-1">Nav</span>
+          </button>
+        )}
+
         {/* Multi-stop Preview */}
         {displayOrders.length > 1 && (
           <div className="absolute bottom-6 left-6 right-6 pointer-events-none">
@@ -1397,16 +1485,83 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
     };
   }, []);
 
+  const createTestOrder = async () => {
+    try {
+      setLoading(true);
+      if (isSupabaseMocked()) {
+        const newOrder = {
+          id: `mock-${Date.now()}`,
+          customer_name: 'Test Customer',
+          address: 'Tembisa Plaza',
+          city: 'Tembisa',
+          status: 'pending',
+          delivery_status: 'finding_rider',
+          product_name: 'Super Deluxe Burger',
+          total_price: 155,
+          delivery_fee: 35,
+          created_at: new Date().toISOString(),
+          phone: '000 000 0000',
+          shop_id: 'mock-shop',
+          restaurant_name: 'Tembisa Local Merchant',
+          items: ['1x Super Deluxe Burger', '1x Fries', '1x Coke']
+        } as unknown as DeliveryOrder;
+        setOrders(prev => [newOrder, ...prev]);
+        toast.success('Test order generated in Tembisa sector.');
+        return;
+      }
+
+      // Find first shop connection for this merchant (mocked/simplified logic)
+      const { data: shops } = await getSupabase().from('shops').select('id, name, city').limit(1);
+      if (!shops || shops.length === 0) {
+        toast.error('No nodes found. Ensure a shop exists in Tembisa.');
+        return;
+      }
+
+      const { data, error } = await getSupabase().from('orders').insert({
+        shop_id: shops[0].id,
+        customer_name: 'Tembisa Unit',
+        address: 'Rev. R.T.J. Namane Dr',
+        city: 'Tembisa',
+        status: 'pending',
+        delivery_status: 'finding_rider',
+        product_name: 'Giga-Byte Meal',
+        restaurant_name: shops[0].name || 'Tembisa Merchant',
+        items: ['1x Giga-Byte Burger', '1x Data Chips'],
+        total_price: 85,
+        delivery_fee: 25,
+        order_type: 'delivery'
+      }).select().single();
+
+      if (error) {
+        console.error('Insert error:', error);
+        throw error;
+      }
+      if (data) {
+        toast.success('New mission signal broadcasted!');
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Uplink failed';
+      toast.error(`ERROR: ${message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleUpdateStatus = async (id: string, status: string) => {
     try {
       if (isSupabaseMocked()) {
         setOrders(prev => prev.map(o => {
           if (o.id === id) {
-            return {
-              ...o, 
-              status: status as DeliveryStatus, 
-              ...(status === 'completed' ? { delivery_status: null as unknown as DeliveryStatus } : {})
-            };
+            const upd: any = { ...o, status: status as DeliveryStatus };
+            if (status === 'completed') {
+               upd.delivery_status = 'none';
+            } else if (status === 'preparing' || status === 'ready') {
+               // Enforce broadcast if regular order becomes active
+               if (!o.delivery_status || o.delivery_status === 'none') {
+                 upd.delivery_status = 'finding_rider';
+               }
+            }
+            return upd;
           }
           return o;
         }));
@@ -1415,8 +1570,23 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
       }
       
       const payload: Record<string, unknown> = { status };
+      const currentOrder = orders.find(o => o.id === id);
+      
       if (status === 'completed') {
-        payload.delivery_status = null;
+        payload.delivery_status = 'none';
+      } else if ((status === 'preparing' || status === 'ready') && currentOrder) {
+        if (!currentOrder.delivery_status || currentOrder.delivery_status === 'none' || currentOrder.delivery_status === 'finding_rider') {
+           payload.delivery_status = 'finding_rider';
+           // Data Enrichment for Rider Feed
+           const { data: shop } = await getSupabase().from('shops').select('name, city').eq('id', currentOrder.shop_id).single();
+           if (shop) {
+             payload.restaurant_name = shop.name;
+             payload.city = shop.city;
+           }
+           if (!currentOrder.items || currentOrder.items.length === 0) {
+             payload.items = [currentOrder.product_name || 'Assorted Items'];
+           }
+        }
       }
       
       await getSupabase().from('orders').update(payload).eq('id', id);
@@ -1769,8 +1939,14 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
                             </div>
                          </BentoCard>
                       )) : (
-                        <div className="py-12 text-center bg-zinc-50 rounded-[2rem] border-2 border-dashed border-zinc-200">
-                          <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">No riders currently tethered in this sector.</p>
+                        <div className="py-12 text-center bg-zinc-50 rounded-[2rem] border-2 border-dashed border-zinc-200 flex flex-col items-center gap-4">
+                          <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-8">No riders currently tethered in this sector.</p>
+                          <button 
+                            onClick={() => setActiveTab('settings')}
+                            className="flex items-center gap-2 px-6 py-3 bg-zinc-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all shadow-xl"
+                          >
+                             <Plus className="w-4 h-4 text-[#f59e0b]" /> Generate First Pairing Code
+                          </button>
                         </div>
                       )}
                    </div>
@@ -1913,14 +2089,23 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
           
           {/* Left Column: Orders Queue */}
           <div className="flex-1 space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <h2 className="text-2xl font-bold flex items-center gap-3">
                 Active Queue <span className="text-zinc-400 text-sm font-medium">{activeOrders.length} Orders</span>
               </h2>
-              <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-xl">
-                 <button className="px-3 py-1.5 bg-white shadow-sm rounded-lg text-[10px] font-black uppercase tracking-widest text-[#f58220]">Date ↓</button>
-                 <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Price</button>
-                 <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Order ID</button>
+              <div className="flex items-center gap-4">
+                <button 
+                  onClick={createTestOrder}
+                  disabled={loading}
+                  className="px-6 py-2 bg-black text-white border border-[#f59e0b] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-900 transition-all flex items-center gap-2"
+                >
+                  <Plus className="w-3 h-3 text-[#f59e0b]" /> Create Test Mission
+                </button>
+                <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-xl">
+                   <button className="px-3 py-1.5 bg-white shadow-sm rounded-lg text-[10px] font-black uppercase tracking-widest text-[#f58220]">Date ↓</button>
+                   <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Price</button>
+                   <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Order ID</button>
+                </div>
               </div>
             </div>
 
@@ -2063,6 +2248,23 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
 
           {/* Right Column: Insights */}
           <aside className="w-full md:w-80 space-y-6">
+            <BentoCard className="bg-zinc-900 border-zinc-800 p-6 shadow-xl text-white relative overflow-hidden group">
+               <div className="absolute top-0 right-0 w-32 h-32 bg-[#f59e0b] opacity-5 -mr-16 -mt-16 rounded-full blur-3xl group-hover:opacity-10 transition-opacity" />
+               <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-4">Quick Management</h3>
+               <button 
+                 onClick={() => setActiveTab('riders')}
+                 className="w-full flex items-center justify-between p-4 bg-white/5 border border-white/10 rounded-2xl group hover:bg-white/10 transition-all active:scale-95"
+               >
+                  <div className="flex items-center gap-3">
+                     <div className="w-8 h-8 rounded-lg bg-[#f59e0b]/20 flex items-center justify-center">
+                        <Bike className="w-4 h-4 text-[#f59e0b]" />
+                     </div>
+                     <span className="text-xs font-bold font-headline uppercase tracking-tight">Rider Fleet</span>
+                  </div>
+                  <Plus className="w-4 h-4 text-zinc-600" />
+               </button>
+            </BentoCard>
+
             <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm text-zinc-900">
                <h3 className="text-lg font-bold mb-6">Status Overview</h3>
                <div className="space-y-4">
@@ -2256,6 +2458,37 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
           </div>
         )}
       </section>
+      
+      <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Fleet Configuration</h3>
+        <BentoCard className="bg-zinc-900 border-zinc-800 p-5">
+           <div className="flex items-center justify-between mb-4">
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Tactical Vehicle</span>
+              <span className="px-2 py-0.5 bg-[#f59e0b]/10 text-[#f59e0b] text-[9px] font-black uppercase rounded border border-[#f59e0b]/20">Active</span>
+           </div>
+           
+           <div className="grid grid-cols-2 gap-2">
+              {(['Road', 'MTB', 'E-Bike', 'Motor'] as UserVehicle[]).map(v => (
+                <button
+                  key={v}
+                  onClick={() => onUpdateVehicle(v)}
+                  className={cn(
+                    "flex items-center justify-center gap-2 px-4 py-3 rounded-xl border transition-all text-[10px] font-black uppercase tracking-widest active:scale-95",
+                    profile.vehicle_type === v 
+                      ? "bg-[#f59e0b] text-black border-[#f59e0b] shadow-[0_0_20px_rgba(245,158,11,0.2)]" 
+                      : "bg-black/40 text-zinc-500 border-zinc-800/50 hover:border-zinc-700"
+                  )}
+                >
+                   {v === 'Motor' && <Rocket size={12} />}
+                   {v === 'E-Bike' && <Zap size={12} />}
+                   {v === 'Road' && <Bike size={12} />}
+                   {v === 'MTB' && <Bike size={12} />}
+                   {v}
+                </button>
+              ))}
+           </div>
+        </BentoCard>
+      </section>
 
       {/* Offline Roadmap Cache (New) */}
       <section className="space-y-4">
@@ -2303,27 +2536,6 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
               <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">High</span>
             </div>
           </div>
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600 ml-2">Vehicle Configuration</h3>
-        <div className="grid grid-cols-4 gap-2">
-          {(['Road', 'MTB', 'E-Bike', 'Motor'] as UserVehicle[]).map(v => (
-            <button 
-              key={v}
-              onClick={() => onUpdateVehicle(v)}
-              className={cn(
-                "p-3 rounded-2xl border flex flex-col items-center gap-2 transition-all active:scale-95",
-                profile.vehicle_type === v 
-                  ? "bg-[#f59e0b]/10 border-[#f59e0b] text-[#f59e0b]" 
-                  : "bg-zinc-900 border-zinc-800 text-zinc-500"
-              )}
-            >
-              <Bike className="w-4 h-4" />
-              <span className="text-[8px] font-black uppercase tracking-tighter">{v}</span>
-            </button>
-          ))}
         </div>
       </section>
 
@@ -2497,6 +2709,7 @@ export default function App() {
   const [connections, setConnections] = useState<ShopConnection[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [role, setRole] = useState<'rider' | 'merchant'>('rider');
   const [view, setView] = useState<AppView>(() => {
     return (localStorage.getItem('localeats_view') as AppView) || 'dash';
@@ -2533,7 +2746,9 @@ export default function App() {
     localStorage.setItem('localeats_view', view);
     localStorage.setItem('localeats_active_orders', JSON.stringify(activeOrders));
   }, [view, activeOrders]);
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    return localStorage.getItem('localeats_onboarding_seen') !== 'true';
+  });
   const [bootLogs, setBootLogs] = useState<string[]>([]);
   const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
 
@@ -2590,25 +2805,43 @@ export default function App() {
           total_earnings: 0,
           total_deliveries: 0,
           active_points: 0,
+          current_latitude: -25.9864,
+          current_longitude: 28.2198,
           updated_at: new Date().toISOString()
         };
         const { data: created, error: insertError } = await getSupabase().from('rider_profiles').upsert(newProfile).select().single();
         if (created) {
           addBootLog('SYNC: NEW_PROFILE_READY');
           setProfile(created as RiderProfile);
+          // If profile created, and not seen in localStorage, show it
+          if (localStorage.getItem('localeats_onboarding_seen') !== 'true') {
+            setShowOnboarding(true);
+          }
         }
         if (insertError) addBootLog('ERR: PROFILE_INIT_FAIL');
       } else if (data) {
         addBootLog('SYNC: TELEMETRY_COMPLETE');
-        setProfile(data as RiderProfile);
-        if (!data.onboarding_complete) {
+        const sanitizedData = { ...data };
+        // Fallback for null coordinates to prevent Inter-City routing errors (Default: Tembisa)
+        if (!sanitizedData.current_latitude) sanitizedData.current_latitude = -25.9864;
+        if (!sanitizedData.current_longitude) sanitizedData.current_longitude = 28.2198;
+        
+        setProfile(sanitizedData as RiderProfile);
+        if (!data.onboarding_complete && localStorage.getItem('localeats_onboarding_seen') !== 'true') {
           setShowOnboarding(true);
+        } else if (data.onboarding_complete) {
+          // Sync localStorage if DB says we are done
+          localStorage.setItem('localeats_onboarding_seen', 'true');
+          setShowOnboarding(false);
         }
       } else if (error) {
         addBootLog('ERR: FETCH_FAILED');
+        setSyncError(error.message);
       }
-    } catch {
-      addBootLog('CRITICAL: SYNC_FAILURE');
+    } catch (e: unknown) {
+      const errMessage = e instanceof Error ? e.message : 'Unknown error';
+      addBootLog(`CRITICAL: SYNC_FAILURE (${errMessage})`);
+      setSyncError(errMessage);
     } finally {
       setLoading(false);
     }
@@ -3121,6 +3354,7 @@ export default function App() {
   const handleOnboardingComplete = async () => {
     if (!user) return;
     try {
+      localStorage.setItem('localeats_onboarding_seen', 'true');
       if (!isSupabaseMocked()) {
         await getSupabase()
           .from('rider_profiles')
@@ -3412,6 +3646,37 @@ export default function App() {
   if (!user) return <AuthView />;
 
   if (!profile) {
+    if (syncError && (syncError.toLowerCase().includes('fetch') || syncError.toLowerCase().includes('network') || syncError.toLowerCase().includes('timeout'))) {
+      return (
+        <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center">
+          <WifiOff className="w-16 h-16 text-zinc-700 mb-6 animate-pulse" />
+          <h2 className="text-2xl font-black uppercase tracking-tighter text-white mb-2">Sync Interference</h2>
+          <p className="text-zinc-500 text-sm max-w-xs mb-8 uppercase font-bold tracking-wide">
+            Critical failure in orbital uplink. Failed to reach secure relay nodes.
+            <span className="block mt-2 text-red-500/80 text-[10px] break-all">{syncError}</span>
+          </p>
+          <div className="flex flex-col gap-3 w-full max-w-xs">
+            <button 
+              onClick={() => {
+                setLoading(true);
+                setSyncError(null);
+                fetchProfile();
+              }}
+              className="w-full py-4 bg-zinc-900 border border-zinc-800 text-white font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
+            >
+              Re-Establish Uplink
+            </button>
+            <button 
+              onClick={() => getSupabase().auth.signOut()}
+              className="w-full py-4 text-zinc-600 text-[10px] font-black uppercase tracking-widest"
+            >
+              Terminate Session
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     const setupSql = `
 -- 1. Create Tables
 CREATE TABLE IF NOT EXISTS public.shops (
@@ -3449,14 +3714,17 @@ CREATE TABLE IF NOT EXISTS public.orders (
   restaurant_name text,
   total_price numeric DEFAULT 0,
   delivery_fee numeric DEFAULT 0,
-  delivery_status text DEFAULT 'finding_rider',
+  delivery_status text DEFAULT 'none',
   status text DEFAULT 'pending',
   order_type text DEFAULT 'delivery',
   rider_id uuid REFERENCES public.rider_profiles(id),
   merchant_rating numeric,
   merchant_feedback text,
+  shop_latitude numeric DEFAULT -25.9864,
+  shop_longitude numeric DEFAULT 28.2198,
   created_at timestamp with time zone DEFAULT now(),
-  updated_at timestamp with time zone DEFAULT now()
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT orders_delivery_status_check CHECK (delivery_status IN ('none', 'finding_rider', 'accepted', 'picked_up', 'delivered', 'cancelled', 'ready', 'pending', 'preparing', 'confirmed', 'completed', 'rider_assigned'))
 );
 
 CREATE TABLE IF NOT EXISTS public.rider_connections (

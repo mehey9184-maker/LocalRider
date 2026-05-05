@@ -11,6 +11,7 @@ import {
   CheckCircle, 
   Power,
   ChevronRight,
+  ChevronLeft,
   MapPin,
   Clock,
   LogOut,
@@ -29,6 +30,7 @@ import {
   Rocket,
   Minimize2,
   Map,
+  ArrowLeftRight,
   X,
   Mic,
   MicOff,
@@ -95,6 +97,7 @@ const StatusBadge = ({ status }: { status: DeliveryStatus }) => {
     picked_up: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
     delivered: 'bg-[#f59e0b]/10 text-[#f59e0b] border-[#f59e0b]/20',
     cancelled: 'bg-red-500/10 text-red-500 border-red-500/20',
+    none: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20',
   };
   return (
     <span className={cn("text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border italic", styles[status])}>
@@ -532,7 +535,7 @@ const Dashboard = ({
   const rank = getRank(profile.active_points || 0);
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
+    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       {connectionCount === 0 && (
          <motion.div 
            initial={{ opacity: 0, scale: 0.95 }}
@@ -775,7 +778,7 @@ const OrdersFeed = ({
   };
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
+    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       <header className="flex flex-col gap-2 pt-6">
         <div className="flex items-center justify-between">
            <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Live Missions</h2>
@@ -967,20 +970,20 @@ const OrdersFeed = ({
   );
 };
 
-const ActiveMissionView = ({ orders, onUpdateStatus }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: { 
   orders: DeliveryOrder[], 
-  onUpdateStatus: (id: string, status: DeliveryStatus) => void 
+  onUpdateStatus: (id: string, status: DeliveryStatus) => void;
+  onScreenTap?: () => void;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [activeIndex, setActiveIndex] = useState(0);
   const [showGooglePocket, setShowGooglePocket] = useState(false);
+  const [isSwapped, setIsSwapped] = useState(false);
+  const [isPocketExpanded, setIsPocketExpanded] = useState(false);
+  const [isHudVisible, setIsHudVisible] = useState(true);
 
   const displayOrders = useMemo(() => {
     if (sortMethod === 'optimized') {
-      // Sorter algorithm: Multi-stop proximity ranking
-      // Start with the closest to current rider location (already calculated in distance_km)
-      // Then hypothetical distance between remaining stops would be better, 
-      // but for now, we'll just prioritize distance_km from the current position.
       return [...orders].sort((a, b) => (Number(a.distance_km) || 0) - (Number(b.distance_km) || 0));
     }
     return orders;
@@ -1005,9 +1008,6 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
   const optimizeRoute = () => {
     setSortMethod('optimized');
     setActiveIndex(0);
-    
-    // Sort by proximity to first item's address if possible, or just a smarter distance sort
-    // For now, let's keep the distance sort but reset the view
     toast.success('Vector sequence optimized for range efficiency.', {
       icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
       description: 'Calculating shortest flight path between nodes.'
@@ -1015,7 +1015,27 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
   };
 
   return (
-    <div className="h-screen flex flex-col pointer-events-none max-w-lg mx-auto">
+    <div className="h-screen flex flex-col pointer-events-none max-w-5xl mx-auto w-full relative">
+      {/* Background Layer */}
+      <div className="absolute inset-0 z-0">
+        {!isSwapped ? (
+          <AppMapBackground
+            isOnline={true}
+            activeOrder={currentOrder}
+            onMapClick={onScreenTap}
+          />
+        ) : (
+          <iframe
+            src={`https://maps.google.com/maps?q=${currentOrder.address || (currentOrder.shop_latitude + ',' + currentOrder.shop_longitude)}&t=&z=16&ie=UTF8&iwloc=&output=embed`}
+            width="100%"
+            height="100%"
+            className="grayscale-[0.2] contrast-[1.1] scale-[1.05] pointer-events-auto"
+            frameBorder="0"
+            allowFullScreen
+          />
+        )}
+      </div>
+
       {/* Multi-Order Selector */}
       {displayOrders.length > 1 && (
         <div className="bg-black/60 backdrop-blur-md border-b border-white/5 p-4 pointer-events-auto shadow-2xl mt-[60px]">
@@ -1055,57 +1075,132 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
       )}
 
       {/* Map Area placeholder (transparent) */}
-      <div className="flex-1 relative overflow-hidden">
-        {showGooglePocket && (
-          <div className="absolute inset-0 z-50 p-4 animate-in fade-in zoom-in duration-300">
-            <div className="w-full h-full bg-black rounded-[2.5rem] overflow-hidden border border-[#f59e0b]/30 shadow-[0_0_50px_rgba(245,158,11,0.2)] relative">
-               <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
-                  <div className="px-3 py-1 bg-black/80 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-2">
-                     <div className="w-1.5 h-1.5 bg-[#f59e0b] rounded-full animate-pulse" />
-                     <span className="text-[9px] font-black uppercase text-white tracking-widest">Live Orbital Pocket</span>
-                  </div>
-               </div>
-
-               <button 
-                 onClick={() => setShowGooglePocket(false)}
-                 className="absolute top-4 right-4 z-20 w-10 h-10 bg-black/80 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/10 active:scale-95 transition-all shadow-xl"
-               >
-                 <X className="w-5 h-5" />
-               </button>
-
-               <iframe
-                 src={`https://maps.google.com/maps?q=${currentOrder.address || (currentOrder.shop_latitude + ',' + currentOrder.shop_longitude)}&t=&z=16&ie=UTF8&iwloc=&output=embed`}
-                 width="100%"
-                 height="100%"
-                 className="grayscale-[0.2] contrast-[1.1] scale-[1.02]"
-                 frameBorder="0"
-                 allowFullScreen
-               />
-               
-               {/* Accuracy Disclaimer */}
-               <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 w-4/5 text-center">
-                  <a 
-                    href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(targetAddress)}&authuser=0`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-[#f59e0b] text-black rounded-xl text-[9px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all"
+      <div 
+        onClick={() => {
+          setIsHudVisible(prev => !prev);
+          if (onScreenTap) onScreenTap();
+        }}
+        className="flex-1 relative overflow-hidden cursor-pointer group pointer-events-auto"
+      >
+        <AnimatePresence>
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="absolute inset-x-4 bottom-10 z-[60] flex flex-col items-end gap-3 pointer-events-none"
+            >
+              <AnimatePresence>
+                {(showGooglePocket || isSwapped) && (
+                  <motion.div 
+                    initial={{ opacity: 0, x: 200 }}
+                    animate={{ opacity: 1, x: isPocketExpanded ? 0 : 180 }}
+                    exit={{ opacity: 0, x: 200 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                    className={cn(
+                      "absolute top-1/4 right-0 translate-y-[-50%] bg-black rounded-l-3xl overflow-hidden border-y border-l border-[#f59e0b]/40 shadow-[0_0_50px_rgba(0,0,0,0.8)] flex pointer-events-auto transition-all",
+                      isPocketExpanded ? "w-64 h-80" : "w-10 h-32"
+                    )}
                   >
-                     <Navigation className="w-3 h-3" /> External Precision Mode (authuser=0)
-                  </a>
-               </div>
-            </div>
-          </div>
-        )}
+                    {!isPocketExpanded ? (
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsPocketExpanded(true);
+                        }}
+                        className="w-full h-full flex flex-col items-center justify-center bg-zinc-900 border-l-4 border-[#f59e0b] hover:bg-zinc-800 transition-colors"
+                      >
+                         <ChevronLeft className="w-5 h-5 text-[#f59e0b] mb-2" />
+                         <span className="text-[10px] uppercase font-black text-zinc-500 tracking-widest writing-vertical-lr rotate-180">Map</span>
+                      </button>
+                    ) : (
+                      <div className="w-full h-full relative group/pocket"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsSwapped(!isSwapped);
+                        }}
+                      >
+                         {/* Close internal tab */}
+                         <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setIsPocketExpanded(false);
+                            }}
+                            className="absolute -left-6 flex flex-col top-1/2 -translate-y-1/2 h-20 w-6 bg-zinc-900 border-l border-y border-[#f59e0b]/40 rounded-l-md items-center justify-center z-50 text-zinc-400 hover:text-white"
+                         >
+                            <ChevronRight className="w-4 h-4" />
+                         </button>
 
-        {!showGooglePocket && (
-          <button 
-            onClick={() => setShowGooglePocket(true)}
-            className="absolute bottom-10 right-6 z-[60] w-14 h-14 bg-black text-white rounded-[1.5rem] flex flex-col items-center justify-center border-2 border-[#f59e0b] shadow-[0_15px_30px_rgba(0,0,0,0.5)] pointer-events-auto active:scale-90 transition-all group"
-          >
-            <Map className="w-6 h-6 text-[#f59e0b] group-hover:scale-110 transition-transform" />
-            <span className="text-[7px] font-black uppercase tracking-tighter mt-1">Nav</span>
-          </button>
-        )}
+                         {/* Swap Icon Overlay */}
+                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/pocket:opacity-100 transition-opacity z-30 flex items-center justify-center cursor-pointer">
+                            <div className="bg-[#f59e0b] p-2 rounded-full text-black shadow-xl">
+                              <ArrowLeftRight className="w-5 h-5" />
+                            </div>
+                         </div>
+
+                         <div className="absolute top-2 left-2 z-20">
+                            <div className="px-2 py-0.5 bg-black/80 backdrop-blur-md rounded-md border border-white/10">
+                               <span className="text-[8px] font-black uppercase text-white/70 tracking-widest">
+                                 {isSwapped ? 'Tactical' : 'Orbital'}
+                               </span>
+                            </div>
+                         </div>
+
+                         <AnimatePresence mode="wait">
+                           {!isSwapped ? (
+                              <motion.iframe
+                                key="orbital"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: 0.2 }}
+                                src={`https://maps.google.com/maps?q=${currentOrder.address || (currentOrder.shop_latitude + ',' + currentOrder.shop_longitude)}&t=&z=16&ie=UTF8&iwloc=&output=embed`}
+                                width="100%"
+                                height="100%"
+                                className="grayscale-[0.4] contrast-[1.2] pointer-events-none"
+                                frameBorder="0"
+                              />
+                           ) : (
+                              <motion.div 
+                                key="tactical"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                exit={{ opacity: 0 }}
+                                transition={{ duration: 0.2 }}
+                                className="w-full h-full scale-[2] origin-center -rotate-12 pointer-events-none grayscale opacity-60 bg-black"
+                              >
+                                 <AppMapBackground
+                                   isOnline={true}
+                                   activeOrder={currentOrder}
+                                 />
+                              </motion.div>
+                           )}
+                         </AnimatePresence>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Toggle Pocket Button */}
+              {!isSwapped && (
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowGooglePocket(!showGooglePocket);
+                  }}
+                  className={cn(
+                    "w-14 h-14 bg-black text-white rounded-[1.5rem] flex flex-col items-center justify-center border-2 shadow-[0_15px_30px_rgba(0,0,0,0.5)] pointer-events-auto active:scale-90 transition-all group",
+                    showGooglePocket ? "border-zinc-800 text-zinc-500" : "border-[#f59e0b] text-[#f59e0b]"
+                  )}
+                >
+                  {showGooglePocket ? <X className="w-6 h-6" /> : <Map className="w-6 h-6 group-hover:scale-110 transition-transform" />}
+                  <span className="text-[7px] font-black uppercase tracking-tighter mt-1">
+                    {showGooglePocket ? 'Close' : 'Nav'}
+                  </span>
+                </button>
+              )}
+            </motion.div>
+        </AnimatePresence>
 
         {/* Multi-stop Preview */}
         {displayOrders.length > 1 && (
@@ -1125,7 +1220,24 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
         )}
       </div>
 
-      <div className="bg-black/60 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2.5rem] mt-auto border-t border-white/10 ring-1 ring-white/5">
+      <AnimatePresence>
+        {isHudVisible && (
+          <motion.div 
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="bg-black/60 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2.5rem] mt-auto border-t border-white/10 ring-1 ring-white/5 z-50 flex flex-col gap-2"
+          >
+            {/* Progress Bar placeholder for now */}
+            <div className="w-full h-1 bg-zinc-800 rounded-full mb-2 overflow-hidden relative">
+              <motion.div 
+                className="absolute left-0 top-0 bottom-0 bg-[#f59e0b]" 
+                initial={{ width: 0 }} 
+                animate={{ width: "65%" }} 
+                transition={{ duration: 1 }} 
+              />
+            </div>
+            
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3 flex-1 min-w-0 mr-4">
             <div className="flex items-center justify-center w-10 h-10 bg-[#f59e0b] rounded-[10px] shrink-0 shadow-sm">
@@ -1152,10 +1264,12 @@ const ActiveMissionView = ({ orders, onUpdateStatus }: {
           color={isPickedUp ? "#f59e0b" : "#f58220"}
           resetToken={currentOrder.delivery_status}
         />
-      </div>
-    </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+  </div>
   );
-};
+});
 
 const StarRating = ({ rating }: { rating: number }) => (
   <div className="flex gap-0.5">
@@ -1184,7 +1298,7 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
   }, [history]);
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
+    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       <header className="pt-8 mb-4">
         <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Telemetry</h2>
         <div className="flex items-center gap-3">
@@ -1552,7 +1666,7 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
       if (isSupabaseMocked()) {
         setOrders(prev => prev.map(o => {
           if (o.id === id) {
-            const upd: any = { ...o, status: status as DeliveryStatus };
+            const upd: DeliveryOrder = { ...o, status: status as DeliveryOrder['status'] };
             if (status === 'completed') {
                upd.delivery_status = 'none';
             } else if (status === 'preparing' || status === 'ready') {
@@ -2354,7 +2468,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
   onSwitchRole: () => void
 }) => {
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-lg mx-auto">
+    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       <header className="flex flex-col items-center pt-10 pb-6 text-center">
         <div className="relative mb-6">
           <div className="w-28 h-28 rounded-[2.5rem] bg-zinc-900 border-2 border-zinc-800 flex items-center justify-center p-1.5 glow ring-4 ring-[#f59e0b]/5">
@@ -2722,6 +2836,7 @@ export default function App() {
   const [history, setHistory] = useState<DeliveryOrder[]>([]);
   const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [isGlobalNavVisible, setIsGlobalNavVisible] = useState(true);
 
   // Network Detection
   useEffect(() => {
@@ -2750,6 +2865,7 @@ export default function App() {
     return localStorage.getItem('localeats_onboarding_seen') !== 'true';
   });
   const [bootLogs, setBootLogs] = useState<string[]>([]);
+  const [showRatingPrompt, setShowRatingPrompt] = useState<{orderId: string, entity: "merchant"|"customer"} | null>(null);
   const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
 
   const addBootLog = (msg: string) => {
@@ -3504,7 +3620,7 @@ export default function App() {
       throw error;
     }
   };
-  const handleUpdateStatus = async (orderId: string, status: DeliveryStatus) => {
+  const handleUpdateStatus = useCallback(async (orderId: string, status: DeliveryStatus) => {
     if (!profile) return;
     
     // Find the order being updated
@@ -3536,7 +3652,9 @@ export default function App() {
              active_points: prev.active_points + 15
            } : null);
            toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
-           if (activeOrders.length <= 1) setView('dash');
+           if (activeOrders.length <= 1) {
+             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
+           }
         } else {
            toast.success('Vector updated.');
         }
@@ -3569,8 +3687,10 @@ export default function App() {
           }
           
           toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
-          // If no more orders, go back to dash
-          if (activeOrders.length <= 1) setView('dash');
+          // If no more orders, prompt rating
+          if (activeOrders.length <= 1) {
+             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
+          }
         } else {
           toast.success('Vector updated.');
         }
@@ -3579,13 +3699,9 @@ export default function App() {
       const message = e instanceof Error ? e.message : 'Update failed';
       toast.error(message);
     }
-  };
+  }, [profile, activeOrders]);
 
-  const handlePairCallback = useCallback(async (code: string) => {
-    await handlePair(code);
-  }, [handlePair]);
 
-  const handleBackToHub = useCallback(() => setView('hub'), []);
 
   if (loading) {
     return (
@@ -3847,6 +3963,59 @@ NOTIFY pgrst, 'reload schema';
       </AnimatePresence>
       {showOnboarding && <TacticalOnboarding onComplete={handleOnboardingComplete} />}
       
+      {/* Rating Prompt Overlay */}
+      <AnimatePresence>
+        {showRatingPrompt && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex justify-center items-center p-6 pointer-events-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-zinc-900 border border-zinc-800 p-8 rounded-[2.5rem] max-w-sm w-full text-center shadow-2xl relative"
+            >
+              <button 
+                onClick={() => {
+                  setShowRatingPrompt(null);
+                  setView('dash');
+                }}
+                className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+              <h3 className="text-xl font-black uppercase text-white mb-2 mt-4">How was the mission?</h3>
+              <p className="text-zinc-400 text-xs mb-6">Rate your experience with the {showRatingPrompt.entity} to help us maintain grid integrity.</p>
+              
+              <div className="flex justify-center mb-8">
+                 <StarRatingInput 
+                   rating={0} 
+                   onRatingChange={() => {
+                     toast.success(`Rating synced. Thank you.`);
+                     setTimeout(() => {
+                       setShowRatingPrompt(null);
+                       setView('dash');
+                     }, 800);
+                   }}
+                 />
+              </div>
+
+              <button 
+                onClick={() => {
+                  setShowRatingPrompt(null);
+                  setView('dash');
+                }}
+                className="text-[10px] uppercase font-black tracking-widest text-[#f59e0b] hover:text-[#d97706]"
+              >
+                Skip Assessment
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
       {/* Background Map layer */}
       {view === 'move' && (
         <div className="fixed inset-0 z-0">
@@ -3912,7 +4081,7 @@ NOTIFY pgrst, 'reload schema';
       </header>
 
       {/* Main Container */}
-      <main className="pt-[60px] w-full max-w-md mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none">
+      <main className="pt-[60px] w-full max-w-5xl mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none">
         
         {/* Mission Pulse Overlay */}
         <AnimatePresence>
@@ -4086,7 +4255,11 @@ NOTIFY pgrst, 'reload schema';
                       <span className="text-[10px] uppercase font-black tracking-widest">Back to Hub</span>
                     </button>
                   </div>
-                  <ActiveMissionView orders={activeOrders} onUpdateStatus={handleUpdateStatus} />
+                  <ActiveMissionView 
+                    orders={activeOrders} 
+                    onUpdateStatus={handleUpdateStatus} 
+                    onScreenTap={() => setIsGlobalNavVisible(prev => !prev)}
+                  />
                 </div>
               ) : (
                 <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center opacity-40">
@@ -4122,39 +4295,47 @@ NOTIFY pgrst, 'reload schema';
                 }} 
               />
             )}
-            {view === 'pair' && <PairingView onBack={handleBackToHub} onComplete={handlePairCallback} />}
+            {view === 'pair' && <PairingView onBack={() => setView('hub')} onComplete={handlePair} />}
           </motion.div>
         </AnimatePresence>
       </main>
 
       {/* HUD Navigation */}
-      {view !== 'merchant_dash' && (
-        <nav className="fixed bottom-0 left-0 w-full p-6 z-[60] pointer-events-auto">
-          <div className="max-w-md mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-[2.5rem] p-2 flex items-center justify-between shadow-2xl">
-            {[
-              { icon: BarChart3, label: 'HOME', view: 'dash' },
-              { icon: List, label: 'ORDERS', view: 'feed' },
-              { icon: Navigation, label: 'ACTIVE', view: 'move', alert: activeOrders.length > 0 },
-              { icon: Smartphone, label: 'HISTORY', view: 'log' },
-              { icon: UserIcon, label: 'PROFILE', view: 'hub' },
-            ].map((item) => (
-              <button
-                key={item.view}
-                onClick={() => setView(item.view as AppView)}
-                className={cn(
-                  "relative flex-1 flex flex-col items-center py-4 rounded-[2rem] transition-all duration-300", 
-                  view === item.view ? "bg-[#f59e0b] text-zinc-950 shadow-xl shadow-[#f59e0b]/20" : "text-zinc-500 hover:text-zinc-300"
-                )}
-              >
-                {item.alert && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(249,115,22,0.5)]" />}
-                <item.icon size={18} className={cn(view === item.view && "fill-current animate-pulse")} />
-                <span className="text-[8px] font-black uppercase mt-1.5 tracking-tighter">{item.label}</span>
-                {view === item.view && <motion.div layoutId="nav-glow" className="absolute -inset-1 bg-[#f59e0b]/20 blur-xl -z-10 rounded-full" />}
-              </button>
-            ))}
-          </div>
-        </nav>
-      )}
+      <AnimatePresence>
+        {view !== 'merchant_dash' && isGlobalNavVisible && (
+          <motion.nav 
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            className="fixed bottom-0 left-0 w-full p-6 z-[60] pointer-events-auto"
+          >
+            <div className="max-w-md md:max-w-5xl mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-[2.5rem] p-2 flex items-center justify-between xl:justify-center xl:gap-10 shadow-2xl">
+              {[
+                { icon: BarChart3, label: 'HOME', view: 'dash' },
+                { icon: List, label: 'ORDERS', view: 'feed' },
+                { icon: Navigation, label: 'ACTIVE', view: 'move', alert: activeOrders.length > 0 },
+                { icon: Smartphone, label: 'HISTORY', view: 'log' },
+                { icon: UserIcon, label: 'PROFILE', view: 'hub' },
+              ].map((item) => (
+                <button
+                  key={item.view}
+                  onClick={() => setView(item.view as AppView)}
+                  className={cn(
+                    "relative flex-1 flex flex-col items-center py-4 rounded-[2rem] transition-all duration-300", 
+                    view === item.view ? "bg-[#f59e0b] text-zinc-950 shadow-xl shadow-[#f59e0b]/20" : "text-zinc-500 hover:text-zinc-300"
+                  )}
+                >
+                  {item.alert && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(249,115,22,0.5)]" />}
+                  <item.icon size={18} className={cn(view === item.view && "fill-current animate-pulse")} />
+                  <span className="text-[8px] font-black uppercase mt-1.5 tracking-tighter">{item.label}</span>
+                  {view === item.view && <motion.div layoutId="nav-glow" className="absolute -inset-1 bg-[#f59e0b]/20 blur-xl -z-10 rounded-full" />}
+                </button>
+              ))}
+            </div>
+          </motion.nav>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

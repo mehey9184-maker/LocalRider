@@ -31,7 +31,7 @@ export interface ShopConnection {
   connection_code?: string;
 }
 
-export type DeliveryStatus = 'finding_rider' | 'accepted' | 'picked_up' | 'delivered' | 'cancelled';
+export type DeliveryStatus = 'finding_rider' | 'accepted' | 'picked_up' | 'delivered' | 'cancelled' | 'none';
 
 export interface DeliveryOrder {
   id: string;

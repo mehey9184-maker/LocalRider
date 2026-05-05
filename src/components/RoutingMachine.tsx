@@ -80,7 +80,7 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
     const dist = getDistance(start, end);
     if (dist > 50) {
       console.warn(`DISTANCE_GUARD: Waypoint separation ${dist.toFixed(1)}km exceeds OSRM threshold. Engaging straight-line guide.`);
-      setUseFallback(true);
+      setTimeout(() => setUseFallback(true), 0);
       return;
     }
 
@@ -185,7 +185,16 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
   }, [start, end]);
 
   if (useFallback && cachedRoute) {
-    return <Polyline positions={cachedRoute} color={color} weight={6} opacity={0.6} />;
+    return (
+      <Polyline 
+        positions={cachedRoute} 
+        color={color} 
+        weight={6} 
+        opacity={0.5} 
+        dashArray="15, 10" 
+        className="animate-pulse"
+      />
+    );
   }
 
   // Final fallback: Straight-line guide if no cache exists

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
@@ -48,9 +48,19 @@ interface AppMapBackgroundProps {
   isOnline: boolean;
   activeOrder?: DeliveryOrder | null;
   isVisible?: boolean;
+  onMapClick?: () => void;
 }
 
-export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: AppMapBackgroundProps) {
+function InnerMapListener({ onClick }: { onClick?: () => void }) {
+  useMapEvents({
+    click() {
+      if (onClick) onClick();
+    },
+  });
+  return null;
+}
+
+export const AppMapBackground = React.memo(function AppMapBackground({ isOnline, activeOrder, isVisible = true, onMapClick }: AppMapBackgroundProps) {
   const [riderPos, setRiderPos] = useState<[number, number] | null>(null);
   const [lastUpdate, setLastUpdate] = useState<number>(() => Date.now());
   const [isCharging, setIsCharging] = useState(false);
@@ -59,7 +69,61 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
   const [isFallback, setIsFallback] = useState<boolean>(false);
   const [routeInfo, setRouteInfo] = useState<unknown>(null);
   const [isNetworkOffline, setIsNetworkOffline] = useState(!navigator.onLine);
-  const [isJittery, setIsJittery] = useState(false);
+  
+  // Custom Tembisa Tile Preloader (Browser Native Caching)
+  useEffect(() => {
+    // Tembisa roughly 28.2... -26.0...
+    // Preload basic z14-16 tiles aggressively into browser cache for the pilot region
+    const preloadTembisa = () => {
+      const z = 15;
+      const tLat = -26.0;
+      const tLng = 28.22;
+      const n = Math.pow(2, z);
+      const x = Math.floor((tLng + 180) / 360 * n);
+      const latRad = tLat * Math.PI / 180;
+      const y = Math.floor((1.0 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2.0 * n);
+      
+      const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || '';
+      for (let dx = -2; dx <= 2; dx++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          const img = new Image();
+          img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${x+dx}/${y+dy}@2x?access_token=${token}`;
+        }
+      }
+      console.log("TEMBISA PILOT CACHE: Preloaded region tiles for offline resilience.");
+    };
+    
+    // Only run when idle to prevent boot lag
+    if ('requestIdleCallback' in window) {
+      window.requestIdleCallback(preloadTembisa);
+    } else {
+      setTimeout(preloadTembisa, 5000);
+    }
+  }, []);
+  
+  // Throttle routing updates to avoid OSRM spam
+  const [routedStartPos, setRoutedStartPos] = useState<[number, number] | null>(null);
+
+  const getDistance = (p1: [number, number], p2: [number, number]) => {
+    const R = 6371; // km
+    const dLat = (p2[0] - p1[0]) * Math.PI / 180;
+    const dLon = (p2[1] - p1[1]) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(p1[0] * Math.PI / 180) * Math.cos(p2[0] * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  useEffect(() => {
+    if (riderPos) {
+      if (!routedStartPos || getDistance(riderPos, routedStartPos) > 0.05) { // 50 meters
+        setTimeout(() => setRoutedStartPos(riderPos), 0);
+      }
+    }
+  }, [riderPos, routedStartPos]);
+
 
   // Sync Network & Battery State
   useEffect(() => {
@@ -98,9 +162,9 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
 
   // Basic Signal Quality Logic
   const timeSinceLastUpdate = Math.floor((localNow - lastUpdate) / 1000);
-  const signalQuality = Math.max(0, 100 - (timeSinceLastUpdate * 8));
+  const signalQuality = Math.max(0, 100 - (timeSinceLastUpdate * 2));
   const isHealthy = signalQuality > 70;
-  const isStale = signalQuality < 40;
+  const isStale = signalQuality < 20;
   const isInterference = signalQuality <= 70 && signalQuality >= 40;
 
   // Simple Coordinate Smoothing Ref
@@ -165,8 +229,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
     };
 
     if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then((status) => {
-        setIsJittery(status.state === 'prompt');
+      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then(() => {
         startWatching();
       }).catch(() => {
          startWatching();
@@ -290,10 +353,14 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
             </div>
 
             <div className="relative z-10">
-              <h2 className="text-[18px] font-black uppercase tracking-[0.4em] text-red-500 mb-3 italic">Uplink Denied</h2>
+              <h2 className="text-[18px] font-black uppercase tracking-[0.4em] text-red-500 mb-3 italic">
+                Uplink Denied
+              </h2>
               <div className="mb-4 inline-flex items-center gap-2 px-3 py-1 bg-red-500/10 border border-red-500/20 rounded-lg">
                 <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
-                <span className="text-[9px] font-black uppercase tracking-widest text-red-500">Signal Status: CRITICAL_FAILURE</span>
+                <span className="text-[9px] font-black uppercase tracking-widest text-red-500">
+                  Signal Status: CRITICAL_FAILURE
+                </span>
               </div>
               <p className="text-[11px] text-zinc-400 font-bold leading-relaxed uppercase tracking-widest px-4">
                 Orbital positioning requires active authorization. Location services are restricted or signal is blocked by heavy interference.
@@ -318,7 +385,9 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
             </div>
 
             <button 
-              onClick={requestGeolocation}
+              onClick={() => {
+                requestGeolocation();
+              }}
               className="mt-4 w-full py-5 bg-red-600 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-red-500 transition-all active:scale-95 shadow-[0_15px_40px_rgba(220,38,38,0.4)] flex items-center justify-center gap-3"
             >
               <Zap className="w-5 h-5 fill-current" />
@@ -352,6 +421,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
         zoomControl={true}
         className="w-full h-full"
       >
+        <InnerMapListener onClick={onMapClick} />
         <TileLayer
           url={`https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}@2x?access_token=${import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || ''}`}
           attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
@@ -372,7 +442,7 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
               }} 
             />
             <RoutingMachine 
-              start={riderPos} 
+              start={routedStartPos} 
               end={targetPos} 
               color={isNetworkOffline ? '#22d3ee' : (isPickedUp ? '#f59e0b' : '#3b82f6')} 
               cacheId={activeOrder?.id}
@@ -567,5 +637,5 @@ export function AppMapBackground({ isOnline, activeOrder, isVisible = true }: Ap
 
     </div>
   );
-}
+});
 

@@ -7,6 +7,7 @@ export interface RiderProfile {
   phone?: string;
   photo_url?: string;
   is_online: boolean;
+  status: string; // added this
   vehicle_type: UserVehicle;
   verification_status: 'pending' | 'verified' | 'rejected';
   rating: number;
@@ -49,6 +50,10 @@ export interface DeliveryOrder {
   shop_id: string;
   restaurant_name?: string; // Virtual field joined from shops table
   distance_km: number; // Mocked/calculated
+  lat?: number; // Destination Latitude
+  lng?: number; // Destination Longitude
+  shop_lat?: number; // Source Latitude
+  shop_lng?: number; // Source Longitude
   match_score?: number; // Tactical algorithm score
   surge_multiplier?: number; // ROI Multiplier
   batch_id?: string; // Grouping missions

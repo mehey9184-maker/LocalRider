@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
-import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin, Radar, Activity } from 'lucide-react';
+import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin, Radar, Activity, Map as MapIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { DeliveryOrder } from '../types';
@@ -49,6 +49,11 @@ interface AppMapBackgroundProps {
   activeOrder?: DeliveryOrder | null;
   isVisible?: boolean;
   onMapClick?: () => void;
+  onProgressUpdate?: (progress: number) => void;
+  onETAUpdate?: (etaMinutes: number) => void;
+  onDistanceUpdate?: (distanceMeters: number) => void;
+  riderProfileLat?: number;
+  riderProfileLng?: number;
 }
 
 function InnerMapListener({ onClick }: { onClick?: () => void }) {
@@ -60,14 +65,65 @@ function InnerMapListener({ onClick }: { onClick?: () => void }) {
   return null;
 }
 
-export const AppMapBackground = React.memo(function AppMapBackground({ isOnline, activeOrder, isVisible = true, onMapClick }: AppMapBackgroundProps) {
-  const [riderPos, setRiderPos] = useState<[number, number] | null>(null);
+// Map Auto-Panning and Rotation Logic
+function MapController({ riderPos, activeOrder }: { riderPos: [number, number] | null, activeOrder: DeliveryOrder | null | undefined }) {
+  const map = useMapEvents({});
+  const lastPos = useRef<[number, number] | null>(null);
+  const prevOrder = useRef<string | null | undefined>(null);
+
+  // Distance calculating utility
+  const getDistance = (p1: [number, number], p2: [number, number]) => {
+    const R = 6371; // km
+    const dLat = (p2[0] - p1[0]) * Math.PI / 180;
+    const dLon = (p2[1] - p1[1]) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(p1[0] * Math.PI / 180) * Math.cos(p2[0] * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  useEffect(() => {
+    if (riderPos) {
+      const orderChanged = prevOrder.current !== activeOrder?.id;
+      let significantMove = false;
+      
+      if (lastPos.current) {
+         significantMove = getDistance(lastPos.current, riderPos) > 0.05; // 50 meters
+      }
+
+      // Pan to rider
+      map.panTo(riderPos, { animate: true, duration: activeOrder ? 1.5 : 1.0 });
+      
+      // If we significantly move, order changed, or it's the first fix, adjust zoom
+      if (!lastPos.current || orderChanged || significantMove) {
+        map.setZoom(activeOrder ? 17 : 16);
+      }
+      
+      lastPos.current = riderPos;
+      prevOrder.current = activeOrder?.id;
+    }
+  }, [riderPos, map, activeOrder]);
+
+  return null;
+}
+
+export const AppMapBackground = React.memo(function AppMapBackground({ isOnline, activeOrder, isVisible = true, onMapClick, onProgressUpdate, onETAUpdate, onDistanceUpdate, riderProfileLat, riderProfileLng }: AppMapBackgroundProps) {
+  const [riderPos, setRiderPos] = useState<[number, number] | null>(
+    riderProfileLat && riderProfileLng ? [riderProfileLat, riderProfileLng] : null
+  );
   const [lastUpdate, setLastUpdate] = useState<number>(() => Date.now());
   const [isCharging, setIsCharging] = useState(false);
   const [localNow, setLocalNow] = useState<number>(() => Date.now());
   const [geoError, setGeoError] = useState<boolean>(false);
   const [isFallback, setIsFallback] = useState<boolean>(false);
   const [routeInfo, setRouteInfo] = useState<unknown>(null);
+  const [turnInstructionText, setTurnInstructionText] = useState<string>("Proceed to destination");
+  const [turnDistance, setTurnDistance] = useState<number>(0);
+  const [turnModifier, setTurnModifier] = useState<string | undefined>();
+  const [turnType, setTurnType] = useState<string | undefined>();
+  const [isGoogleView, setIsGoogleView] = useState(false);
   const [isNetworkOffline, setIsNetworkOffline] = useState(!navigator.onLine);
   
   // Custom Tembisa Tile Preloader (Browser Native Caching)
@@ -83,11 +139,12 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
       const latRad = tLat * Math.PI / 180;
       const y = Math.floor((1.0 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2.0 * n);
       
-      const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || '';
+      // Using CartoDB Light (No-Cost)
       for (let dx = -2; dx <= 2; dx++) {
         for (let dy = -2; dy <= 2; dy++) {
           const img = new Image();
-          img.src = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/${z}/${x+dx}/${y+dy}@2x?access_token=${token}`;
+          const s = ['a', 'b', 'c', 'd'][Math.abs(dx + dy) % 4];
+          img.src = `https://${s}.basemaps.cartocdn.com/light_all/${z}/${x+dx}/${y+dy}.png`;
         }
       }
       console.log("TEMBISA PILOT CACHE: Preloaded region tiles for offline resilience.");
@@ -156,9 +213,11 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
   const isPickedUp = activeOrder?.delivery_status === 'picked_up';
   
   // Fake destination around Tembisa
-  const targetPos: [number, number] | null = activeOrder 
-    ? (isPickedUp ? [-25.9894, 28.2148] : [-25.9864, 28.2168]) 
-    : null;
+  const targetPos: [number, number] | null = useMemo(() => {
+    return activeOrder 
+      ? (isPickedUp ? [-25.9894, 28.2148] : [-25.9864, 28.2168]) 
+      : null;
+  }, [activeOrder, isPickedUp]);
 
   // Basic Signal Quality Logic
   const timeSinceLastUpdate = Math.floor((localNow - lastUpdate) / 1000);
@@ -174,10 +233,14 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
     setGeoError(false);
     
     if (!navigator.geolocation) {
-      // Mock movement for demo if geolocation is missing (Tembisa Sector)
-      const mockLat = -25.9864 + (Math.random() - 0.5) * 0.005;
-      const mockLng = 28.2198 + (Math.random() - 0.5) * 0.005;
-      setRiderPos([mockLat, mockLng]);
+      if (riderProfileLat && riderProfileLng) {
+        setRiderPos([riderProfileLat, riderProfileLng]);
+      } else {
+        // Mock movement for demo if geolocation is missing (Tembisa Sector)
+        const mockLat = -25.9864 + (Math.random() - 0.5) * 0.005;
+        const mockLng = 28.2198 + (Math.random() - 0.5) * 0.005;
+        setRiderPos([mockLat, mockLng]);
+      }
       setLastUpdate(Date.now());
       return null;
     }
@@ -202,19 +265,28 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
         setLastUpdate(Date.now());
       },
       (err) => {
-        // Permission Denied
+        console.warn('Geolocation error:', err.message, err.code);
+        // 1: Permission Denied, 2: Position Unavailable, 3: Timeout
         if (err.code === 1) {
           setGeoError(true);
-        } else if (err.code === 3) {
-          // Timeout - show interference but don't block
+        } else if (err.code === 2 || err.code === 3) {
+          // Timeout or unavailable - show interference but don't block fully
           setLastUpdate(prev => prev - 5000); // artificially degrade signal
+          toast.warning(`GPS Warning: ${err.message}. Open app in a new tab if it persists.`, { id: 'gps_warn' });
+          
+          // Try to fallback to mock if no initial position was ever found
+          if (!prevPos.current && !riderProfileLat) {
+             const mockLat = -25.9864 + (Math.random() - 0.5) * 0.005;
+             const mockLng = 28.2198 + (Math.random() - 0.5) * 0.005;
+             setRiderPos([mockLat, mockLng]);
+          }
         }
       },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 5000 }
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: Infinity }
     );
     
     return watchId;
-  }, []);
+  }, [riderProfileLat, riderProfileLng]);
 
   useEffect(() => {
     let watchId: number | null = null;
@@ -242,6 +314,22 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
       if (watchId) navigator.geolocation.clearWatch(watchId);
     };
   }, [requestGeolocation]);
+
+  // Calculate and broadcast progress
+  useEffect(() => {
+    if (riderPos && routedStartPos && targetPos) {
+      const initialDist = getDistance(routedStartPos, targetPos);
+      if (initialDist > 0.05) { // At least 50m to target start
+        const currentDist = getDistance(riderPos, targetPos);
+        const progress = Math.max(0, Math.min(100, ((initialDist - currentDist) / initialDist) * 100));
+        if (onProgressUpdate) {
+          onProgressUpdate(progress);
+        }
+      } else if (onProgressUpdate) {
+        onProgressUpdate(100);
+      }
+    }
+  }, [riderPos, routedStartPos, targetPos, onProgressUpdate]);
 
   // Route Caching Logic for Offline Guidance
   useEffect(() => {
@@ -297,6 +385,15 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
       }
       
       setRouteInfo(sanitized);
+
+      // Extract next turn instruction
+      if (sanitized.instructions.length > 0) {
+         const nextStep = sanitized.instructions[1] || sanitized.instructions[0];
+         setTurnInstructionText(nextStep.text);
+         setTurnDistance(nextStep.distance || 0);
+         setTurnModifier(nextStep.modifier);
+         setTurnType(nextStep.type);
+      }
     } else {
       setRouteInfo(null);
     }
@@ -305,10 +402,66 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
   const typedRouteInfo = routeInfo as { summary: { totalTime: number, totalDistance: number }, instructions: { text: string, type?: string, modifier?: string, distance?: number }[] } | null;
   const etaMins = typedRouteInfo ? Math.ceil(typedRouteInfo.summary.totalTime / 60) : 0;
   const distKm = typedRouteInfo ? (typedRouteInfo.summary.totalDistance / 1000).toFixed(1) : 0;
-  
-  // Extract custom instructions
-  const currentInstruction = typedRouteInfo?.instructions?.[1] || typedRouteInfo?.instructions?.[0];
-  const nextInstructionText = currentInstruction?.text || "Proceed to destination";
+
+  // Broadcast ETA & Distance to parent
+  useEffect(() => {
+    if (typedRouteInfo) {
+      if (onETAUpdate) onETAUpdate(etaMins);
+      if (onDistanceUpdate) onDistanceUpdate(typedRouteInfo.summary.totalDistance);
+    }
+  }, [etaMins, onETAUpdate, onDistanceUpdate, typedRouteInfo]);
+
+  // Haptic Navigation Alerts
+  const lastVibratedInstruction = useRef<string | null>(null);
+  const hasVibratedArrival = useRef<boolean>(false);
+  const lastVibrationTime = useRef<number>(0);
+
+  useEffect(() => {
+    if (!navigator.vibrate || !turnInstructionText || !typedRouteInfo) return;
+
+    const now = Date.now();
+    if (now - lastVibrationTime.current < 500) {
+      return; // Debounce interval of 500ms
+    }
+
+    // Turn Warning: within 50m of a turn
+    // Use the instruction text to ensure we only vibrate once per unique maneuver
+    const instructionAlpha = turnInstructionText;
+    
+    if (turnDistance && turnDistance <= 50 && turnDistance > 0) {
+      if (lastVibratedInstruction.current !== instructionAlpha) {
+        try {
+          navigator.vibrate([100, 50, 100]);
+          lastVibratedInstruction.current = instructionAlpha;
+          lastVibrationTime.current = now;
+        } catch (e) {
+          console.warn('Vibration rejected by subsystem', e);
+        }
+      }
+    }
+
+    // Destination Reached Logic: check OSRM flag or total tactical distance
+    const isAtDestination = turnType === 'DestinationReached' || 
+                            (typedRouteInfo.summary.totalDistance < 30); // within 30m sphere
+
+    if (isAtDestination && !hasVibratedArrival.current) {
+      try {
+        navigator.vibrate(500);
+        hasVibratedArrival.current = true;
+        lastVibrationTime.current = now;
+      } catch (e) {
+        console.warn('Vibration rejected at destination', e);
+      }
+    }
+  }, [turnInstructionText, turnDistance, turnType, typedRouteInfo]);
+
+  // Reset protocol for new missions
+  useEffect(() => {
+    if (!activeOrder) {
+      hasVibratedArrival.current = false;
+      lastVibratedInstruction.current = null;
+    }
+  }, [activeOrder]);
 
   const rootClassName = `absolute inset-0 z-0 overflow-hidden pointer-events-auto transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`;
 
@@ -418,33 +571,59 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
       <MapContainer 
         center={riderPos} 
         zoom={activeOrder ? 16 : 14} 
+        minZoom={13}
+        maxBounds={[
+          [-26.040, 28.160], // Southwest
+          [-25.930, 28.260]  // Northeast
+        ]}
+        maxBoundsViscosity={1.0}
         zoomControl={true}
-        className="w-full h-full"
+        scrollWheelZoom={true}
+        touchZoom={true}
+        tap={false} /* Leaflet 1.0+ handles tap better without this */
+        className={cn(
+          "w-full h-full transition-all duration-1000",
+          !isGoogleView ? "brightness-[1.02] contrast-[0.98] saturate-[0.8]" : ""
+        )}
       >
-        <InnerMapListener onClick={onMapClick} />
-        <TileLayer
-          url={`https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/256/{z}/{x}/{y}@2x?access_token=${import.meta.env.VITE_MAPBOX_ACCESS_TOKEN || ''}`}
-          attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
-        />
+        <InnerMapListener onClick={() => {
+          if (onMapClick) onMapClick();
+        }} />
+        <MapController riderPos={riderPos} activeOrder={activeOrder} />
+        {isGoogleView ? (
+          <TileLayer
+            url="https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+            subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
+            attribution='&copy; Google Maps'
+          />
+        ) : (
+          <TileLayer
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          />
+        )}
         
         <Marker position={riderPos} icon={mockRiderIcon} zIndexOffset={100} />
         
         {targetPos && (
           <>
             <Marker position={targetPos} icon={isPickedUp ? mockCustomerIcon : mockMerchantIcon} />
-            <Polyline 
-              positions={[riderPos, targetPos] as [number, number][]} 
-              pathOptions={{ 
-                color: isPickedUp ? '#f59e0b' : '#3b82f6', 
-                dashArray: '10, 15', 
-                weight: 2,
-                opacity: 0.8
-              }} 
-            />
+            {/* We only show the direct line if routing is unavailable or in fallback mode */}
+            {isFallback && (
+              <Polyline 
+                positions={[riderPos, targetPos] as [number, number][]} 
+                pathOptions={{ 
+                  color: isPickedUp ? '#f59e0b' : '#3b82f6', 
+                  dashArray: '10, 15', 
+                  weight: 2,
+                  opacity: 0.5
+                }} 
+              />
+            )}
             <RoutingMachine 
               start={routedStartPos} 
               end={targetPos} 
-              color={isNetworkOffline ? '#22d3ee' : (isPickedUp ? '#f59e0b' : '#3b82f6')} 
+              color="#00f2ff" 
               cacheId={activeOrder?.id}
               onFallback={setIsFallback}
               onRouteFound={handleRouteFound} 
@@ -506,135 +685,126 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
         )}
       </AnimatePresence>
 
-      {/* Platform HUD */}
-      <div className="absolute top-24 right-6 flex flex-col gap-2 z-[400] pointer-events-none items-end">
-        <div className={cn(
-          "px-3 py-1.5 rounded-full border flex items-center gap-3 transition-all duration-500 backdrop-blur-md shadow-lg",
-          isHealthy && !isNetworkOffline ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-500" :
-          isNetworkOffline ? "bg-blue-500/10 border-blue-500/30 text-blue-500" :
-          isStale ? "bg-red-500/10 border-red-500/30 text-red-500 animate-pulse" :
-          "bg-amber-500/10 border-amber-500/30 text-amber-500"
-        )}>
-          <div className="flex items-end gap-0.5 h-3">
-             {[...Array(4)].map((_, i) => (
-                <div 
-                  key={i} 
-                  className={cn(
-                    "w-0.5 rounded-full transition-all duration-300",
-                    i === 0 ? "h-1" : i === 1 ? "h-1.5" : i === 2 ? "h-2" : "h-3",
-                    (!isNetworkOffline && isHealthy) || 
-                    (isNetworkOffline && i < 4) ||
-                    (isInterference && i < 3) || 
-                    (signalQuality > 20 && i < 2) || 
-                    (signalQuality > 0 && i < 1)
-                      ? "bg-current" : "bg-white/10"
-                  )}
-                />
-             ))}
-          </div>
-          <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
-            {isHealthy && !isNetworkOffline ? "Link Stable" : isNetworkOffline ? "Local Cache" : isStale ? "No Signal" : "Weak Uplink"}
-          </span>
-          <Radar size={10} className={isHealthy && !isNetworkOffline ? "opacity-50" : "animate-spin"} />
-        </div>
-        
-        {activeOrder && (
-          <motion.div 
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
+      {/* Platform HUD - Top Right */}
+      <div className="absolute top-20 right-6 flex flex-col gap-2 z-[400] pointer-events-auto items-end">
+        {/* Back to Hub Button */}
+        <button 
+          onClick={() => { if(onMapClick) onMapClick(); }} /* Simplified back action */
+          className="bg-zinc-900/40 backdrop-blur-md border border-white/10 px-4 py-2 rounded-full flex items-center gap-2 mb-2 hover:bg-zinc-800/60 transition-all active:scale-95 group"
+        >
+          <ArrowLeft size={12} className="text-zinc-400 group-hover:text-white transition-colors" />
+          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-300">BACK TO HUB</span>
+        </button>
+
+        {/* Status Pills */}
+        <div className="flex flex-col gap-2 items-end">
+          <button 
+            onClick={() => setIsGoogleView(!isGoogleView)}
             className={cn(
-              "flex items-center gap-2 px-3 py-1 rounded-full border transition-colors duration-300",
-              routeInfo ? "bg-blue-500/10 border-blue-500/20 text-blue-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"
+              "px-3 py-1.5 rounded-full border flex items-center gap-2 transition-all duration-300 backdrop-blur-md shadow-lg pointer-events-auto",
+              isGoogleView ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900/40 border-white/10 text-white"
             )}
           >
-            <Zap size={10} className={cn("fill-current", !routeInfo && "animate-pulse")} />
-            <span className="text-[8px] font-black uppercase tracking-widest">
-              {routeInfo ? "Mission Data Cached" : isNetworkOffline ? "Offline Available" : "Caching Protocol..."}
+            <MapIcon size={10} className={cn(isGoogleView && "fill-black")} />
+            <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
+              {isGoogleView ? "GOOGLE MAPS ON" : "COMPARE ROAD"}
             </span>
-          </motion.div>
-        )}
+          </button>
 
-        {isCharging && !isNetworkOffline && (
-          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full text-emerald-400">
-            <Activity size={10} className="animate-pulse" />
-            <span className="text-[8px] font-black uppercase tracking-widest">Pre-Caching Map Tiles</span>
-          </div>
-        )}
+          <div className={cn(
+            "px-3 py-1.5 rounded-full border flex items-center gap-3 transition-all duration-500 backdrop-blur-md shadow-lg",
+          isHealthy && !isNetworkOffline ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-500/80" :
+          isNetworkOffline ? "bg-blue-500/5 border-blue-500/20 text-blue-500/80" :
+          isStale ? "bg-red-500/10 border-red-500/30 text-red-500 animate-pulse font-bold" :
+          "bg-amber-500/10 border-amber-500/30 text-amber-500 animate-pulse"
+        )}>
+           {(!isHealthy || isInterference) && <Activity size={10} className="animate-pulse" />}
+           <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
+             {isHealthy && !isNetworkOffline ? "Link Stable" : isNetworkOffline ? "Local Cache" : isStale ? "OUT OF RANGE" : "INTERFERENCE"}
+           </span>
+           {isHealthy && <Radar size={10} className="opacity-40" />}
+        </div>
 
-        {isFallback && activeOrder && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 rounded-xl text-amber-500 whitespace-nowrap"
-          >
-            <Activity size={12} className="animate-pulse" />
-            <span className="text-[9px] font-black uppercase tracking-widest leading-none">Straight-line guide active</span>
-          </motion.div>
-        )}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/5 border border-blue-500/20 backdrop-blur-md">
+           <Zap size={10} className="text-blue-500 fill-blue-500" />
+           <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-500/80">MISSION DATA CACHED</span>
+        </div>
 
-        {(isInterference || isNetworkOffline) && !isHealthy && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className={cn(
-              "text-[8px] font-black uppercase tracking-widest px-2 py-1 rounded border shadow-xl flex items-center gap-2",
-              isNetworkOffline ? "text-[#22d3ee] bg-black/80 border-[#22d3ee]/40" : "text-red-500 bg-black/80 border-red-500/40 animate-pulse"
-            )}
-          >
-            {isNetworkOffline ? <Map size={10} /> : <Activity size={10} />}
-            {isNetworkOffline ? "Local Vector Source" : "GPS Jitter Detected"}
-          </motion.div>
-        )}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/5 border border-emerald-500/20 backdrop-blur-md">
+           <Activity size={10} className="text-emerald-500" />
+           <span className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-500/80">PRE-CACHING MAP TILES</span>
+        </div>
       </div>
+    </div>
 
-      {/* Navigation HUD Overlay - Only shows when active mission */}
+      {/* Navigation HUD Overlay - Top Center */}
       <AnimatePresence>
         {activeOrder && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-24 left-4 flex flex-col gap-4 z-[400] pointer-events-none"
+            className="absolute top-20 left-1/2 -translate-x-1/2 z-[600] pointer-events-none w-full max-w-[400px] px-4"
           >
-            {/* Floating Instruction "Button" style Module */}
-            <AnimatePresence>
-              {routeInfo && currentInstruction && (
-                <motion.div 
-                  initial={{ opacity: 0, x: -50 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -50 }}
-                  className="bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded-xl flex items-center gap-4 shadow-xl pointer-events-auto cursor-pointer active:bg-zinc-800 transition-colors max-h-[80px]"
-                >
-                  <div className="p-2 bg-[#f59e0b] rounded-lg relative overflow-hidden shrink-0 shadow-sm flex items-center justify-center">
-                     {getInstructionIcon(currentInstruction.modifier, currentInstruction.type)}
+            <div className="bg-zinc-950/95 backdrop-blur-2xl border border-zinc-800 p-4 rounded-[2rem] shadow-[0_30px_60px_-15px_rgba(0,0,0,0.8)] flex flex-col gap-2 relative overflow-hidden">
+               {/* Decorative Gradient Background */}
+               <div className="absolute inset-0 bg-gradient-to-br from-zinc-900/50 to-transparent pointer-events-none" />
+               
+               <div className="flex items-center justify-between relative z-10">
+                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-[#f59e0b] italic">TACTICAL NAV</span>
+               </div>
+
+               <div className="flex items-start gap-4 relative z-10">
+                  <div className="w-14 h-14 bg-[#f59e0b] rounded-2xl flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(245,158,11,0.3)]">
+                     {getInstructionIcon(turnModifier, turnType)}
                   </div>
-                  <div className="flex flex-col pr-2 flex-1">
-                    <p className="text-[14px] font-sans font-medium text-white line-clamp-1 break-all leading-tight">
-                      {nextInstructionText}
-                    </p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      {currentInstruction.distance && (
-                        <p className="text-[12px] font-sans font-medium text-zinc-300">
-                          {(currentInstruction.distance > 1000) ? `${(currentInstruction.distance/1000).toFixed(1)} km` : `${Math.round(currentInstruction.distance)}m`}
-                        </p>
-                      )}
-                      {currentInstruction.distance && <div className="w-1 h-1 bg-zinc-500 rounded-full" />}
-                      <p className="text-[12px] font-sans font-medium text-zinc-400">
-                        {distKm} KM
-                      </p>
+                  
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-headline font-black italic text-white uppercase leading-tight line-clamp-2 tracking-tight">
+                      {turnInstructionText}
+                    </h3>
+                    
+                    <div className="flex items-center gap-4 mt-2">
+                       <div className="flex items-center gap-1.5 overflow-hidden">
+                          <Activity size={10} className="text-zinc-500 animate-pulse shrink-0" />
+                          <span className="text-sm font-black italic text-white whitespace-nowrap">
+                            {turnDistance > 1000 ? `${(turnDistance/1000).toFixed(1)}k` : `${Math.round(turnDistance)}m`}
+                          </span>
+                       </div>
+                       
+                       <div className="flex flex-col">
+                          <div className="flex items-center gap-1">
+                             <span className="text-[11px] font-mono font-bold text-zinc-400">{distKm}</span>
+                             <span className="text-[8px] font-black text-zinc-500 uppercase tracking-tighter italic">KM</span>
+                          </div>
+                          <span className="text-[8px] font-black text-zinc-600 uppercase tracking-widest -mt-1 italic">TOTAL</span>
+                       </div>
+
+                       <div className="ml-auto flex items-center gap-2">
+                          <div className="px-2 py-1 bg-[#10b981]/10 border border-[#10b981]/30 rounded-lg">
+                             <span className="text-[8px] font-black text-[#10b981] uppercase italic">R5 FIXED</span>
+                          </div>
+                          <div className="flex flex-col items-end">
+                             <span className="text-2xl font-headline font-black italic text-cyan-400 leading-none">
+                               {etaMins || 4}
+                             </span>
+                             <span className="text-[8px] font-black text-cyan-500 uppercase tracking-tighter italic">MIN</span>
+                          </div>
+                       </div>
                     </div>
                   </div>
-                  <div className="flex flex-col items-center justify-center pl-3 border-l border-zinc-800 shrink-0 min-w-[50px]">
-                    <span className="text-[20px] font-black leading-none text-[#22d3ee] drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]">{etaMins}</span>
-                    <span className="text-[9px] font-black uppercase tracking-widest text-[#22d3ee]/80 mt-1">MIN</span>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+               </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* Hide default routing control */}
+      <style>{`
+        .leaflet-routing-container, .leaflet-routing-alternatives-container, .leaflet-routing-geocoders {
+          display: none !important;
+        }
+      `}</style>
     </div>
   );
 });

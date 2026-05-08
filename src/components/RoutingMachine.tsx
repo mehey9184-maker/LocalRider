@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMap, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet-routing-machine';
+import { toast } from 'sonner';
 
 // Need to fix icon issues with Leaflet
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl: unknown })._getIconUrl;
@@ -41,6 +42,32 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
   };
+
+  const lastDeviationTime = useRef<number>(0);
+
+  // Detect route deviation
+  useEffect(() => {
+    if (cachedRoute && start) {
+      let minDeviation = Infinity;
+      // Sample the cached route to find minimum distance to current position
+      for(let i=0; i<cachedRoute.length; i += Math.max(1, Math.floor(cachedRoute.length / 20))) {
+         const p = cachedRoute[i];
+         const d = getDistance(start, [p.lat, p.lng]);
+         if (d < minDeviation) minDeviation = d;
+      }
+      
+      // If distance from the closest point on the old line is > 50 meters
+      if (minDeviation > 0.05) { 
+         const now = Date.now();
+         if (now - lastDeviationTime.current > 30000) { // Limit frequency of alerts
+             console.warn(`DEVIATION: ${minDeviation.toFixed(3)}km off route. Recalculating.`);
+             toast.warning('Route Divergence. Recalculating new vector...', { id: 'route_dev' });
+             if (navigator.vibrate) navigator.vibrate([200, 50, 200]);
+             lastDeviationTime.current = now;
+         }
+      }
+    }
+  }, [start, cachedRoute]);
 
   useEffect(() => {
     if (onFallback) onFallback(useFallback);
@@ -86,7 +113,8 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
 
     const router = L.Routing.osrmv1({
           serviceUrl: 'https://router.project-osrm.org/route/v1',
-          useHints: false // Helps avoid some failures on demo server
+          useHints: false, // Helps avoid some failures on demo server
+          timeout: 10000
         });
 
     // Create the routing control once
@@ -99,14 +127,18 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
       router: router,
       routeWhileDragging: false,
       addWaypoints: false,
-      fitSelectedRoutes: true,
+      fitSelectedRoutes: false, // Don't snap camera, we handle it with AutoPan
       show: false, 
       containerClassName: 'hidden',
       itineraryClassName: 'hidden',
       lineOptions: {
         extendToWaypoints: true,
-        missingRouteTolerance: 0,
-        styles: [{ color: color, weight: 6, opacity: 0.8 }]
+        missingRouteTolerance: 10,
+        styles: [
+          { color: '#00f2ff', weight: 10, opacity: 0.15 }, // Outer Glow
+          { color: '#000', weight: 8, opacity: 0.3 },    // Shadow
+          { color: color || '#00f2ff', weight: 6, opacity: 1.0 }    // Core Neon Line
+        ]
       },
       createMarker: () => null, // Hide default markers
       draggableWaypoints: false

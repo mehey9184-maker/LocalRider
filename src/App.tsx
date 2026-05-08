@@ -34,7 +34,8 @@ import {
   X,
   Mic,
   MicOff,
-  LifeBuoy
+  LifeBuoy,
+  Target
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -53,11 +54,159 @@ import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnectio
 import { cn, getEstimatedMinutes } from './lib/utils';
 import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/AppMapBackground';
+import { HistoryMap } from './components/HistoryMap';
 import { TacticalOnboarding } from './components/TacticalOnboarding';
+import { AddressSearch } from './components/AddressSearch';
+import { CheckoutMap } from './components/CheckoutMap';
 
 import { QRCodeSVG } from 'qrcode.react';
 
-// --- Components ---
+// --- Voice Controller ---
+
+const VoiceController = ({ isListening, onStart }: { isListening: boolean, onStart: () => void }) => {
+  return (
+    <motion.button
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
+      onClick={onStart}
+      className={cn(
+        "fixed bottom-24 right-6 w-14 h-14 rounded-full flex items-center justify-center shadow-2xl z-50 border-2 transition-all",
+        isListening 
+          ? "bg-emerald-500 border-emerald-400 animate-pulse shadow-emerald-500/40" 
+          : "bg-zinc-900 border-zinc-800 shadow-black/60"
+      )}
+    >
+      {isListening ? (
+        <Mic className="w-6 h-6 text-black" />
+      ) : (
+        <MicOff className="w-6 h-6 text-zinc-500" />
+      )}
+      
+      {isListening && (
+        <span className="absolute -top-1 -right-1 flex h-4 w-4">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500"></span>
+        </span>
+      )}
+    </motion.button>
+  );
+};
+
+// --- Checkout Components ---
+
+const CheckoutView = ({ onBack, onComplete }: { onBack: () => void, onComplete: () => void }) => {
+  const [items] = useState([
+    { name: 'Special Kota XL', price: 45 },
+    { name: 'Cold Drink 500ml', price: 18 },
+    { name: 'Extra Chips', price: 12 },
+  ]);
+  const [deliveryAddress, setDeliveryAddress] = useState('Search or pinpoint delivery spot...');
+  const [deliveryCoords, setDeliveryCoords] = useState<{lat: number, lng: number} | null>(null);
+  
+  const subtotal = items.reduce((acc, item) => acc + item.price, 0);
+  const delivery_fee = 5.00; // LOCKED AT R5.00 PER REQUEST
+  const total = subtotal + delivery_fee;
+
+  return (
+    <div className="p-6 space-y-8 max-w-lg mx-auto w-full pb-32">
+      <header className="flex items-center gap-4">
+        <button onClick={onBack} className="p-2 bg-zinc-900 rounded-xl hover:bg-zinc-800 transition-colors">
+           <ChevronLeft className="w-6 h-6 text-white" />
+        </button>
+        <h2 className="text-3xl font-headline font-black italic uppercase text-white">Secure Checkout</h2>
+      </header>
+
+      <section className="space-y-4">
+        <div className="flex items-center justify-between px-1">
+           <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 italic">Delivery Objective</h3>
+           <span className="text-[10px] font-black text-[#f59e0b] bg-[#f59e0b]/10 px-2 py-0.5 rounded border border-[#f59e0b]/20 italic">GPS Pinpoint Active</span>
+        </div>
+
+        <AddressSearch 
+          onSelect={(lat, lng, addr) => {
+            setDeliveryCoords({ lat, lng });
+            setDeliveryAddress(addr);
+          }}
+          initialValue={deliveryAddress}
+          placeholder="Enter drop-off address..."
+          className="mb-4"
+        />
+
+        <CheckoutMap 
+          onLocationSelect={(lat, lng, addr) => {
+            setDeliveryCoords({ lat, lng });
+            if (addr) setDeliveryAddress(addr);
+          }}
+        />
+
+        <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-2xl">
+           <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Target Coordinates</p>
+           <p className="text-xs text-white font-mono truncate">{deliveryAddress}</p>
+           {deliveryCoords && (
+             <p className="text-[9px] text-zinc-600 font-mono mt-1">LAT: {deliveryCoords.lat.toFixed(6)} • LNG: {deliveryCoords.lng.toFixed(6)}</p>
+           )}
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div className="flex items-center justify-between px-1">
+           <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 italic">Order Manifest</h3>
+           <span className="text-[10px] font-black text-[#f59e0b] bg-[#f59e0b]/10 px-2 py-0.5 rounded border border-[#f59e0b]/20 italic">FLAT RATE ELIGIBLE</span>
+        </div>
+        
+        <BentoCard className="divide-y divide-zinc-800 p-0 overflow-hidden bg-zinc-950/50">
+          {items.map((item, i) => (
+            <div key={i} className="flex justify-between items-center p-5">
+              <div className="flex flex-col">
+                <span className="text-white font-bold">{item.name}</span>
+                <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-black">Standard Unit</span>
+              </div>
+              <span className="text-zinc-300 font-mono">R{item.price.toFixed(2)}</span>
+            </div>
+          ))}
+        </BentoCard>
+      </section>
+
+      <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1 italic">Payment Summary</h3>
+        <BentoCard className="bg-zinc-900/50 space-y-4 border-zinc-800">
+           <div className="flex justify-between items-center text-sm font-sans">
+             <span className="text-zinc-400 font-bold uppercase tracking-widest text-[10px]">Subtotal (3 Items)</span>
+             <span className="text-white font-mono">R{subtotal.toFixed(2)}</span>
+           </div>
+           
+           <div className="flex justify-between items-center text-sm p-4 bg-[#f59e0b]/5 border border-[#f59e0b]/20 rounded-2xl">
+             <div className="flex flex-col">
+                <span className="text-[#f59e0b] font-black uppercase tracking-widest text-[11px]">Flat-Rate Delivery Fee</span>
+                <span className="text-[9px] text-[#f59e0b]/60 uppercase font-black italic">Limited Time • Tembisa Sector Only</span>
+             </div>
+             <span className="text-[#f59e0b] font-black italic text-lg">R{delivery_fee.toFixed(2)}</span>
+           </div>
+           
+           <div className="pt-4 border-t border-zinc-800 flex justify-between items-center">
+             <span className="text-white font-black uppercase tracking-widest">Total Credits Due</span>
+             <span className="text-2xl font-headline font-black italic text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.1)]">R{total.toFixed(2)}</span>
+           </div>
+        </BentoCard>
+      </section>
+
+      <div className="pt-4">
+         <SwipeButton 
+           label="Slide to Authorize Payment" 
+           onComplete={() => {
+              toast.success("PAYMENT AUTHORIZED", { description: "Mission signal broadcasted to fleet.", icon: <CheckCircle className="w-5 h-5 text-emerald-500"/> });
+              onComplete();
+           }}
+           color="#f59e0b"
+         />
+         <div className="flex flex-col items-center gap-2 mt-8">
+           <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.2em] italic">Secure Encryption Active • RSA-4096 Protocol</p>
+           <ShieldAlert className="w-4 h-4 text-zinc-800" />
+         </div>
+      </div>
+    </div>
+  );
+};
 
 
 // --- Utilities ---
@@ -150,34 +299,29 @@ const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken }: { lab
   }, []);
 
   return (
-    <div ref={containerRef} className="relative h-20 bg-zinc-900/50 border-2 border-zinc-800 rounded-2xl overflow-hidden p-1.5 select-none">
+    <div ref={containerRef} className="relative h-20 bg-zinc-950/20 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden p-1.5 select-none">
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className="text-xs font-black uppercase italic tracking-[0.3em] text-zinc-600">
+        <span className="text-[10px] font-black uppercase italic tracking-[0.4em] text-zinc-500 opacity-40">
           {label}
         </span>
       </div>
       <motion.div
         drag="x"
         dragConstraints={{ left: 0, right: maxDrag }}
-        dragElastic={0.1}
+        dragElastic={0.05}
         style={{ x, backgroundColor: isComplete ? '#fff' : color, touchAction: 'none' }}
         onDragEnd={(_, info) => {
           if (info.offset.x > maxDrag * 0.75) {
             setIsComplete(true);
             onComplete();
-            if (navigator.vibrate) navigator.vibrate([50, 30, 50]);
+            if (navigator.vibrate) navigator.vibrate([10, 20, 10]);
           } else {
-            // Spring back if not complete
-            animate(x, 0, { type: "spring", stiffness: 400, damping: 25 });
+            animate(x, 0, { type: "spring", stiffness: 500, damping: 30 });
           }
         }}
-        animate={!isComplete ? {
-          scale: [1, 1.05, 1],
-          transition: { repeat: Infinity, duration: 2, ease: "easeInOut", repeatDelay: 3 }
-        } : {}}
-        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_0_20px_rgba(57,255,20,0.4)] touch-action-none"
+        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_10px_30px_rgba(245,158,11,0.3)] touch-action-none"
       >
-        <ArrowRight className="w-8 h-8 text-black" />
+        <ArrowRight className="w-8 h-8 text-black" strokeWidth={3} />
       </motion.div>
     </div>
   );
@@ -382,7 +526,7 @@ const SOSButton = ({ riderName }: { riderName: string }) => {
       const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject);
       });
-      locationUrl = `https://www.google.com/maps?q=${pos.coords.latitude},${pos.coords.longitude}`;
+      locationUrl = `https://www.openstreetmap.org/?mlat=${pos.coords.latitude}&mlon=${pos.coords.longitude}#map=17/${pos.coords.latitude}/${pos.coords.longitude}`;
     } catch {
       // Fallback location gathering
     }
@@ -421,86 +565,12 @@ const SOSButton = ({ riderName }: { riderName: string }) => {
   );
 };
 
-const VoiceController = ({ onCommand }: { onCommand: (cmd: string) => void }) => {
-  const [isListening, setIsListening] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
-
-  useEffect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      if (recognitionRef.current) {
-        recognitionRef.current.continuous = true;
-        recognitionRef.current.interimResults = false;
-        recognitionRef.current.lang = 'en-US';
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        recognitionRef.current.onresult = (event: any) => {
-          const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
-          console.log('Voice Command Detected:', transcript);
-          onCommand(transcript);
-          if (navigator.vibrate) navigator.vibrate(30);
-        };
-
-        recognitionRef.current.onerror = () => setIsListening(false);
-        recognitionRef.current.onend = () => setIsListening(false);
-      }
-    }
-  }, [onCommand]);
-
-  const toggleListening = () => {
-    if (!recognitionRef.current) {
-      toast.error('Voice Uplink Unavailable on this device.');
-      return;
-    }
-
-    if (isListening) {
-      recognitionRef.current.stop();
-    } else {
-      recognitionRef.current.start();
-      setIsListening(true);
-      toast.info('Voice Command Active. Say "Order Picked Up" or "Delivered"', { duration: 3000 });
-    }
-  };
-
-  return (
-    <button 
-      onClick={toggleListening}
-      className={cn(
-        "p-4 rounded-2xl flex flex-col items-center gap-2 border-2 transition-all active:scale-95 group relative overflow-hidden",
-        isListening ? "bg-blue-600/20 border-blue-500/50 text-blue-500" : "bg-zinc-900 border-zinc-800 text-zinc-500 hover:border-zinc-700"
-      )}
-    >
-      {isListening && (
-        <div className="absolute inset-0 bg-blue-500/10 animate-pulse" />
-      )}
-      {isListening ? (
-        <Mic className="w-6 h-6 animate-pulse text-blue-400 relative z-10" />
-      ) : (
-        <MicOff className="w-6 h-6 text-zinc-600 relative z-10" />
-      )}
-      <span className="text-[10px] font-black uppercase tracking-widest relative z-10">
-        {isListening ? 'Listening' : 'Hands-Free'}
-      </span>
-      <div className="absolute top-1 right-1">
-        <div className={cn(
-          "w-1.5 h-1.5 rounded-full transition-colors",
-          isListening ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.8)] animate-ping" : "bg-zinc-800"
-        )} />
-      </div>
-    </button>
-  );
-};
 const Dashboard = ({ 
   profile, 
   todayEarnings, 
   totalDeliveries, 
   history, 
-  activeOrders,
   onToggleOnline, 
-  onUpdateStatus,
   setView, 
   connectionCount 
 }: { 
@@ -508,9 +578,7 @@ const Dashboard = ({
   todayEarnings: number,
   totalDeliveries: number,
   history: DeliveryOrder[],
-  activeOrders: DeliveryOrder[],
   onToggleOnline: () => void,
-  onUpdateStatus: (id: string, status: DeliveryStatus) => void,
   setView: (view: AppView) => void,
   connectionCount: number
 }) => {
@@ -569,28 +637,10 @@ const Dashboard = ({
       {/* Safety & Performance Protocols */}
       <div className="grid grid-cols-2 gap-4">
         <SOSButton riderName={profile.name} />
-        <VoiceController onCommand={(cmd) => {
-          if (cmd.includes('picked up') || cmd.includes('order picked') || cmd.includes('collected')) {
-             const target = activeOrders.find(o => o.delivery_status === 'accepted');
-             if (target) {
-               toast.info('Voice Protocol: Processing Pick-Up...');
-               onUpdateStatus(target.id, 'picked_up');
-               if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-             } else {
-               toast.error('No pending pick-ups in sector.');
-             }
-          }
-          if (cmd.includes('delivered') || cmd.includes('dropped off') || cmd.includes('complete')) {
-             const target = activeOrders.find(o => o.delivery_status === 'picked_up');
-             if (target) {
-               toast.info('Voice Protocol: Confirming Delivery...');
-               onUpdateStatus(target.id, 'delivered');
-               if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-             } else {
-               toast.error('No active payloads to drop off.');
-             }
-          }
-        }} />
+        <VoiceController 
+          isListening={false} 
+          onStart={() => setView('hub')} 
+        />
       </div>
 
       {/* Power Toggle */}
@@ -759,14 +809,18 @@ const OrdersFeed = ({
   isOnline, 
   surgeMultiplier, 
   connectionCount,
-  onRefresh
+  onRefresh,
+  riderName,
+  vehicleType
 }: { 
   orders: DeliveryOrder[], 
   onAccept: (id: string) => void, 
   isOnline: boolean, 
   surgeMultiplier: number, 
   connectionCount: number,
-  onRefresh: () => void
+  onRefresh: () => void,
+  riderName?: string,
+  vehicleType?: string
 }) => {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -818,6 +872,14 @@ const OrdersFeed = ({
           <BentoCard className="w-full max-w-sm border-[#f59e0b]/30">
             <ShieldAlert className="w-12 h-12 text-[#f59e0b] mb-4 mx-auto" />
             <h3 className="text-xl font-black italic uppercase text-center text-white mb-2">Confirm Mission</h3>
+            <div className="flex justify-center items-center gap-2 mb-4">
+              <span className="text-sm font-bold text-white uppercase">{riderName || 'Rider'}</span>
+              {vehicleType && (
+                <span className="text-[10px] font-black italic text-zinc-400 uppercase tracking-widest px-2 py-0.5 bg-zinc-800 rounded-full">
+                  {vehicleType}
+                </span>
+              )}
+            </div>
             <p className="text-xs text-zinc-500 text-center mb-6 leading-relaxed">
               Accepting this mission indicates you are ready to initiate the delivery vector. 
               Unauthorized aborts may impact your reliability rating.
@@ -970,17 +1032,91 @@ const OrdersFeed = ({
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: { 
+const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
+  const center: [number, number] = lat && lng ? [lat, lng] : [-25.9894, 28.2148];
+  return (
+    <div className="w-full h-full bg-zinc-950 flex items-center justify-center overflow-hidden">
+       <MapContainer 
+        center={center} 
+        zoom={16} 
+        minZoom={14}
+        maxBounds={[
+          [-26.040, 28.160], // Southwest
+          [-25.930, 28.260]  // Northeast
+        ]}
+        maxBoundsViscosity={1.0}
+        style={{ height: '100%', width: '100%' }}
+        zoomControl={false}
+        attributionControl={false}
+        className="brightness-[1.05] contrast-[0.95] saturate-[0.8]"
+      >
+        <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
+        <Marker 
+          position={center} 
+          icon={L.divIcon({
+            html: `<div style="background-color: #f59e0b; padding: 4px; border-radius: 50%; border: 1px solid white;"></div>`,
+            className: 'mini-pin',
+            iconSize: [12, 12]
+          })} 
+        />
+      </MapContainer>
+    </div>
+  );
+};
+
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, profile }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
+  profile?: RiderProfile;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [activeIndex, setActiveIndex] = useState(0);
   const [showGooglePocket, setShowGooglePocket] = useState(false);
   const [isSwapped, setIsSwapped] = useState(false);
   const [isPocketExpanded, setIsPocketExpanded] = useState(false);
-  const [isHudVisible, setIsHudVisible] = useState(true);
+  const [routeProgress, setRouteProgress] = useState(0);
+  const [activeEta, setActiveEta] = useState(0);
+  const [routeDistance, setRouteDistance] = useState(0);
+
+  const isVoiceSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+  const [isListening, setIsListening] = useState(false);
+
+  const startListening = () => {
+    const win = window as unknown as Record<string, unknown>;
+    const SR = (win.webkitSpeechRecognition || win.SpeechRecognition) as { 
+      new(): { 
+        lang: string; 
+        start: () => void; 
+        onresult: (event: { results: { [key: number]: { [key: number]: { transcript: string } } } }) => void;
+        onend: () => void;
+        onerror: () => void;
+      } 
+    };
+    
+    if (!SR) return;
+    
+    const recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.start();
+    setIsListening(true);
+    
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.toLowerCase();
+      console.log('Voice Command:', transcript);
+      
+      if (transcript.includes('pick up') || transcript.includes('picked up')) {
+        onUpdateStatus(currentOrder.id, 'picked_up');
+        toast.success(`VOICE COMMAND: Status updated to Picked Up`);
+      } else if (transcript.includes('delivered') || transcript.includes('complete') || transcript.includes('delivery')) {
+        onUpdateStatus(currentOrder.id, 'delivered');
+        toast.success(`VOICE COMMAND: Mission Complete`);
+      }
+    };
+    
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = () => setIsListening(false);
+  };
 
   const displayOrders = useMemo(() => {
     if (sortMethod === 'optimized') {
@@ -989,16 +1125,13 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: {
     return orders;
   }, [orders, sortMethod]);
 
-  const currentOrder = useMemo(() => {
-    const targetIdx = activeIndex >= displayOrders.length ? 0 : activeIndex;
-    return displayOrders[targetIdx] || displayOrders[0];
-  }, [displayOrders, activeIndex]);
+  const currentOrder = displayOrders[activeIndex] || displayOrders[0];
 
   const etaDisplay = useMemo(() => {
     const rawDist = Number(currentOrder?.distance_km);
     const validDist = isNaN(rawDist) ? 0 : rawDist;
     return String(Math.max(0, Math.floor(validDist * 2))).padStart(2, '0');
-  }, [currentOrder?.distance_km]);
+  }, [currentOrder]);
 
   if (!currentOrder) return null;
 
@@ -1014,6 +1147,51 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: {
     });
   };
 
+  const buildNavigationUrl = (originLat: number, originLng: number, destLat: number, destLng: number, vehicleType: string) => {
+    let travelMode = 'driving';
+    if (vehicleType === 'bicycle') travelMode = 'bicycling';
+    // Google maps universal link handles two-wheeler mostly as driving or two-wheeler if available
+    if (vehicleType === 'scooter') travelMode = 'two-wheeler';
+    
+    return `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${destLat},${destLng}&travelmode=${travelMode}`;
+  };
+
+  const handleStartNav = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const originLat = profile?.current_latitude || -25.9964; // Tembisa rider fallback
+    const originLng = profile?.current_longitude || 28.2298;
+    
+    if (!originLat || !originLng) {
+      toast.error('Location Unavailable', { description: 'Missing rider coordinates.' });
+      return;
+    }
+
+    let destLat: number | undefined;
+    let destLng: number | undefined;
+
+    if (currentOrder.delivery_status === 'accepted' || currentOrder.delivery_status === 'preparing') {
+      destLat = currentOrder.shop_lat || -25.9924; // Tembisa merchant fallback
+      destLng = currentOrder.shop_lng || 28.2048;
+    } else if (currentOrder.delivery_status === 'picked_up') {
+      destLat = currentOrder.lat || -25.9894; // Tembisa customer fallback
+      destLng = currentOrder.lng || 28.2148;
+    } else {
+      toast.error('Navigation unavailable for current mission status');
+      return;
+    }
+
+    if (!destLat || !destLng) {
+      toast.error('Location Unavailable', { description: 'Missing destination coordinates.' });
+      return;
+    }
+
+    const url = buildNavigationUrl(originLat, originLng, destLat, destLng, profile?.vehicle_type || 'car');
+    
+    // Attempt to deep link into the native maps app
+    window.location.href = url;
+  };
+
   return (
     <div className="h-screen flex flex-col pointer-events-none max-w-5xl mx-auto w-full relative">
       {/* Background Layer */}
@@ -1023,61 +1201,23 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: {
             isOnline={true}
             activeOrder={currentOrder}
             onMapClick={onScreenTap}
+            onProgressUpdate={setRouteProgress}
+            onETAUpdate={setActiveEta}
+            onDistanceUpdate={setRouteDistance}
+            riderProfileLat={profile?.current_latitude}
+            riderProfileLng={profile?.current_longitude}
           />
         ) : (
-          <iframe
-            src={`https://maps.google.com/maps?q=${currentOrder.address || (currentOrder.shop_latitude + ',' + currentOrder.shop_longitude)}&t=&z=16&ie=UTF8&iwloc=&output=embed`}
-            width="100%"
-            height="100%"
-            className="grayscale-[0.2] contrast-[1.1] scale-[1.05] pointer-events-auto"
-            frameBorder="0"
-            allowFullScreen
+          <SimpleMap 
+            lat={currentOrder.lat || currentOrder.shop_lat} 
+            lng={currentOrder.lng || currentOrder.shop_lng} 
           />
         )}
       </div>
 
-      {/* Multi-Order Selector */}
-      {displayOrders.length > 1 && (
-        <div className="bg-black/60 backdrop-blur-md border-b border-white/5 p-4 pointer-events-auto shadow-2xl mt-[60px]">
-          <div className="flex items-center justify-between mb-3 px-1">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] flex items-center gap-1.5">
-              <Zap className="w-3 h-3" /> Auto-Routed Sequence
-            </span>
-            <button 
-              onClick={optimizeRoute}
-              className="text-[10px] uppercase font-bold text-zinc-500 hover:text-white transition-colors"
-            >
-              Re-optimize
-            </button>
-          </div>
-          <div className="flex gap-2 overflow-x-auto no-scrollbar relative w-full items-center">
-            {/* Connecting line behind buttons */}
-            <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-zinc-800 -z-10 -translate-y-1/2" />
-            
-            {displayOrders.map((o, idx) => (
-              <button
-                key={o.id}
-                onClick={() => setActiveIndex(idx)}
-                className={cn(
-                  "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap border-2 shrink-0 flex items-center gap-2",
-                  activeIndex === idx 
-                    ? "bg-[#f59e0b] text-black border-[#f59e0b] shadow-[0_0_15px_rgba(245,158,11,0.4)]" 
-                    : "bg-zinc-900/90 text-zinc-400 border-zinc-800"
-                )}
-              >
-                <div className={cn("w-1.5 h-1.5 rounded-full", activeIndex === idx ? "bg-black" : (o.delivery_status === 'picked_up' ? "bg-red-500" : "bg-green-500"))} />
-                {activeIndex === idx && "CURRENT • "}
-                {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Map Area placeholder (transparent) */}
       <div 
         onClick={() => {
-          setIsHudVisible(prev => !prev);
           if (onScreenTap) onScreenTap();
         }}
         className="flex-1 relative overflow-hidden cursor-pointer group pointer-events-auto"
@@ -1153,7 +1293,8 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: {
                                 animate={{ opacity: 1 }}
                                 exit={{ opacity: 0 }}
                                 transition={{ duration: 0.2 }}
-                                src={`https://maps.google.com/maps?q=${currentOrder.address || (currentOrder.shop_latitude + ',' + currentOrder.shop_longitude)}&t=&z=16&ie=UTF8&iwloc=&output=embed`}
+                                lat={currentOrder.lat || currentOrder.shop_lat}
+                                lng={currentOrder.lng || currentOrder.shop_lng}
                                 width="100%"
                                 height="100%"
                                 className="grayscale-[0.4] contrast-[1.2] pointer-events-none"
@@ -1171,6 +1312,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: {
                                  <AppMapBackground
                                    isOnline={true}
                                    activeOrder={currentOrder}
+                                   onProgressUpdate={setRouteProgress}
                                  />
                               </motion.div>
                            )}
@@ -1218,54 +1360,116 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap }: {
             </div>
           </div>
         )}
+
+        {/* Need Help & Close Grouped Buttons */}
+        <div className="absolute right-6 top-1/2 -translate-y-[100px] z-[70] pointer-events-auto flex flex-col items-center gap-4">
+          <div className="flex flex-col items-center group cursor-pointer" onClick={handleStartNav}>
+             <div className="w-12 h-12 rounded-full bg-[#4285F4] shadow-[0_0_15px_#4285F4]/50 flex items-center justify-center mb-1 hover:brightness-110 active:scale-95 transition-all">
+                <Navigation className="w-5 h-5 text-white fill-white" />
+             </div>
+             <span className="text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest">START NAV</span>
+          </div>
+
+          <div className="flex flex-col items-center group cursor-pointer" onClick={() => { if(onScreenTap) onScreenTap(); }}>
+             <div className="w-12 h-12 rounded-full bg-black/80 backdrop-blur-xl border border-white/10 flex items-center justify-center mb-1 group-hover:border-white/30 transition-all">
+                <X className="w-6 h-6 text-white" />
+             </div>
+             <span className="text-[8px] font-black text-white/40 uppercase tracking-widest">CLOSE</span>
+          </div>
+
+          <button 
+            onClick={(e) => { e.stopPropagation(); toast('Support Uplink Activated. Connecting to Fleet HQ...'); }}
+            className="bg-black/60 backdrop-blur-md border border-white/10 text-white font-black text-[9px] px-4 py-2 rounded-full shadow-2xl active:scale-95 transition-all uppercase tracking-[0.2em] hover:bg-zinc-800"
+          >
+            NEED HELP?
+          </button>
+        </div>
       </div>
 
       <AnimatePresence>
-        {isHudVisible && (
-          <motion.div 
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="bg-black/60 backdrop-blur-md p-4 pb-8 pointer-events-auto shadow-2xl rounded-t-[2.5rem] mt-auto border-t border-white/10 ring-1 ring-white/5 z-50 flex flex-col gap-2"
-          >
-            {/* Progress Bar placeholder for now */}
-            <div className="w-full h-1 bg-zinc-800 rounded-full mb-2 overflow-hidden relative">
+        <motion.div 
+          initial={{ y: 100, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 100, opacity: 0 }}
+          className="bg-black/60 backdrop-blur-2xl p-6 pb-12 pointer-events-auto border-t border-white/10 z-50 flex flex-col gap-6"
+        >
+          {/* Mission Sequence & Controls */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+              {displayOrders.map((o, idx) => (
+                <button
+                  key={o.id}
+                  onClick={() => setActiveIndex(idx)}
+                  className={cn(
+                    "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 border whitespace-nowrap",
+                    activeIndex === idx 
+                      ? "bg-[#f59e0b] text-black border-[#f59e0b]" 
+                      : "bg-zinc-900 text-zinc-500 border-zinc-800"
+                  )}
+                >
+                  <div className={cn("w-1.5 h-1.5 rounded-full", activeIndex === idx ? "bg-black" : (o.delivery_status === 'picked_up' ? "bg-emerald-500" : "bg-zinc-600"))} />
+                  {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
+                </button>
+              ))}
+            </div>
+            
+            <button 
+              onClick={optimizeRoute}
+              className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600 hover:text-white transition-colors shrink-0"
+            >
+              OPTIMIZE
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col min-w-0 flex-1 mr-4">
+              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic mb-1">MISSION OBJECTIVE</span>
+              <h2 className="text-xl font-headline font-black italic text-white uppercase tracking-tight truncate">
+                {isPickedUp ? 'Deliver' : 'Pick up'} • {targetAddress || 'VECTOR LOCK'}
+              </h2>
+              {routeDistance > 0 && (
+                <div className="flex items-center gap-2 mt-1">
+                  <Activity size={10} className="text-[#f59e0b] animate-pulse" />
+                  <span className="text-[10px] font-mono text-zinc-500 uppercase">{(routeDistance / 1000).toFixed(1)} KM REMAINING</span>
+                </div>
+              )}
+            </div>
+            
+            <div 
+              className="text-right flex flex-col items-end cursor-pointer group active:scale-95 transition-transform"
+              onClick={(e) => { e.stopPropagation(); if(isVoiceSupported) startListening(); }}
+            >
+              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic mb-1 flex items-center gap-2">
+                ETA {isListening && <Mic size={10} className="text-red-500 animate-pulse" />}
+              </span>
+              <p className={cn(
+                "text-2xl font-headline font-black italic leading-none transition-colors",
+                isListening ? "text-red-500" : "text-[#f59e0b]"
+              )}>
+                {activeEta || etaDisplay} <span className="text-[10px] tracking-tighter">MIN</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {/* Progress Bar */}
+            <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden relative">
               <motion.div 
-                className="absolute left-0 top-0 bottom-0 bg-[#f59e0b]" 
+                className="absolute left-0 top-0 bottom-0 bg-[#f59e0b] shadow-[0_0_10px_#f59e0b]" 
                 initial={{ width: 0 }} 
-                animate={{ width: "65%" }} 
+                animate={{ width: `${routeProgress}%` }} 
                 transition={{ duration: 1 }} 
               />
             </div>
-            
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3 flex-1 min-w-0 mr-4">
-            <div className="flex items-center justify-center w-10 h-10 bg-[#f59e0b] rounded-[10px] shrink-0 shadow-sm">
-              <MapPin className="w-5 h-5 text-black" />
-            </div>
-            <div className="flex flex-col min-w-0">
-              <span className="text-[13px] font-sans text-zinc-400 tracking-normal mb-0.5">Mission Objective</span>
-              <span className="text-[16px] font-sans font-medium text-white truncate w-full leading-snug">
-                {isPickedUp ? 'Drop-Off' : 'Pick-Up'} • {targetAddress || 'Calculating Vector...'}
-              </span>
-            </div>
-          </div>
-          <div className="text-right flex flex-col items-end shrink-0 pl-3">
-            <span className="text-[13px] font-sans text-zinc-400 tracking-normal mb-0.5">ETA</span>
-            <span className="text-[16px] font-sans font-medium text-white tracking-tight">
-              {etaDisplay}:15
-            </span>
-          </div>
-        </div>
 
-        <SwipeButton 
-          label={isPickedUp ? "SLIDE TO COMPLETE" : "SLIDE TO PICK UP"}
-          onComplete={() => onUpdateStatus(currentOrder.id, isPickedUp ? 'delivered' : 'picked_up')}
-          color={isPickedUp ? "#f59e0b" : "#f58220"}
-          resetToken={currentOrder.delivery_status}
-        />
-          </motion.div>
-        )}
+            <SwipeButton 
+              label={isPickedUp ? "SLIDE TO COMPLETE DELIVERY" : "SLIDE TO PICK UP"}
+              onComplete={() => onUpdateStatus(currentOrder.id, isPickedUp ? 'delivered' : 'picked_up')}
+              color="#f59e0b"
+              resetToken={currentOrder.delivery_status}
+            />
+          </div>
+        </motion.div>
       </AnimatePresence>
   </div>
   );
@@ -1362,12 +1566,13 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
             <BentoCard key={item.id} className="p-4 bg-zinc-900/10 border-zinc-800/40">
               <div className="flex items-center justify-between">
                 <div className="flex items-start gap-4 flex-1 min-w-0 mr-4">
-                  <div className="p-2 bg-zinc-800 rounded-lg shrink-0">
+                  <div className="p-2 bg-zinc-800 rounded-lg shrink-0 mt-1">
                     <CheckCircle className="w-4 h-4 text-[#f59e0b]" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h4 className="text-sm font-black italic text-zinc-200 uppercase truncate w-full">{item.restaurant_name}</h4>
                     <p className="text-[9px] text-zinc-500 font-mono truncate w-full">{item.address}, {item.city}</p>
+                    <HistoryMap order={item} />
                     {item.merchant_rating && (
                       <div className="mt-2 flex items-center gap-2">
                         <StarRating rating={item.merchant_rating} />
@@ -1439,12 +1644,18 @@ const RiderTrackingMap = ({
       <MapContainer 
         center={riderCoords} 
         zoom={15} 
+        minZoom={13}
+        maxBounds={[
+          [-26.040, 28.160], // Southwest
+          [-25.930, 28.260]  // Northeast
+        ]}
+        maxBoundsViscosity={1.0}
         style={{ height: '100%', width: '100%' }}
         zoomControl={false}
         attributionControl={false}
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
         />
         <Marker position={riderCoords} icon={customIcon} />
         <RecenterMap coords={riderCoords} />
@@ -1459,7 +1670,7 @@ const RiderTrackingMap = ({
   );
 };
 
-const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
+const MerchantDashboard = ({ onSwitchRole, setView }: { onSwitchRole: () => void, setView: (view: AppView) => void }) => {
   const [orders, setOrders] = useState<DeliveryOrder[]>([]);
   const [activeRiders, setActiveRiders] = useState<RiderProfile[]>([]);
   const [ratingOrder, setRatingOrder] = useState<DeliveryOrder | null>(null);
@@ -1612,7 +1823,7 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
           delivery_status: 'finding_rider',
           product_name: 'Super Deluxe Burger',
           total_price: 155,
-          delivery_fee: 35,
+          delivery_fee: 5.00,
           created_at: new Date().toISOString(),
           phone: '000 000 0000',
           shop_id: 'mock-shop',
@@ -1642,7 +1853,7 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
         restaurant_name: shops[0].name || 'Tembisa Merchant',
         items: ['1x Giga-Byte Burger', '1x Data Chips'],
         total_price: 85,
-        delivery_fee: 25,
+        delivery_fee: 5.00,
         order_type: 'delivery'
       }).select().single();
 
@@ -1787,6 +1998,13 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
         </div>
 
         <div className="flex items-center gap-4">
+           <button 
+             onClick={() => setView('checkout_demo')}
+             className="flex items-center gap-2 text-[10px] font-black uppercase text-[#f58220] border border-[#f58220]/30 px-4 py-2 rounded-2xl bg-[#f58220]/5 active:scale-95 transition-all"
+           >
+             <ShoppingBag className="w-3.5 h-3.5" />
+             Checkout Demo
+           </button>
            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-full">
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               <span className="text-[10px] font-black uppercase text-green-700">Accepting Orders</span>
@@ -2172,6 +2390,25 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
                   </div>
 
                   <div className="space-y-4">
+                    <h4 className="text-xs font-black uppercase tracking-widest text-zinc-400 ml-2">Node Location (Verification)</h4>
+                    <div className="bg-white border text-zinc-900 border-zinc-200 rounded-3xl p-6 shadow-sm overflow-hidden h-[400px] flex flex-col gap-4">
+                       <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest leading-relaxed">
+                          Verify your merchant node's physical coordinates to ensure accurate mission broadcasts to nearby riders.
+                       </p>
+                       <CheckoutMap 
+                         onLocationSelect={(lat, lng, addr) => {
+                           console.log('Shop Location Updated:', lat, lng, addr);
+                           toast.info('Location signal received.', { description: addr });
+                         }}
+                       />
+                       <div className="flex items-center justify-between text-[10px] font-black uppercase text-zinc-400">
+                          <span>Status: LOCKED</span>
+                          <span className="text-green-600">Verified</span>
+                       </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
                     <h4 className="text-xs font-black uppercase tracking-widest text-zinc-400 ml-2">Terminal Access</h4>
                     <div className="divide-y divide-zinc-100 border rounded-2xl overflow-hidden bg-zinc-50">
                        <div className="p-4 flex items-center justify-between bg-white">
@@ -2458,14 +2695,15 @@ const MerchantDashboard = ({ onSwitchRole }: { onSwitchRole: () => void }) => {
   );
 };
 
-const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onSwitchRole }: { 
+const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onSwitchRole, onToggleOnline }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
   now: number,
   onUpdateVehicle: (v: UserVehicle) => void,
   onLogout: () => void,
   onPair: (code?: string) => void,
-  onSwitchRole: () => void
+  onSwitchRole: () => void,
+  onToggleOnline: () => void
 }) => {
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
@@ -2478,11 +2716,23 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
               <div className="text-5xl font-headline font-black italic text-[#f59e0b]">{profile.name[0]}</div>
             )}
           </div>
-          <div className="absolute -bottom-1 -right-1 bg-[#f59e0b] text-black text-[10px] font-black italic px-3 py-1 rounded-xl shadow-xl border-2 border-[#050505]">
-            RANK 42
-          </div>
+          <button 
+            onClick={onToggleOnline}
+            className={cn(
+              "absolute -bottom-1 -right-1 text-white text-[10px] font-black italic px-3 py-1 rounded-xl shadow-xl border-2 border-[#050505] transition-colors",
+              profile.is_online ? "bg-emerald-600" : "bg-red-600"
+            )}
+          >
+            {profile.is_online ? 'ONLINE' : 'OFFLINE'}
+          </button>
         </div>
-        <h2 className="text-4xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">{profile.name}</h2>
+        <h2 className="text-4xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2 items-center flex gap-3">
+          {profile.name}
+          <div className={cn(
+            "w-3 h-3 rounded-full border-2 border-zinc-950 shadow-[0_0_10px_rgba(0,0,0,0.5)]",
+            profile.is_online ? "bg-emerald-500 shadow-emerald-500/40" : "bg-red-500 shadow-red-500/40"
+          )} />
+        </h2>
         <div className="flex items-center gap-3">
            <div className="flex items-center gap-1">
               <StarRating rating={Math.round(profile.rating || 5)} />
@@ -2815,11 +3065,12 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
 
 // --- App Hub ---
 
-type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'merchant_dash';
+type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'merchant_dash' | 'checkout_demo';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<RiderProfile | null>(null);
+  const [showOfflineWarning, setShowOfflineWarning] = useState(false);
   const [connections, setConnections] = useState<ShopConnection[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
@@ -2872,8 +3123,11 @@ export default function App() {
     setBootLogs(prev => [...prev.slice(-3), `> ${msg}`]);
   };
 
+  const isFetchingProfileRef = useRef(false);
+
   const fetchProfile = useCallback(async () => {
-    if (!user) return;
+    if (!user || isFetchingProfileRef.current) return;
+    isFetchingProfileRef.current = true;
     addBootLog('INIT PROTOCOL: PROFILE_SYNC');
     try {
       if (isSupabaseMocked()) {
@@ -2884,6 +3138,7 @@ export default function App() {
           full_name: 'Tata Rider',
           phone: '083 456 7890',
           is_online: true,
+          status: 'online',
           vehicle_type: 'Road',
           verification_status: 'verified',
           rating: 4.8,
@@ -2904,7 +3159,7 @@ export default function App() {
           .eq('id', user.id)
           .single();
         return res as { data: RiderProfile | null; error: { code: string; message: string } | null };
-      });
+      }, 1, 1000, 5000); // Only retry once, 5s timeout to avoid boot hang
 
       if (error && error.code === 'PGRST116') {
         addBootLog('WARN: NO_PROFILE - INITIALIZING...');
@@ -2915,6 +3170,7 @@ export default function App() {
           full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
           phone: user.user_metadata?.phone || '',
           is_online: false,
+          status: 'offline',
           vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
           verification_status: user.email === 'aviwenotununu4@gmail.com' ? 'verified' : 'pending',
           rating: 5.0,
@@ -2959,12 +3215,16 @@ export default function App() {
       addBootLog(`CRITICAL: SYNC_FAILURE (${errMessage})`);
       setSyncError(errMessage);
     } finally {
+      isFetchingProfileRef.current = false;
       setLoading(false);
     }
   }, [user]);
 
+  const isFetchingConnRef = useRef(false);
+
   const fetchConnectionsAndOrders = useCallback(async () => {
-    if (!user) return;
+    if (!user || isFetchingConnRef.current) return;
+    isFetchingConnRef.current = true;
     console.log('MISSION PROTOCOL: Scanning Sector Alpha for active uplinks...');
     try {
       let activeConnections: ShopConnection[] = [];
@@ -2993,7 +3253,7 @@ export default function App() {
               delivery_status: 'finding_rider',
               order_type: 'delivery',
               product_name: 'Cheese Burger XL',
-              delivery_fee: 25,
+              delivery_fee: 5.00,
               total_price: 155,
               created_at: new Date().toISOString(),
               restaurant_name: 'Test Burger Hub',
@@ -3015,7 +3275,7 @@ export default function App() {
           .order('expires_at', { ascending: false });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return res as any;
-      });
+      }, 1, 1000, 5000);
       
       if (connData) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3053,8 +3313,8 @@ export default function App() {
         const formatted = ordersData
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .map((item: any) => {
-            const shopLat = item.shop_latitude || -33.9249;
-            const shopLng = item.shop_longitude || 18.4241;
+            const shopLat = item.shop_lat || -33.9249;
+            const shopLng = item.shop_lng || 18.4241;
             const riderLat = profile?.current_latitude || -33.9100; // default near shop if missing
             const riderLng = profile?.current_longitude || 18.4100;
             
@@ -3094,6 +3354,8 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      isFetchingConnRef.current = false;
     }
   }, [user, profile]);
 
@@ -3315,6 +3577,24 @@ export default function App() {
       .subscribe();
     channels.push(missionChannel);
 
+    // Protocol: Relay Nudge Directives
+    const nudgeChannel = getSupabase()
+      .channel(`nudges:${user.id}_${Math.random()}`)
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'rider_notifications',
+        filter: `rider_id=eq.${user.id}` 
+      }, payload => {
+        toast.info(`NUDGE RECEIVED: ${payload.new.message}`, {
+          duration: 6000,
+          description: 'Merchant requires immediate attention.',
+          icon: <Activity className="w-5 h-5 text-[#f59e0b]" />
+        });
+      })
+      .subscribe();
+    channels.push(nudgeChannel);
+
     return () => {
       channels.forEach(ch => {
         getSupabase().removeChannel(ch);
@@ -3355,7 +3635,7 @@ export default function App() {
                id: 'h1',
                customer_name: 'Recent Client',
                product_name: 'Double Patty Special',
-               delivery_fee: 28,
+               delivery_fee: 5.00,
                total_price: 180,
                delivery_status: 'delivered',
                updated_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
@@ -3406,27 +3686,160 @@ export default function App() {
   }, [user]);
 
   // Actions
-  const toggleOnline = async () => {
+  const handleUpdateStatus = useCallback(async (orderId: string, status: DeliveryStatus) => {
     if (!profile) return;
     
-    // IMPROVEMENT #7 — Prevent going offline during active mission
-    if (profile.is_online && activeOrders.length > 0) {
-      toast.error('Mission Active. Protocol requires completion before shutdown.', {
-        description: 'Complete pending deliveries first.',
-        icon: <ShieldAlert className="text-red-500" />
-      });
-      return;
-    }
+    // Find the order being updated
+    const orderToUpdate = activeOrders.find(o => o.id === orderId);
+    if (!orderToUpdate) return;
+    
+    const updates = { 
+      delivery_status: status, 
+      updated_at: new Date().toISOString() 
+    };
 
-    if (profile.verification_status !== 'verified') {
-      toast.error('Identity Verification Pending. Access to Missions blocked until Fleet HQ authorizes.');
-      return;
-    }
+    // ROI Protocol: Mandatory Proof of Delivery simulation
+    // Optimization: Swipe gesture in UI is sufficient confirmation
+    // if (status === 'delivered') {
+    //   const confirmed = window.confirm("POD PROTOCOL: Has the asset been successfully delivered? Close proximity detected.");
+    //   if (!confirmed) return;
+    // }
 
     try {
       if (isSupabaseMocked()) {
+        setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
+        if (status === 'delivered') {
+           setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
+           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
+           setProfile(prev => prev ? {
+             ...prev,
+             total_earnings: prev.total_earnings + (orderToUpdate.delivery_fee || 0),
+             total_deliveries: prev.total_deliveries + 1,
+             active_points: prev.active_points + 15
+           } : null);
+           toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
+           if (activeOrders.length <= 1) {
+             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
+           }
+        } else {
+           toast.success('Vector updated.');
+        }
+        return;
+      }
+      const { error } = await getSupabase()
+        .from('orders')
+        .update(updates)
+        .eq('id', orderId);
+
+      if (error) {
+        toast.error('Phase sync failed');
+      } else {
+        if (status === 'delivered') {
+          const { error: rpcError } = await getSupabase().rpc('increment_rider_stats', {
+            p_rider_id: profile.id,
+            p_earnings: orderToUpdate.delivery_fee,
+            p_points: 15
+          });
+          
+          if (rpcError) {
+             console.warn('RPC failed, falling back to direct update', rpcError);
+             const profileUpdates = {
+               total_earnings: profile.total_earnings + orderToUpdate.delivery_fee,
+               total_deliveries: profile.total_deliveries + 1,
+               active_points: profile.active_points + 15,
+               updated_at: new Date().toISOString()
+             };
+             await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile.id);
+          }
+          
+          toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
+          // If no more orders, prompt rating
+          if (activeOrders.length <= 1) {
+             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
+          }
+        } else {
+          toast.success('Vector updated.');
+        }
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Update failed';
+      toast.error(message);
+    }
+  }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, setShowRatingPrompt]);
+
+  const [isListening, setIsListening] = useState(false);
+
+  const startListening = useCallback(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error('Voice protocols not supported on this device.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-ZA';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      toast.info('VOICE UPLINK ACTIVE', {
+        description: 'Listening for mission triggers...',
+        icon: <Mic className="w-5 h-5 text-[#f59e0b]" />
+      });
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript.toLowerCase();
+      console.log('VOICE DISCOVERY:', transcript);
+
+      let handled = false;
+      const currentOrder = activeOrders[0]; 
+
+      if (currentOrder) {
+        if (transcript.includes('picked up') || transcript.includes('collected')) {
+          handleUpdateStatus(currentOrder.id, 'picked_up');
+          toast.success('VOICE COMMAND: PICKUP LOGGED', { icon: <CheckCircle className="w-5 h-5 text-emerald-500" /> });
+          handled = true;
+        } else if (transcript.includes('delivered') || transcript.includes('completed')) {
+          handleUpdateStatus(currentOrder.id, 'delivered');
+          toast.success('VOICE COMMAND: MISSION SUCCESS', { icon: <Target className="w-5 h-5 text-white shadow-xl" /> });
+          handled = true;
+        }
+      }
+
+      if (!handled) {
+        toast.error(`SIGNAL REJECTED: "${transcript}"`, { description: 'Command not recognized.' });
+      }
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (event: any) => {
+      setIsListening(false);
+      console.error('Voice Error:', event.error);
+      toast.error(`VOICE LINK FAILURE: ${event.error.toUpperCase()}`);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.start();
+  }, [activeOrders, handleUpdateStatus]);
+
+  const confirmOnlineToggle = useCallback(async () => {
+    if (!profile) return;
+    try {
+      if (isSupabaseMocked()) {
         const newStatus = !profile.is_online;
-        setProfile({ ...profile, is_online: newStatus });
+        setProfile({ 
+          ...profile, 
+          is_online: newStatus,
+          last_online: newStatus ? new Date().toISOString() : profile.last_online,
+          status: newStatus ? 'online' : 'offline'
+        });
         if (newStatus) {
           toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
         } else {
@@ -3437,7 +3850,12 @@ export default function App() {
 
       const { error } = await getSupabase()
         .from('rider_profiles')
-        .update({ is_online: !profile.is_online, updated_at: new Date().toISOString() })
+        .update({ 
+          is_online: !profile.is_online, 
+          last_online: !profile.is_online ? new Date().toISOString() : undefined,
+          status: !profile.is_online ? 'online' : 'offline',
+          updated_at: new Date().toISOString() 
+        })
         .eq('id', profile.id);
       if (error) toast.error('Failed to sync system status');
       else {
@@ -3451,7 +3869,23 @@ export default function App() {
       const message = e instanceof Error ? e.message : 'Sync failed';
       toast.error(message);
     }
-  };
+  }, [profile]);
+
+  const toggleOnline = useCallback(async () => {
+    if (!profile) return;
+    
+    if (profile.verification_status !== 'verified') {
+      toast.error('Identity Verification Pending. Access to Missions blocked until Fleet HQ authorizes.');
+      return;
+    }
+
+    if (profile.is_online && activeOrders.length > 0) {
+      setShowOfflineWarning(true);
+      return;
+    }
+
+    await confirmOnlineToggle();
+  }, [profile, activeOrders.length, confirmOnlineToggle]);
 
   const updateVehicle = async (type: UserVehicle) => {
     if (!profile) return;
@@ -3620,88 +4054,6 @@ export default function App() {
       throw error;
     }
   };
-  const handleUpdateStatus = useCallback(async (orderId: string, status: DeliveryStatus) => {
-    if (!profile) return;
-    
-    // Find the order being updated
-    const orderToUpdate = activeOrders.find(o => o.id === orderId);
-    if (!orderToUpdate) return;
-    
-    const updates = { 
-      delivery_status: status, 
-      updated_at: new Date().toISOString() 
-    };
-
-    // ROI Protocol: Mandatory Proof of Delivery simulation
-    // Optimization: Swipe gesture in UI is sufficient confirmation
-    // if (status === 'delivered') {
-    //   const confirmed = window.confirm("POD PROTOCOL: Has the asset been successfully delivered? Close proximity detected.");
-    //   if (!confirmed) return;
-    // }
-
-    try {
-      if (isSupabaseMocked()) {
-        setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
-        if (status === 'delivered') {
-           setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
-           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-           setProfile(prev => prev ? {
-             ...prev,
-             total_earnings: prev.total_earnings + (orderToUpdate.delivery_fee || 0),
-             total_deliveries: prev.total_deliveries + 1,
-             active_points: prev.active_points + 15
-           } : null);
-           toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
-           if (activeOrders.length <= 1) {
-             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
-           }
-        } else {
-           toast.success('Vector updated.');
-        }
-        return;
-      }
-      const { error } = await getSupabase()
-        .from('orders')
-        .update(updates)
-        .eq('id', orderId);
-
-      if (error) {
-        toast.error('Phase sync failed');
-      } else {
-        if (status === 'delivered') {
-          const { error: rpcError } = await getSupabase().rpc('increment_rider_stats', {
-            p_rider_id: profile.id,
-            p_earnings: orderToUpdate.delivery_fee,
-            p_points: 15
-          });
-          
-          if (rpcError) {
-             console.warn('RPC failed, falling back to direct update', rpcError);
-             const profileUpdates = {
-               total_earnings: profile.total_earnings + orderToUpdate.delivery_fee,
-               total_deliveries: profile.total_deliveries + 1,
-               active_points: profile.active_points + 15,
-               updated_at: new Date().toISOString()
-             };
-             await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile.id);
-          }
-          
-          toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
-          // If no more orders, prompt rating
-          if (activeOrders.length <= 1) {
-             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
-          }
-        } else {
-          toast.success('Vector updated.');
-        }
-      }
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Update failed';
-      toast.error(message);
-    }
-  }, [profile, activeOrders]);
-
-
 
   if (loading) {
     return (
@@ -3815,8 +4167,33 @@ CREATE TABLE IF NOT EXISTS public.rider_profiles (
   total_earnings numeric DEFAULT 0,
   total_deliveries integer DEFAULT 0,
   active_points integer DEFAULT 0,
+  last_online timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now()
 );
+
+-- 1.1 Integrity Checks (Ensure columns exist for legacy tables)
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='rider_profiles' AND column_name='last_online') THEN
+        ALTER TABLE public.rider_profiles ADD COLUMN last_online timestamp with time zone DEFAULT now();
+    END IF;
+    
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='lat') THEN
+        ALTER TABLE public.orders ADD COLUMN lat numeric DEFAULT -25.9894;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='lng') THEN
+        ALTER TABLE public.orders ADD COLUMN lng numeric DEFAULT 28.2148;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='shop_lat') THEN
+        ALTER TABLE public.orders ADD COLUMN shop_lat numeric DEFAULT -25.9864;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='shop_lng') THEN
+        ALTER TABLE public.orders ADD COLUMN shop_lng numeric DEFAULT 28.2198;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3836,8 +4213,10 @@ CREATE TABLE IF NOT EXISTS public.orders (
   rider_id uuid REFERENCES public.rider_profiles(id),
   merchant_rating numeric,
   merchant_feedback text,
-  shop_latitude numeric DEFAULT -25.9864,
-  shop_longitude numeric DEFAULT 28.2198,
+  lat numeric DEFAULT -25.9894,
+  lng numeric DEFAULT 28.2148,
+  shop_lat numeric DEFAULT -25.9864,
+  shop_lng numeric DEFAULT 28.2198,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT orders_delivery_status_check CHECK (delivery_status IN ('none', 'finding_rider', 'accepted', 'picked_up', 'delivered', 'cancelled', 'ready', 'pending', 'preparing', 'confirmed', 'completed', 'rider_assigned'))
@@ -3890,7 +4269,39 @@ DO $$ BEGIN
     CREATE POLICY "Users can update own connections" ON public.rider_connections FOR UPDATE USING (rider_id = auth.uid() OR rider_id IS NULL);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Refresh Schema
+-- 4. Diagnostic Queries (Copy for SQL Editor)
+-- USE THESE TO DEBUG YOUR ECOSYSTEM
+-- YOUR RIDER ID: ${user?.id}
+
+-- A. The "Ghost Mission" Tracker (Stale Status Detection)
+SELECT id, restaurant_name, status, delivery_status, created_at 
+FROM public.orders 
+WHERE status IN ('pending', 'preparing') 
+AND created_at < NOW() - INTERVAL '45 minutes'
+ORDER BY created_at ASC;
+
+-- B. Uplink Health Check (Session Expiry)
+SELECT id, name, last_online 
+FROM public.rider_profiles 
+WHERE is_online = true 
+AND last_online < NOW() - INTERVAL '24 hours';
+
+-- C. Coordinates Integrity (Bridge Fix)
+SELECT id, restaurant_name, lat, lng, shop_lat, shop_lng 
+FROM public.orders 
+WHERE (lat = lng) OR (lat = 0) OR (shop_lat = 0);
+
+-- D. Earnings Audit (Fixed Fee R5)
+SELECT 
+    rider_id, 
+    COUNT(*) as completed_count, 
+    SUM(delivery_fee) as pending_payout
+FROM public.orders 
+WHERE delivery_status = 'delivered' 
+AND rider_id = '${user?.id}'
+GROUP BY rider_id;
+
+-- 5. Reload Schema
 NOTIFY pgrst, 'reload schema';
     `.trim();
 
@@ -3941,7 +4352,7 @@ NOTIFY pgrst, 'reload schema';
     );
   }
 
-  if (role === 'merchant') return <MerchantDashboard onSwitchRole={() => setRole('rider')} />;
+  if (role === 'merchant') return <MerchantDashboard setView={setView} onSwitchRole={() => setRole('rider')} />;
 
   return (
     <div className="min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative">
@@ -3963,6 +4374,48 @@ NOTIFY pgrst, 'reload schema';
       </AnimatePresence>
       {showOnboarding && <TacticalOnboarding onComplete={handleOnboardingComplete} />}
       
+      {/* Offline Warning Modal */}
+      <AnimatePresence>
+        {showOfflineWarning && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-sm flex justify-center items-center p-6 pointer-events-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="bg-zinc-900 border border-red-500/30 p-8 rounded-[2.5rem] max-w-sm w-full text-center shadow-[0_0_50px_rgba(239,68,68,0.15)] relative"
+            >
+              <ShieldAlert className="w-16 h-16 text-red-500 mx-auto mb-4 animate-pulse" />
+              <h3 className="text-xl font-black uppercase text-white mb-2">Protocol Violation</h3>
+              <p className="text-zinc-400 text-xs mb-8 leading-relaxed">
+                You have active missions. Going offline will unassign you from these missions and may impact your reliability rating. Are you sure you want to abort your connection?
+              </p>
+              
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={async () => {
+                    setShowOfflineWarning(false);
+                    await confirmOnlineToggle();
+                  }}
+                  className="w-full py-4 bg-red-600 text-white font-black uppercase italic tracking-widest rounded-xl hover:bg-red-500 active:scale-95 transition-all text-sm shadow-lg shadow-red-600/20"
+                >
+                  Force Offline
+                </button>
+                <button 
+                  onClick={() => setShowOfflineWarning(false)}
+                  className="w-full py-4 bg-zinc-800 text-zinc-300 font-bold uppercase tracking-widest rounded-xl hover:bg-zinc-700 active:scale-95 transition-all text-xs"
+                >
+                  Resume Mission
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Rating Prompt Overlay */}
       <AnimatePresence>
         {showRatingPrompt && (
@@ -4028,60 +4481,72 @@ NOTIFY pgrst, 'reload schema';
       )}
       
       {/* HUD Header */}
-      <header className="fixed top-0 left-0 right-0 h-[60px] bg-black/60 backdrop-blur-md border-b border-white/5 z-50 flex items-center justify-between px-4 sm:px-6 pointer-events-auto transition-colors">
-        <div className="flex items-center gap-4">
-          <div className={cn(
-            "w-2 h-2 rounded-full",
-            profile.is_online ? "bg-[#f59e0b] animate-pulse neon-glow" : "bg-zinc-800"
-          )} />
-          <div className="flex flex-col">
-            <h1 className="font-headline font-black italic text-xl uppercase tracking-tighter leading-none">
-              Local<span className="text-[#f59e0b]">Eats</span>
-            </h1>
-            {connections.length > 0 && (() => {
-              const isExpired = new Date(connections[0].expires_at).getTime() < now;
-              return (
-                <div className="flex items-center gap-1 mt-1">
-                  <Globe className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-orange-500")} />
-                  <span className={cn("text-[7px] font-black uppercase tracking-widest", isExpired ? "text-red-500" : "text-[#f59e0b]")}>{isExpired ? "PASS EXPIRED" : "CONNECTED"}</span>
-                </div>
-              );
-            })()}
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          {connections.length > 0 && (() => {
-             const isExpired = new Date(connections[0].expires_at).getTime() < now;
-             const hours = Math.max(0, Math.floor((new Date(connections[0].expires_at).getTime() - now) / (1000 * 60 * 60)));
-             const mins = Math.max(0, Math.floor(((new Date(connections[0].expires_at).getTime() - now) % (1000 * 60 * 60)) / (1000 * 60)));
-             return (
-               <div className="hidden sm:flex flex-col items-end gap-1 px-4 border-r border-zinc-800">
-                  <span className="text-[7px] text-zinc-500 font-black uppercase">Fleet Pass</span>
-                  <div className="flex items-center gap-1 cursor-pointer" onClick={() => isExpired && setView('pair')}>
-                    <Clock className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
-                    <span className={cn("text-[10px] font-mono font-bold", isExpired ? "text-red-500" : "text-[#F0F0F0]")}>
-                      {isExpired ? "EXPIRED - RE-PAIR" : `CONNECTED: ${hours}H ${mins}M`}
-                    </span>
-                  </div>
-               </div>
-             );
-          })()}
-          <div className="text-right hidden sm:block">
-            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Rider Identifier</p>
-            <p className="text-xs font-mono font-bold">{profile.name}</p>
-          </div>
-          <div 
-            onClick={() => setView('hub')}
-            className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl cursor-pointer hover:border-[#f59e0b]/50 transition-colors"
+      <AnimatePresence>
+        {view !== 'move' && (
+          <motion.header 
+            initial={{ y: -60 }}
+            animate={{ y: 0 }}
+            exit={{ y: -60 }}
+            className="fixed top-0 left-0 right-0 h-[60px] bg-black/60 backdrop-blur-md border-b border-white/5 z-50 flex items-center justify-between px-4 sm:px-6 pointer-events-auto transition-colors"
           >
-            <UserIcon className="w-6 h-6 text-zinc-400" />
-          </div>
-        </div>
-      </header>
+            <div className="flex items-center gap-4">
+              <div className={cn(
+                "w-2 h-2 rounded-full",
+                profile.is_online ? "bg-[#f59e0b] animate-pulse neon-glow" : "bg-zinc-800"
+              )} />
+              <div className="flex flex-col">
+                <h1 className="font-headline font-black italic text-xl uppercase tracking-tighter leading-none">
+                  Local<span className="text-[#f59e0b]">Eats</span>
+                </h1>
+                {connections.length > 0 && (() => {
+                  const isExpired = new Date(connections[0].expires_at).getTime() < now;
+                  return (
+                    <div className="flex items-center gap-1 mt-1">
+                      <Globe className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-orange-500")} />
+                      <span className={cn("text-[7px] font-black uppercase tracking-widest", isExpired ? "text-red-500" : "text-[#f59e0b]")}>{isExpired ? "PASS EXPIRED" : "CONNECTED"}</span>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-3">
+              {connections.length > 0 && (() => {
+                 const isExpired = new Date(connections[0].expires_at).getTime() < now;
+                 const hours = Math.max(0, Math.floor((new Date(connections[0].expires_at).getTime() - now) / (1000 * 60 * 60)));
+                 const mins = Math.max(0, Math.floor(((new Date(connections[0].expires_at).getTime() - now) % (1000 * 60 * 60)) / (1000 * 60)));
+                 return (
+                   <div className="hidden sm:flex flex-col items-end gap-1 px-4 border-r border-zinc-800">
+                      <span className="text-[7px] text-zinc-500 font-black uppercase">Fleet Pass</span>
+                      <div className="flex items-center gap-1 cursor-pointer" onClick={() => isExpired && setView('pair')}>
+                        <Clock className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
+                        <span className={cn("text-[10px] font-mono font-bold", isExpired ? "text-red-500" : "text-[#F0F0F0]")}>
+                          {isExpired ? "EXPIRED - RE-PAIR" : `CONNECTED: ${hours}H ${mins}M`}
+                        </span>
+                      </div>
+                   </div>
+                 );
+              })()}
+              <div className="text-right hidden sm:block">
+                <p className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Rider Identifier</p>
+                <p className="text-xs font-mono font-bold">{profile.name}</p>
+              </div>
+              <div 
+                onClick={() => setView('hub')}
+                className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl cursor-pointer hover:border-[#f59e0b]/50 transition-colors"
+              >
+                <UserIcon className="w-6 h-6 text-zinc-400" />
+              </div>
+            </div>
+          </motion.header>
+        )}
+      </AnimatePresence>
 
       {/* Main Container */}
-      <main className="pt-[60px] w-full max-w-5xl mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none">
+      <main className={cn(
+        "w-full max-w-5xl mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none transition-all duration-300",
+        view !== 'move' ? "pt-[60px]" : "pt-0"
+      )}>
         
         {/* Mission Pulse Overlay */}
         <AnimatePresence>
@@ -4224,9 +4689,7 @@ NOTIFY pgrst, 'reload schema';
                     .reduce((acc, curr) => acc + Number(curr.delivery_fee || 0), 0)}
                   totalDeliveries={profile.total_deliveries}
                   history={history}
-                  activeOrders={activeOrders}
                   onToggleOnline={toggleOnline} 
-                  onUpdateStatus={handleUpdateStatus}
                   setView={setView}
                   connectionCount={connections.length}
                 />
@@ -4240,6 +4703,8 @@ NOTIFY pgrst, 'reload schema';
                 surgeMultiplier={surgeMultiplier} 
                 connectionCount={connections.length} 
                 onRefresh={fetchConnectionsAndOrders}
+                riderName={profile?.name}
+                vehicleType={profile?.vehicle_type}
               />
             )}
             {view === 'move' && (
@@ -4259,6 +4724,7 @@ NOTIFY pgrst, 'reload schema';
                     orders={activeOrders} 
                     onUpdateStatus={handleUpdateStatus} 
                     onScreenTap={() => setIsGlobalNavVisible(prev => !prev)}
+                    profile={profile || undefined}
                   />
                 </div>
               ) : (
@@ -4271,24 +4737,37 @@ NOTIFY pgrst, 'reload schema';
             )}
             {view === 'log' && <HistoryView history={history} />}
             {view === 'hub' && (
-              <ProfileView 
-                profile={profile} 
-                connections={connections}
-                now={now}
-                onUpdateVehicle={updateVehicle} 
-                onLogout={() => getSupabase().auth.signOut()} 
-                onPair={() => {
-                  setView('pair');
-                  // We could pass code to PairingView if we had a state for it
-                }}
-                onSwitchRole={() => {
-                  setRole('merchant');
-                  setView('merchant_dash');
-                }}
+              <>
+                <ProfileView 
+                  profile={profile} 
+                  connections={connections}
+                  now={now}
+                  onUpdateVehicle={updateVehicle} 
+                  onLogout={() => getSupabase().auth.signOut()} 
+                  onPair={() => {
+                    setView('pair');
+                  }}
+                  onSwitchRole={() => {
+                    setRole('merchant');
+                    setView('merchant_dash');
+                  }}
+                  onToggleOnline={toggleOnline}
+                />
+                <VoiceController 
+                  isListening={isListening} 
+                  onStart={startListening} 
+                />
+              </>
+            )}
+            {view === 'checkout_demo' && (
+              <CheckoutView 
+                onBack={() => setRole('merchant')}
+                onComplete={() => setView('merchant_dash')}
               />
             )}
             {view === 'merchant_dash' && (
               <MerchantDashboard 
+                setView={setView}
                 onSwitchRole={() => {
                   setRole('rider');
                   setView('dash');
@@ -4302,7 +4781,7 @@ NOTIFY pgrst, 'reload schema';
 
       {/* HUD Navigation */}
       <AnimatePresence>
-        {view !== 'merchant_dash' && isGlobalNavVisible && (
+        {(view !== 'merchant_dash' && (view !== 'move' ? true : isGlobalNavVisible)) && (
           <motion.nav 
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

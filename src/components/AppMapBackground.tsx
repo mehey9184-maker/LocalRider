@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polyline, Popup, Circle, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
@@ -47,6 +47,8 @@ const mockCustomerIcon = L.divIcon({
 interface AppMapBackgroundProps {
   isOnline: boolean;
   activeOrder?: DeliveryOrder | null;
+  allOrders?: DeliveryOrder[];
+  onOrderMarkerClick?: (id: string) => void;
   isVisible?: boolean;
   onMapClick?: () => void;
   onProgressUpdate?: (progress: number) => void;
@@ -54,6 +56,7 @@ interface AppMapBackgroundProps {
   onDistanceUpdate?: (distanceMeters: number) => void;
   riderProfileLat?: number;
   riderProfileLng?: number;
+  riderLocation?: [number, number] | null;
 }
 
 function InnerMapListener({ onClick }: { onClick?: () => void }) {
@@ -109,11 +112,33 @@ function MapController({ riderPos, activeOrder }: { riderPos: [number, number] |
   return null;
 }
 
-export const AppMapBackground = React.memo(function AppMapBackground({ isOnline, activeOrder, isVisible = true, onMapClick, onProgressUpdate, onETAUpdate, onDistanceUpdate, riderProfileLat, riderProfileLng }: AppMapBackgroundProps) {
+export const AppMapBackground = React.memo(function AppMapBackground({ 
+  isOnline, 
+  activeOrder, 
+  allOrders = [],
+  onOrderMarkerClick,
+  isVisible = true, 
+  onMapClick, 
+  onProgressUpdate, 
+  onETAUpdate, 
+  onDistanceUpdate, 
+  riderProfileLat, 
+  riderProfileLng,
+  riderLocation 
+}: AppMapBackgroundProps) {
   const [riderPos, setRiderPos] = useState<[number, number] | null>(
-    riderProfileLat && riderProfileLng ? [riderProfileLat, riderProfileLng] : null
+    riderLocation || (riderProfileLat && riderProfileLng ? [riderProfileLat, riderProfileLng] : null)
   );
   const [lastUpdate, setLastUpdate] = useState<number>(() => Date.now());
+
+  // Render-time sync for external tracking vector updates
+  const [prevRiderLocation, setPrevRiderLocation] = useState(riderLocation);
+  if (riderLocation !== prevRiderLocation) {
+    setPrevRiderLocation(riderLocation);
+    if (riderLocation) {
+      setRiderPos(riderLocation);
+    }
+  }
   const [isCharging, setIsCharging] = useState(false);
   const [localNow, setLocalNow] = useState<number>(() => Date.now());
   const [geoError, setGeoError] = useState<boolean>(false);
@@ -175,7 +200,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
 
   useEffect(() => {
     if (riderPos) {
-      if (!routedStartPos || getDistance(riderPos, routedStartPos) > 0.05) { // 50 meters
+      if (!routedStartPos || getDistance(riderPos, routedStartPos) > 0.15) { // 150 meters
         setTimeout(() => setRoutedStartPos(riderPos), 0);
       }
     }
@@ -286,7 +311,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
     );
     
     return watchId;
-  }, [riderProfileLat, riderProfileLng]);
+  }, [riderProfileLat, riderProfileLng, setLastUpdate]);
 
   useEffect(() => {
     let watchId: number | null = null;
@@ -463,6 +488,37 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
     }
   }, [activeOrder]);
 
+  // SMOOTH RIDER MOVEMENT SIMULATION (MOCK)
+  // When an active mission is in progress, the rider visually drifts towards the target.
+  useEffect(() => {
+    if (!activeOrder || !targetPos || !riderPos) return;
+
+    // Movement speed: approx 2 meters every 2 seconds
+    const moveInterval = setInterval(() => {
+      const [rLat, rLng] = riderPos;
+      const [tLat, tLng] = targetPos;
+
+      // Distance check - stop moving if close enough (within 15m)
+      const dist = getDistance([rLat, rLng], [tLat, tLng]);
+      if (dist < 0.015) {
+        clearInterval(moveInterval);
+        return;
+      }
+
+      // Calculate direction vector
+      const vectorLat = tLat - rLat;
+      const vectorLng = tLng - rLng;
+      
+      const newLat = rLat + (vectorLat * 0.05);
+      const newLng = rLng + (vectorLng * 0.05);
+
+      setRiderPos([newLat, newLng]);
+      setLastUpdate(Date.now());
+    }, 2000);
+
+    return () => clearInterval(moveInterval);
+  }, [activeOrder, targetPos, riderPos]);
+
   const rootClassName = `absolute inset-0 z-0 overflow-hidden pointer-events-auto transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`;
 
   // If signal is lost (not online), we still show the map if there is an active order
@@ -605,6 +661,103 @@ export const AppMapBackground = React.memo(function AppMapBackground({ isOnline,
         
         <Marker position={riderPos} icon={mockRiderIcon} zIndexOffset={100} />
         
+        {/* Delivery Zone Boundaries (Central Dispatch Node: Tembisa) */}
+        <Circle 
+          center={[-25.9924, 28.2048]} 
+          radius={3000} 
+          pathOptions={{ color: '#22c55e', weight: 1, fillColor: '#22c55e', fillOpacity: 0.03, dashArray: '10, 20' }} 
+        />
+        <Circle 
+          center={[-25.9924, 28.2048]} 
+          radius={6000} 
+          pathOptions={{ color: '#f59e0b', weight: 1, fillColor: '#f59e0b', fillOpacity: 0.02, dashArray: '5, 15' }} 
+        />
+        
+        {/* Render markers for all available missions when not focusing on active order */}
+        {!activeOrder && allOrders.length > 0 && (
+          <>
+            {allOrders.map((order, idx) => {
+              const shopPos: [number, number] = [order.shop_lat || -25.9924, order.shop_lng || 28.2048];
+              const custPos: [number, number] | null = order.lat && order.lng ? [order.lat, order.lng] : null;
+              
+              return (
+                <React.Fragment key={order.id}>
+                  {/* Merchant Marker */}
+                  <Marker 
+                    position={shopPos} 
+                    icon={L.divIcon({
+                      html: `<div style="background-color: #f59e0b; padding: 4px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 15px rgba(245, 158, 11, 0.6); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: 11px; color: black; width: 28px; height: 28px;">${idx + 1}</div>`,
+                      className: 'order-sequence-marker',
+                      iconSize: [28, 28],
+                      iconAnchor: [14, 14],
+                    })}
+                    eventHandlers={{
+                      click: () => {
+                        onOrderMarkerClick?.(order.id);
+                        toast.info(`Target: ${order.restaurant_name}`, { description: "Signal cross-referenced to mission manifest." });
+                      }
+                    }}
+                  >
+                    <Popup className="custom-popup">
+                      <div className="p-2">
+                        <p className="text-[10px] font-black uppercase text-[#f59e0b] mb-1">RESTAURANT NODE {idx + 1}</p>
+                        <p className="text-xs font-bold text-white uppercase italic">{order.restaurant_name}</p>
+                      </div>
+                    </Popup>
+                  </Marker>
+
+                  {/* Customer Marker */}
+                  {custPos && (
+                    <Marker 
+                      position={custPos} 
+                      icon={L.divIcon({
+                        html: `<div style="background-color: #3b82f6; padding: 4px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 15px rgba(59, 130, 246, 0.6); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: 11px; color: white; width: 24px; height: 24px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
+                        className: 'customer-marker-mini',
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12],
+                      })}
+                      eventHandlers={{
+                        click: () => {
+                          onOrderMarkerClick?.(order.id);
+                          toast.info(`Destination: ${order.customer_name || 'Customer'}`, { description: "Drop-off vector identified." });
+                        }
+                      }}
+                    >
+                      <Popup className="custom-popup">
+                        <div className="p-2">
+                          <p className="text-[10px] font-black uppercase text-[#3b82f6] mb-1">CUSTOMER NODE {idx + 1}</p>
+                          <p className="text-xs font-bold text-white uppercase italic">{order.customer_name || 'Anonymous'}</p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  )}
+
+                  {/* Optional Customer Tether */}
+                  {custPos && (
+                    <Polyline 
+                      positions={[shopPos, custPos]}
+                      pathOptions={{ color: '#f59e0b', weight: 1, dashArray: '2, 4', opacity: 0.4 }}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
+            
+            {/* Draw optimized route sequence lines connecting rider and points */}
+            <Polyline 
+              positions={[riderPos, ...allOrders.map(o => [o.shop_lat || -25.9924, o.shop_lng || 28.2048])] as [number, number][]}
+              pathOptions={{
+                color: '#f59e0b',
+                weight: 3,
+                dashArray: '10, 15',
+                opacity: 0.5,
+                lineJoin: 'round',
+                className: 'optimized-route-path'
+              }}
+            />
+          </>
+        )}
+
         {targetPos && (
           <>
             <Marker position={targetPos} icon={isPickedUp ? mockCustomerIcon : mockMerchantIcon} />

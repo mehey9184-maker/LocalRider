@@ -56,13 +56,13 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
          if (d < minDeviation) minDeviation = d;
       }
       
-      // If distance from the closest point on the old line is > 50 meters
-      if (minDeviation > 0.05) { 
+      // If distance from the closest point on the old line is > 250 meters
+      if (minDeviation > 0.25) { 
          const now = Date.now();
-         if (now - lastDeviationTime.current > 30000) { // Limit frequency of alerts
-             console.warn(`DEVIATION: ${minDeviation.toFixed(3)}km off route. Recalculating.`);
-             toast.warning('Route Divergence. Recalculating new vector...', { id: 'route_dev' });
-             if (navigator.vibrate) navigator.vibrate([200, 50, 200]);
+         if (now - lastDeviationTime.current > 120000) { // Limit frequency of alerts to 2 minutes
+             console.log(`Route optimization: recalibrating for ${minDeviation.toFixed(3)}km divergence.`);
+             toast.info('Adjusting course: New vector calculated.', { id: 'route_dev' });
+             if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
              lastDeviationTime.current = now;
          }
       }

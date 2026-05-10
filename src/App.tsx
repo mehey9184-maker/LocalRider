@@ -22,7 +22,6 @@ import {
   ShieldAlert,
   QrCode,
   Link2,
-  Gift,
   Radar,
   WifiOff,
   Activity,
@@ -35,31 +34,32 @@ import {
   Mic,
   MicOff,
   LifeBuoy,
-  Target
+  Target,
+  EyeOff,
+  Phone,
+  ExternalLink,
+  Navigation2
 } from 'lucide-react';
-import { 
-  ResponsiveContainer, 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  Tooltip,
-  CartesianGrid
-} from 'recharts';
-import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
 import { Toaster, toast } from 'sonner';
 import { getSupabase, isSupabaseMocked } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
 import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection } from './types';
-import { cn, getEstimatedMinutes } from './lib/utils';
+import { cn } from './lib/utils';
 import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/AppMapBackground';
 import { HistoryMap } from './components/HistoryMap';
 import { TacticalOnboarding } from './components/TacticalOnboarding';
-import { AddressSearch } from './components/AddressSearch';
-import { CheckoutMap } from './components/CheckoutMap';
-
-import { QRCodeSVG } from 'qrcode.react';
+import { PhoneInput } from './components/PhoneInput';
+import { 
+  ResponsiveContainer, 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  CartesianGrid, 
+  Tooltip 
+} from 'recharts';
 
 // --- Voice Controller ---
 
@@ -92,123 +92,6 @@ const VoiceController = ({ isListening, onStart }: { isListening: boolean, onSta
   );
 };
 
-// --- Checkout Components ---
-
-const CheckoutView = ({ onBack, onComplete }: { onBack: () => void, onComplete: () => void }) => {
-  const [items] = useState([
-    { name: 'Special Kota XL', price: 45 },
-    { name: 'Cold Drink 500ml', price: 18 },
-    { name: 'Extra Chips', price: 12 },
-  ]);
-  const [deliveryAddress, setDeliveryAddress] = useState('Search or pinpoint delivery spot...');
-  const [deliveryCoords, setDeliveryCoords] = useState<{lat: number, lng: number} | null>(null);
-  
-  const subtotal = items.reduce((acc, item) => acc + item.price, 0);
-  const delivery_fee = 5.00; // LOCKED AT R5.00 PER REQUEST
-  const total = subtotal + delivery_fee;
-
-  return (
-    <div className="p-6 space-y-8 max-w-lg mx-auto w-full pb-32">
-      <header className="flex items-center gap-4">
-        <button onClick={onBack} className="p-2 bg-zinc-900 rounded-xl hover:bg-zinc-800 transition-colors">
-           <ChevronLeft className="w-6 h-6 text-white" />
-        </button>
-        <h2 className="text-3xl font-headline font-black italic uppercase text-white">Secure Checkout</h2>
-      </header>
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between px-1">
-           <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 italic">Delivery Objective</h3>
-           <span className="text-[10px] font-black text-[#f59e0b] bg-[#f59e0b]/10 px-2 py-0.5 rounded border border-[#f59e0b]/20 italic">GPS Pinpoint Active</span>
-        </div>
-
-        <AddressSearch 
-          onSelect={(lat, lng, addr) => {
-            setDeliveryCoords({ lat, lng });
-            setDeliveryAddress(addr);
-          }}
-          initialValue={deliveryAddress}
-          placeholder="Enter drop-off address..."
-          className="mb-4"
-        />
-
-        <CheckoutMap 
-          onLocationSelect={(lat, lng, addr) => {
-            setDeliveryCoords({ lat, lng });
-            if (addr) setDeliveryAddress(addr);
-          }}
-        />
-
-        <div className="p-4 bg-zinc-900/50 border border-zinc-800 rounded-2xl">
-           <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Target Coordinates</p>
-           <p className="text-xs text-white font-mono truncate">{deliveryAddress}</p>
-           {deliveryCoords && (
-             <p className="text-[9px] text-zinc-600 font-mono mt-1">LAT: {deliveryCoords.lat.toFixed(6)} • LNG: {deliveryCoords.lng.toFixed(6)}</p>
-           )}
-        </div>
-      </section>
-
-      <section className="space-y-4">
-        <div className="flex items-center justify-between px-1">
-           <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 italic">Order Manifest</h3>
-           <span className="text-[10px] font-black text-[#f59e0b] bg-[#f59e0b]/10 px-2 py-0.5 rounded border border-[#f59e0b]/20 italic">FLAT RATE ELIGIBLE</span>
-        </div>
-        
-        <BentoCard className="divide-y divide-zinc-800 p-0 overflow-hidden bg-zinc-950/50">
-          {items.map((item, i) => (
-            <div key={i} className="flex justify-between items-center p-5">
-              <div className="flex flex-col">
-                <span className="text-white font-bold">{item.name}</span>
-                <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-black">Standard Unit</span>
-              </div>
-              <span className="text-zinc-300 font-mono">R{item.price.toFixed(2)}</span>
-            </div>
-          ))}
-        </BentoCard>
-      </section>
-
-      <section className="space-y-4">
-        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1 italic">Payment Summary</h3>
-        <BentoCard className="bg-zinc-900/50 space-y-4 border-zinc-800">
-           <div className="flex justify-between items-center text-sm font-sans">
-             <span className="text-zinc-400 font-bold uppercase tracking-widest text-[10px]">Subtotal (3 Items)</span>
-             <span className="text-white font-mono">R{subtotal.toFixed(2)}</span>
-           </div>
-           
-           <div className="flex justify-between items-center text-sm p-4 bg-[#f59e0b]/5 border border-[#f59e0b]/20 rounded-2xl">
-             <div className="flex flex-col">
-                <span className="text-[#f59e0b] font-black uppercase tracking-widest text-[11px]">Flat-Rate Delivery Fee</span>
-                <span className="text-[9px] text-[#f59e0b]/60 uppercase font-black italic">Limited Time • Tembisa Sector Only</span>
-             </div>
-             <span className="text-[#f59e0b] font-black italic text-lg">R{delivery_fee.toFixed(2)}</span>
-           </div>
-           
-           <div className="pt-4 border-t border-zinc-800 flex justify-between items-center">
-             <span className="text-white font-black uppercase tracking-widest">Total Credits Due</span>
-             <span className="text-2xl font-headline font-black italic text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.1)]">R{total.toFixed(2)}</span>
-           </div>
-        </BentoCard>
-      </section>
-
-      <div className="pt-4">
-         <SwipeButton 
-           label="Slide to Authorize Payment" 
-           onComplete={() => {
-              toast.success("PAYMENT AUTHORIZED", { description: "Mission signal broadcasted to fleet.", icon: <CheckCircle className="w-5 h-5 text-emerald-500"/> });
-              onComplete();
-           }}
-           color="#f59e0b"
-         />
-         <div className="flex flex-col items-center gap-2 mt-8">
-           <p className="text-[9px] text-zinc-600 font-black uppercase tracking-[0.2em] italic">Secure Encryption Active • RSA-4096 Protocol</p>
-           <ShieldAlert className="w-4 h-4 text-zinc-800" />
-         </div>
-      </div>
-    </div>
-  );
-};
-
-
 // --- Utilities ---
 
 function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -220,7 +103,7 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 1000, timeoutMs = 8000): Promise<T> => {
+const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 5, delay = 1000, timeoutMs = 15000): Promise<T> => {
   try {
     return await Promise.race([
       fn(),
@@ -228,13 +111,12 @@ const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 3, delay = 100
     ]);
   } catch (error) {
     if (retries > 0 && (error instanceof TypeError || (error instanceof Error && (error.message === 'timeout' || error.message.includes('fetch'))))) {
-      const nextDelay = delay * 2; // Exponential backoff
-      const errMessage = error instanceof Error ? error.message : 'Unknown network error';
-      console.warn(`Fetch failure (${errMessage}), retrying in ${delay}ms... (${retries} attempts left)`);
+      const nextDelay = delay * 1.5; 
+      const errMessage = error instanceof Error ? error.message : 'Network sequence interrupted';
+      console.log(`[RETRYING] ${errMessage.toUpperCase()} | Attempts remaining: ${retries}`);
       await new Promise(res => setTimeout(res, delay));
       return fetchWithRetry(fn, retries - 1, nextDelay, timeoutMs);
     }
-    console.error('Fetch operations exhausted. Connection failed.', error);
     throw error;
   }
 };
@@ -276,7 +158,13 @@ const BentoCard = ({ children, className, glow = false, ...props }: { children: 
   </div>
 );
 
-const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken }: { label: string, onComplete: () => void, color?: string, resetToken?: string | number }) => {
+const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken, disabled = false }: { 
+  label: string, 
+  onComplete: () => void, 
+  color?: string, 
+  resetToken?: string | number,
+  disabled?: boolean
+}) => {
   const [isComplete, setIsComplete] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [maxDrag, setMaxDrag] = useState(260);
@@ -299,18 +187,22 @@ const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken }: { lab
   }, []);
 
   return (
-    <div ref={containerRef} className="relative h-20 bg-zinc-950/20 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden p-1.5 select-none">
+    <div ref={containerRef} className={cn(
+      "relative h-20 bg-zinc-950/20 backdrop-blur-md border border-white/5 rounded-2xl overflow-hidden p-1.5 select-none",
+      disabled ? "opacity-50 grayscale cursor-not-allowed" : ""
+    )}>
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <span className="text-[10px] font-black uppercase italic tracking-[0.4em] text-zinc-500 opacity-40">
           {label}
         </span>
       </div>
       <motion.div
-        drag="x"
+        drag={disabled ? false : "x"}
         dragConstraints={{ left: 0, right: maxDrag }}
         dragElastic={0.05}
         style={{ x, backgroundColor: isComplete ? '#fff' : color, touchAction: 'none' }}
         onDragEnd={(_, info) => {
+          if (disabled) return;
           if (info.offset.x > maxDrag * 0.75) {
             setIsComplete(true);
             onComplete();
@@ -323,13 +215,18 @@ const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken }: { lab
       >
         <ArrowRight className="w-8 h-8 text-black" strokeWidth={3} />
       </motion.div>
+      
+      <motion.div 
+        style={{ width: x, opacity: 0.1, backgroundColor: color }}
+        className="absolute left-0 top-0 bottom-0 pointer-events-none z-10"
+      />
     </div>
   );
 };
 
 // --- Auth Views ---
 
-const AuthView = () => {
+const AuthView = ({ onMockLogin }: { onMockLogin?: () => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -340,6 +237,12 @@ const AuthView = () => {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSupabaseMocked()) {
+      toast.success('Simulator Auth Success. Welcome Override Unit.');
+      if (onMockLogin) onMockLogin();
+      return;
+    }
+
     setLoading(true);
     try {
       if (isSignUp) {
@@ -362,13 +265,24 @@ const AuthView = () => {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Auth failure';
-      toast.error(message);
+      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network')) {
+        toast.success('Offline Simulator Engaged. Bypass Active.');
+        if (onMockLogin) onMockLogin();
+      } else {
+        toast.error(message);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const signInWithGoogle = async () => {
+    if (isSupabaseMocked()) {
+      toast.success('Simulator Auth Success. Welcome Override Unit.');
+      if (onMockLogin) onMockLogin();
+      return;
+    }
+
     try {
       const { error: authError } = await getSupabase().auth.signInWithOAuth({
         provider: 'google',
@@ -377,7 +291,12 @@ const AuthView = () => {
       if (authError) throw authError;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Google Auth Failed';
-      toast.error(message);
+      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network')) {
+        toast.success('Offline Simulator Engaged. Bypass Active.');
+        if (onMockLogin) onMockLogin();
+      } else {
+        toast.error(message);
+      }
     }
   };
 
@@ -421,10 +340,9 @@ const AuthView = () => {
                 </div>
                 <div>
                   <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Mobile Uplink</label>
-                  <input 
-                    type="tel" 
+                  <PhoneInput 
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(val) => setPhone(val)}
                     className="w-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-[#f59e0b] outline-none transition-all font-mono"
                     placeholder="+27 00 000 0000"
                     required={isSignUp}
@@ -804,26 +722,42 @@ const Dashboard = ({
 };
 
 const OrdersFeed = ({ 
-  orders, 
+  orders,
+  activeOrders = [],
   onAccept, 
   isOnline, 
   surgeMultiplier, 
   connectionCount,
   onRefresh,
+  activeOrdersCount,
   riderName,
-  vehicleType
+  vehicleType,
+  riderLat,
+  riderLng
 }: { 
   orders: DeliveryOrder[], 
+  activeOrders?: DeliveryOrder[],
   onAccept: (id: string) => void, 
   isOnline: boolean, 
   surgeMultiplier: number, 
   connectionCount: number,
   onRefresh: () => void,
+  activeOrdersCount: number,
   riderName?: string,
-  vehicleType?: string
+  vehicleType?: string,
+  riderLat?: number,
+  riderLng?: number
 }) => {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showNearbyMap, setShowNearbyMap] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortMethod, setSortMethod] = useState<'distance' | 'fee' | 'eta'>('distance');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'active'>('available');
+  const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
+  const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const isLimitReached = activeOrdersCount >= 2;
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -831,26 +765,163 @@ const OrdersFeed = ({
     setTimeout(() => setIsRefreshing(false), 1000);
   };
 
+  const filteredAndSortedOrders = useMemo(() => {
+    // Combine available and active orders for comprehensive filtering
+    let combined = [...orders];
+    if (statusFilter === 'all' || statusFilter === 'active') {
+      combined = [...combined, ...activeOrders.filter(ao => !orders.some(o => o.id === ao.id))];
+    }
+
+    let result = combined.filter(o => 
+      o.restaurant_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      o.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      o.product_name?.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    if (statusFilter === 'available') {
+      result = result.filter(o => o.delivery_status === 'none' || o.delivery_status === 'finding_rider');
+    } else if (statusFilter === 'active') {
+      result = result.filter(o => o.delivery_status === 'accepted' || o.delivery_status === 'picked_up');
+    }
+
+    result = [...result].sort((a, b) => {
+      if (sortMethod === 'fee') {
+        const feeA = Number(a.delivery_fee || 0);
+        const feeB = Number(b.delivery_fee || 0);
+        return feeB - feeA; // Descending
+      }
+      if (sortMethod === 'distance') {
+        const distA = Number(a.distance_km || 0);
+        const distB = Number(b.distance_km || 0);
+        return distA - distB;
+      }
+      if (sortMethod === 'eta') {
+        // ETA logic: assume 20km/h for cyclists if distance available
+        const etaA = a.distance_km ? (Number(a.distance_km) / 20) * 60 : 0;
+        const etaB = b.distance_km ? (Number(b.distance_km) / 20) * 60 : 0;
+        return etaA - etaB;
+      }
+      return 0;
+    });
+
+    return result;
+  }, [orders, activeOrders, searchQuery, sortMethod, statusFilter]);
+
+  const handleMarkerClick = (id: string) => {
+    setHighlightedOrderId(id);
+    const el = scrollRefs.current[id];
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    setTimeout(() => setHighlightedOrderId(null), 3000);
+  };
+
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
-      <header className="flex flex-col gap-2 pt-6">
+      <header className="flex flex-col gap-4 pt-6">
         <div className="flex items-center justify-between">
            <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Live Missions</h2>
-           {isOnline && (
+           <div className="flex items-center gap-2">
               <button 
-                onClick={handleRefresh}
+                onClick={() => setShowNearbyMap(!showNearbyMap)}
+                className="bg-zinc-900 border border-zinc-800 p-2 rounded-xl text-zinc-400 hover:text-white transition-all active:scale-95"
+                title={showNearbyMap ? "Hide Sector Map" : "Show Sector Map"}
+              >
+                {showNearbyMap ? <EyeOff size={16} /> : <Map size={16} />}
+              </button>
+              {isOnline && (
+                 <button 
+                   onClick={handleRefresh}
+                   className={cn(
+                     "bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-4 py-2 rounded-2xl flex items-center gap-2 transition-all active:scale-90",
+                     isRefreshing && "animate-pulse brightness-150"
+                   )}
+                 >
+                   <Radar className={cn("w-3 h-3 text-[#f59e0b]", isRefreshing && "animate-spin")} />
+                   <span className="text-[11px] font-black text-[#f59e0b] tracking-widest">
+                     {isRefreshing ? 'SCANNING...' : 'SCAN AGAIN'}
+                   </span>
+                 </button>
+              )}
+           </div>
+        </div>
+        
+        {/* Search, Sort and Filter UI */}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <input 
+                type="text" 
+                placeholder="Search Merchant/Customer Node..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-zinc-900/50 border border-zinc-800 pl-10 pr-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white focus:outline-none focus:border-[#f59e0b]/50 transition-colors"
+              />
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+              <button 
+                onClick={() => setSortMethod('distance')}
                 className={cn(
-                  "bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-4 py-2 rounded-2xl flex items-center gap-2 transition-all active:scale-90",
-                  isRefreshing && "animate-pulse brightness-150"
+                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border",
+                  sortMethod === 'distance' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900 border-zinc-800 text-zinc-500"
                 )}
               >
-                <Radar className={cn("w-3 h-3 text-[#f59e0b]", isRefreshing && "animate-spin")} />
-                <span className="text-[11px] font-black text-[#f59e0b] tracking-widest">
-                  {isRefreshing ? 'SCANNING...' : 'SCAN AGAIN'}
-                </span>
+                Distance
               </button>
-           )}
+              <button 
+                onClick={() => setSortMethod('fee')}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border",
+                  sortMethod === 'fee' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900 border-zinc-800 text-zinc-500"
+                )}
+              >
+                Reward (High)
+              </button>
+              <button 
+                onClick={() => setSortMethod('eta')}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border",
+                  sortMethod === 'eta' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900 border-zinc-800 text-zinc-500"
+                )}
+              >
+                ETA
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mr-2">Filter Status:</span>
+            <button 
+              onClick={() => setStatusFilter('all')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                statusFilter === 'all' ? "bg-zinc-700 text-white border-zinc-600" : "bg-zinc-900 border-zinc-800 text-zinc-500"
+              )}
+            >
+              All Signals
+            </button>
+            <button 
+              onClick={() => setStatusFilter('available')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                statusFilter === 'available' ? "bg-[#f59e0b]/20 text-[#f59e0b] border-[#f59e0b]/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
+              )}
+            >
+              Available
+            </button>
+            <button 
+              onClick={() => setStatusFilter('active')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                statusFilter === 'active' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
+              )}
+            >
+              In Progress
+            </button>
+          </div>
         </div>
+
         <div className="flex items-center gap-3">
            <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
              Sector Alpha-12 Scan
@@ -863,6 +934,42 @@ const OrdersFeed = ({
         </div>
       </header>
 
+      <AnimatePresence>
+        {showNearbyMap && isOnline && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 350, opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="w-full overflow-hidden rounded-[2.5rem] border border-zinc-800 shadow-2xl relative group bg-zinc-950"
+          >
+            <div className="absolute inset-0 z-10 pointer-events-none bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+            <div className="absolute top-4 left-4 z-20 px-3 py-1.5 bg-black/80 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-2">
+               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]" />
+               <span className="text-[9px] font-black text-white uppercase tracking-widest">Orbital Link Active</span>
+            </div>
+            
+            <AppMapBackground 
+              isOnline={true} 
+              riderProfileLat={riderLat} 
+              riderProfileLng={riderLng} 
+              allOrders={filteredAndSortedOrders}
+              onOrderMarkerClick={handleMarkerClick}
+            />
+            
+            <div className="absolute bottom-6 left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
+              <div className="flex flex-col">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest italic mb-0.5">Deployment Sector</span>
+                <span className="text-sm font-black text-white uppercase italic tracking-tight">Tembisa Alpha-Node • {filteredAndSortedOrders.length} Signals Captured</span>
+              </div>
+              <div className="px-4 py-2 bg-[#f59e0b] text-black rounded-xl pointer-events-auto shadow-[0_10px_30px_rgba(245,158,11,0.4)] group-hover:scale-105 transition-transform flex items-center gap-2">
+                <Activity size={12} className="animate-pulse" />
+                <span className="text-[10px] font-black uppercase tracking-tight">Real-Time Tracking</span>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {confirmId && (
         <motion.div 
           initial={{ opacity: 0 }}
@@ -871,7 +978,7 @@ const OrdersFeed = ({
         >
           <BentoCard className="w-full max-w-sm border-[#f59e0b]/30">
             <ShieldAlert className="w-12 h-12 text-[#f59e0b] mb-4 mx-auto" />
-            <h3 className="text-xl font-black italic uppercase text-center text-white mb-2">Confirm Mission</h3>
+            <h3 className="text-xl font-black italic uppercase text-center text-white mb-2">Initiate Mission?</h3>
             <div className="flex justify-center items-center gap-2 mb-4">
               <span className="text-sm font-bold text-white uppercase">{riderName || 'Rider'}</span>
               {vehicleType && (
@@ -881,8 +988,8 @@ const OrdersFeed = ({
               )}
             </div>
             <p className="text-xs text-zinc-500 text-center mb-6 leading-relaxed">
-              Accepting this mission indicates you are ready to initiate the delivery vector. 
-              Unauthorized aborts may impact your reliability rating.
+              Are you sure you want to accept this mission? 
+              Initiating the delivery vector will assign you as the primary carrier.
             </p>
             <div className="flex flex-col gap-3">
               <button 
@@ -905,7 +1012,7 @@ const OrdersFeed = ({
         </motion.div>
       )}
 
-      {orders.length === 0 ? (
+      {filteredAndSortedOrders.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="relative mb-8">
             {!isOnline ? (
@@ -938,92 +1045,163 @@ const OrdersFeed = ({
                 ? "SIGNAL LOST - GO ONLINE TO SCAN FOR MISSIONS." 
                 : connectionCount === 0 
                 ? "UNLINKED TERRITORY - SYNC WITH A MERCHANT TO RECEIVE MISSIONS." 
-                : "SCANNING SECTOR [ALPHA]... NO UNASSIGNED SIGNALS DETECTED."}
+                : searchQuery ? "NO SIGNALS MATCHING YOUR SEARCH PARAMS." : "SCANNING SECTOR [ALPHA]... NO UNASSIGNED SIGNALS DETECTED."}
             </p>
-            {isOnline && connectionCount > 0 && (
-              <div className="flex gap-1 justify-center mt-4">
-                {[...Array(3)].map((_, i) => (
-                  <motion.div 
-                    key={i}
-                    animate={{ opacity: [0.3, 1, 0.3] }}
-                    transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.5 }}
-                    className="w-1 h-4 bg-zinc-800" 
-                  />
-                ))}
-              </div>
-            )}
           </div>
         </div>
       ) : (
         <div className="space-y-4">
-          {orders.map(order => (
+          {filteredAndSortedOrders.map(order => (
             <motion.div 
               key={order.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="relative"
+              className="relative overflow-hidden rounded-[2rem]"
+              ref={el => scrollRefs.current[order.id] = el}
             >
-              <BentoCard className="border-l-4 border-l-[#f59e0b] shadow-2xl overflow-hidden group" glow={order.delivery_fee > 50}>
-                <div className="flex justify-between items-start mb-6">
-                  <div>
-                    <div className="mb-3 flex items-center gap-3">
-                       <StatusBadge status={order.delivery_status} />
-                       {order.match_score && (
-                         <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
-                           <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
-                             {Math.min(100, Math.round(order.match_score * 2.5))}% Match
-                           </span>
+              {/* Revealed Quick Actions */}
+              <div className="absolute inset-0 flex items-center justify-end px-6 gap-3 bg-zinc-900 border border-zinc-800 rounded-[2rem]">
+                <button 
+                  onClick={() => window.open(`tel:${order.phone}`, '_self')}
+                  className="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
+                >
+                  <Phone size={20} />
+                </button>
+                <button 
+                   onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.shop_lat},${order.shop_lng}`, '_blank')}
+                   className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
+                >
+                  <Navigation2 size={20} />
+                </button>
+                <button 
+                   onClick={() => toast.info(`Merchant Info: ${order.restaurant_name}`)}
+                   className="w-12 h-12 bg-zinc-700 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
+                >
+                  <ExternalLink size={20} />
+                </button>
+              </div>
+
+              <motion.div
+                drag="x"
+                dragConstraints={{ left: -180, right: 0 }}
+                dragElastic={0.1}
+                className="relative bg-black z-10 cursor-grab active:cursor-grabbing"
+              >
+                <BentoCard 
+                  className={cn(
+                    "border-l-4 border-l-[#f59e0b] shadow-2xl overflow-hidden group transition-all duration-500",
+                    highlightedOrderId === order.id ? "ring-2 ring-[#f59e0b] ring-offset-4 ring-offset-black scale-[0.99] brightness-125" : ""
+                  )} 
+                  glow={order.delivery_fee > 50 || highlightedOrderId === order.id}
+                >
+                  <div className="flex justify-between items-start mb-6">
+                    <div>
+                      <div className="mb-3 flex items-center gap-3">
+                         <StatusBadge status={order.delivery_status} />
+                         {order.match_score && (
+                           <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
+                             <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
+                               {Math.min(100, Math.round(order.match_score * 2.5))}% Match
+                             </span>
+                           </div>
+                         )}
+                         <div className="bg-zinc-800/50 border border-white/5 px-2 py-1 rounded-full flex items-center gap-1">
+                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Swipe for actions</span>
+                            <ArrowRight size={8} className="text-zinc-500" />
                          </div>
-                       )}
+                      </div>
+                      <h3 className="text-2xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">
+                        {order.restaurant_name || 'Merchant-X'}
+                      </h3>
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2 text-zinc-400">
+                          <MapPin className="w-4 h-4 text-[#f59e0b] shrink-0" />
+                          <span className="text-xs font-bold truncate max-w-[200px]">{order.address}, {order.city}</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-zinc-500">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Dist to Merchant</span>
+                            <div className="flex items-center gap-1.5">
+                              <Navigation className="w-3.5 h-3.5 text-orange-600" />
+                              <span className="text-[11px] font-black italic text-orange-600 uppercase tracking-widest">
+                                {(() => {
+                                  if (!riderLat || !riderLng || !order.shop_lat || !order.shop_lng) return `${Number(order.distance_km || 0).toFixed(1)} KM`;
+                                  const R = 6371;
+                                  const dLat = (order.shop_lat - riderLat) * Math.PI / 180;
+                                  const dLon = (order.shop_lng - riderLng) * Math.PI / 180;
+                                  const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(riderLat * Math.PI / 180) * Math.cos(order.shop_lat * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+                                  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                                  return `${(R * c).toFixed(1)} KM`;
+                                })()}
+                              </span>
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">ETA to Customer</span>
+                            <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded-md">
+                               <Activity size={10} className="text-emerald-500 animate-pulse" />
+                               <span className="text-[9px] font-black text-emerald-400 uppercase tracking-tighter">
+                                 {(() => {
+                                   // formula: (distance_km / 20) * 60 minutes
+                                   const dist = Number(order.distance_km || 1);
+                                   const etaMinutes = Math.ceil((dist / 20) * 60);
+                                   return `${etaMinutes}M ETA`;
+                                 })()}
+                               </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <h3 className="text-2xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">
-                      {order.restaurant_name || 'Merchant-X'}
-                    </h3>
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center gap-2 text-zinc-400">
-                        <MapPin className="w-4 h-4 text-[#f59e0b] shrink-0" />
-                        <span className="text-xs font-bold truncate max-w-[200px]">{order.address}, {order.city}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-zinc-500">
-                        <Navigation className="w-3.5 h-3.5 text-orange-600" />
-                        <span className="text-[11px] font-black italic text-orange-600 uppercase tracking-widest">{Number(order.distance_km || 0).toFixed(1)} KM VECTOR</span>
+                    <div className="text-right">
+                      <div className="text-2xl font-headline font-black italic text-[#f59e0b] tracking-tighter">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
+                      <div className={cn(
+                        "mt-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest text-center",
+                        order.delivery_fee > 5 ? "bg-orange-500/20 text-orange-400 border border-orange-500/30" : "bg-green-500/20 text-green-400 border border-green-500/30"
+                      )}>
+                        {order.delivery_fee > 5 ? "Zone B Payout" : "Zone A Payout"}
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-2xl font-headline font-black italic text-[#f59e0b] tracking-tighter">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
-                    <span className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] block">Payload Reward</span>
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-2 gap-4 mb-6">
-                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
-                    <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Cargo Details</span>
-                    {order.items && order.items.length > 0 ? (
-                      <div className="space-y-1">
-                        {order.items.slice(0, 2).map((item, idx) => (
-                          <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{item}</span>
-                        ))}
-                        {order.items.length > 2 && (
-                          <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more packets</span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Cargo"}</span>
-                    )}
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
+                      <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Cargo Details</span>
+                      {order.items && order.items.length > 0 ? (
+                        <div className="space-y-1">
+                          {order.items.slice(0, 2).map((item, idx) => (
+                            <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{item}</span>
+                          ))}
+                          {order.items.length > 2 && (
+                            <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more packets</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Cargo"}</span>
+                      )}
+                    </div>
+                    <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
+                      <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Sector Value</span>
+                      <span className="text-lg font-headline font-black italic text-[#f59e0b] tracking-tight">R{Number(order.total_price || 0).toFixed(2)}</span>
+                    </div>
                   </div>
-                  <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
-                    <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Sector Value</span>
-                    <span className="text-lg font-headline font-black italic text-[#f59e0b] tracking-tight">R{Number(order.total_price || 0).toFixed(2)}</span>
-                  </div>
-                </div>
 
-                <SwipeButton 
-                  label="SLIDE TO ACCEPT" 
-                  onComplete={() => setConfirmId(order.id)} 
-                  resetToken={confirmId || 'reset'}
-                />
-              </BentoCard>
+                  <SwipeButton 
+                    label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT"} 
+                    onComplete={() => {
+                      if (isLimitReached) {
+                        toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
+                      } else {
+                        setConfirmId(order.id);
+                      }
+                    }} 
+                    disabled={isLimitReached}
+                    color={isLimitReached ? "#3f3f46" : "#f59e0b"}
+                    resetToken={confirmId || 'reset'}
+                  />
+                </BentoCard>
+              </motion.div>
             </motion.div>
           ))}
         </div>
@@ -1064,10 +1242,11 @@ const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, profile }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
+  onShowTracking?: (id: string) => void;
   profile?: RiderProfile;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
@@ -1105,12 +1284,28 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, pro
       const transcript = event.results[0][0].transcript.toLowerCase();
       console.log('Voice Command:', transcript);
       
-      if (transcript.includes('pick up') || transcript.includes('picked up')) {
+      if (transcript.includes('pick up') || transcript.includes('picked up') || transcript.includes('arrived') || transcript.includes('merchant')) {
         onUpdateStatus(currentOrder.id, 'picked_up');
-        toast.success(`VOICE COMMAND: Status updated to Picked Up`);
-      } else if (transcript.includes('delivered') || transcript.includes('complete') || transcript.includes('delivery')) {
+        toast.success(`VOICE COMMAND: Status updated to Picked Up`, {
+          description: `Rider confirms pickup at ${currentOrder.restaurant_name}`
+        });
+      } else if (transcript.includes('delivered') || transcript.includes('complete') || transcript.includes('delivery') || transcript.includes('dropped off')) {
         onUpdateStatus(currentOrder.id, 'delivered');
-        toast.success(`VOICE COMMAND: Mission Complete`);
+        toast.success(`VOICE COMMAND: Mission Complete`, {
+          description: `Rider confirms successful payload delivery`
+        });
+      } else if (transcript.includes('optimize') || transcript.includes('shortest') || transcript.includes('route')) {
+        optimizeRoute();
+        toast.success(`VOICE COMMAND: Route Optimized`, {
+          icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
+          description: "Vector sequence recalibrated for efficiency."
+        });
+      } else if (transcript.includes('next') || transcript.includes('skip') || transcript.includes('forward')) {
+        setActiveIndex((prev) => (prev + 1) % displayOrders.length);
+        toast.info(`VOICE COMMAND: Cycling to next mission node`);
+      } else if (transcript.includes('map') || transcript.includes('view') || transcript.includes('tactical')) {
+        setIsSwapped(!isSwapped);
+        toast.info(`VOICE COMMAND: Switching visual uplink mode`);
       }
     };
     
@@ -1118,20 +1313,15 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, pro
     recognition.onerror = () => setIsListening(false);
   };
 
-  const displayOrders = useMemo(() => {
-    if (sortMethod === 'optimized') {
-      return [...orders].sort((a, b) => (Number(a.distance_km) || 0) - (Number(b.distance_km) || 0));
-    }
-    return orders;
-  }, [orders, sortMethod]);
+  const displayOrders = sortMethod === 'optimized' 
+    ? [...orders].sort((a, b) => (Number(a.distance_km) || 0) - (Number(b.distance_km) || 0))
+    : orders;
 
   const currentOrder = displayOrders[activeIndex] || displayOrders[0];
 
-  const etaDisplay = useMemo(() => {
-    const rawDist = Number(currentOrder?.distance_km);
-    const validDist = isNaN(rawDist) ? 0 : rawDist;
-    return String(Math.max(0, Math.floor(validDist * 2))).padStart(2, '0');
-  }, [currentOrder]);
+  const rawDist = Number(currentOrder?.distance_km);
+  const validDist = isNaN(rawDist) ? 0 : rawDist;
+  const etaDisplay = String(Math.max(0, Math.floor(validDist * 2))).padStart(2, '0');
 
   if (!currentOrder) return null;
 
@@ -1170,7 +1360,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, pro
     let destLat: number | undefined;
     let destLng: number | undefined;
 
-    if (currentOrder.delivery_status === 'accepted' || currentOrder.delivery_status === 'preparing') {
+    if (currentOrder.delivery_status === 'accepted') {
       destLat = currentOrder.shop_lat || -25.9924; // Tembisa merchant fallback
       destLng = currentOrder.shop_lng || 28.2048;
     } else if (currentOrder.delivery_status === 'picked_up') {
@@ -1188,8 +1378,8 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, pro
 
     const url = buildNavigationUrl(originLat, originLng, destLat, destLng, profile?.vehicle_type || 'car');
     
-    // Attempt to deep link into the native maps app
-    window.location.href = url;
+    // Open in new tab/native maps app
+    window.open(url, '_blank', 'noreferrer');
   };
 
   return (
@@ -1197,16 +1387,38 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, pro
       {/* Background Layer */}
       <div className="absolute inset-0 z-0">
         {!isSwapped ? (
-          <AppMapBackground
-            isOnline={true}
-            activeOrder={currentOrder}
-            onMapClick={onScreenTap}
-            onProgressUpdate={setRouteProgress}
-            onETAUpdate={setActiveEta}
-            onDistanceUpdate={setRouteDistance}
-            riderProfileLat={profile?.current_latitude}
-            riderProfileLng={profile?.current_longitude}
-          />
+          <>
+            <AppMapBackground
+              isOnline={true}
+              activeOrder={currentOrder}
+              onMapClick={onScreenTap}
+              onProgressUpdate={setRouteProgress}
+              onETAUpdate={setActiveEta}
+              onDistanceUpdate={setRouteDistance}
+              riderProfileLat={profile?.current_latitude}
+              riderProfileLng={profile?.current_longitude}
+            />
+            {/* Tactical HUD Overlay for payout transparency */}
+            <div className="absolute top-10 left-4 z-[70] pointer-events-none">
+              <div className="p-4 bg-black/80 backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-2xl flex flex-col gap-1 items-start min-w-[200px]">
+                 <div className="flex items-center gap-2 mb-1">
+                    <div className="w-2 h-2 bg-[#f59e0b] rounded-full animate-pulse shadow-[0_0_8px_#f59e0b]" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Mission Payout</span>
+                 </div>
+                 <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-headline font-black italic text-[#f59e0b]">
+                      R{currentOrder.delivery_fee?.toFixed(2) || (currentOrder.distance_km && currentOrder.distance_km > 3 ? '10.00' : '5.00')}
+                    </span>
+                    <span className="text-sm font-black uppercase text-white">FIXED</span>
+                 </div>
+                 <div className="mt-1 px-3 py-1 bg-white/5 rounded-full border border-white/10">
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b]">
+                      {currentOrder.delivery_fee && currentOrder.delivery_fee > 5 ? "Zone B: Premium Sector (+R5)" : "Zone A: Standard Sector (R5)"}
+                    </span>
+                 </div>
+              </div>
+            </div>
+          </>
         ) : (
           <SimpleMap 
             lat={currentOrder.lat || currentOrder.shop_lat} 
@@ -1370,12 +1582,42 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, pro
              <span className="text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest">START NAV</span>
           </div>
 
+          {isPickedUp && (
+            <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); if(onShowTracking) onShowTracking(currentOrder.id); }}>
+               <div className="w-12 h-12 rounded-full bg-emerald-600 shadow-[0_0_15px_rgba(16,185,129,0.5)] flex items-center justify-center mb-1 hover:bg-emerald-500 active:scale-95 transition-all">
+                  <Radar className="w-5 h-5 text-white animate-spin-slow" />
+               </div>
+               <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">SHARE</span>
+            </div>
+          )}
+
           <div className="flex flex-col items-center group cursor-pointer" onClick={() => { if(onScreenTap) onScreenTap(); }}>
              <div className="w-12 h-12 rounded-full bg-black/80 backdrop-blur-xl border border-white/10 flex items-center justify-center mb-1 group-hover:border-white/30 transition-all">
                 <X className="w-6 h-6 text-white" />
              </div>
              <span className="text-[8px] font-black text-white/40 uppercase tracking-widest">CLOSE</span>
           </div>
+
+          <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); optimizeRoute(); }}>
+             <div className="w-12 h-12 rounded-full bg-zinc-900/80 backdrop-blur-xl border border-[#f59e0b]/40 flex items-center justify-center mb-1 group-hover:bg-[#f59e0b] group-hover:text-black transition-all">
+                <Zap className="w-5 h-5 text-[#f59e0b] group-hover:text-black" />
+             </div>
+             <span className="text-[8px] font-black text-[#f59e0b] uppercase tracking-widest">OPTIMIZE</span>
+          </div>
+
+          {isVoiceSupported && (
+            <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); startListening(); }}>
+               <div className={cn(
+                 "w-12 h-12 rounded-full border flex items-center justify-center mb-1 transition-all",
+                 isListening ? "bg-red-500 border-red-400 animate-pulse" : "bg-black/80 backdrop-blur-xl border-white/10"
+               )}>
+                  {isListening ? <Mic className="w-5 h-5 text-white" /> : <MicOff className="w-5 h-5 text-white" />}
+               </div>
+               <span className={cn("text-[8px] font-black uppercase tracking-widest", isListening ? "text-red-500" : "text-white/40")}>
+                 {isListening ? 'LISTENING' : 'VOICE'}
+               </span>
+            </div>
+          )}
 
           <button 
             onClick={(e) => { e.stopPropagation(); toast('Support Uplink Activated. Connecting to Fleet HQ...'); }}
@@ -1613,1096 +1855,13 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
   </div>
 );
 
-const RecenterMap = ({ coords }: { coords: [number, number] }) => {
-  const map = useMap();
-  const prevCoords = useRef<[number, number]>(coords);
-  
-  useEffect(() => {
-    if (prevCoords.current[0] !== coords[0] || prevCoords.current[1] !== coords[1]) {
-      map.setView(coords, 15);
-      prevCoords.current = coords;
-    }
-  }, [coords, map]);
-  
-  return null;
-};
-
-const RiderTrackingMap = ({ 
-  riderCoords
-}: { 
-  riderCoords: [number, number]
-}) => {
-  const customIcon = L.icon({
-    iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-    shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-  });
-
-  return (
-    <div className="w-full h-56 bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-200/10 relative group mb-6 shadow-2xl z-0">
-      <MapContainer 
-        center={riderCoords} 
-        zoom={15} 
-        minZoom={13}
-        maxBounds={[
-          [-26.040, 28.160], // Southwest
-          [-25.930, 28.260]  // Northeast
-        ]}
-        maxBoundsViscosity={1.0}
-        style={{ height: '100%', width: '100%' }}
-        zoomControl={false}
-        attributionControl={false}
-      >
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
-        />
-        <Marker position={riderCoords} icon={customIcon} />
-        <RecenterMap coords={riderCoords} />
-      </MapContainer>
-      <div className="absolute top-4 left-4 flex gap-2 pointer-events-none z-10">
-        <div className="bg-black/80 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/20 flex items-center gap-2">
-          <div className="w-1.5 h-1.5 bg-[#f59e0b] rounded-full animate-pulse" />
-          Live Vector
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const MerchantDashboard = ({ onSwitchRole, setView }: { onSwitchRole: () => void, setView: (view: AppView) => void }) => {
-  const [orders, setOrders] = useState<DeliveryOrder[]>([]);
-  const [activeRiders, setActiveRiders] = useState<RiderProfile[]>([]);
-  const [ratingOrder, setRatingOrder] = useState<DeliveryOrder | null>(null);
-  const [rating, setRating] = useState(5);
-  const [feedback, setFeedback] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'menu' | 'orders' | 'marketing' | 'coupons' | 'payments' | 'insights' | 'riders' | 'settings'>('orders');
-  const [pairingCode, setPairingCode] = useState(isSupabaseMocked() ? 'LX-882' : '772901');
-  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
-  const [riderSimCoords, setRiderSimCoords] = useState<[number, number]>([-33.922861, 18.421300]);
-
-  // Simulation effect for mock mode
-  useEffect(() => {
-    if (!isSupabaseMocked()) return;
-    const interval = setInterval(() => {
-      setRiderSimCoords(prev => [
-        prev[0] + (Math.random() - 0.5) * 0.001,
-        prev[1] + (Math.random() - 0.5) * 0.001
-      ]);
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        if (isSupabaseMocked()) {
-          // Generate mock data for preview
-          setOrders([
-            {
-              id: 'mock-1',
-              customer_name: 'Sarah Jenkins',
-              address: '42 Greenway Blvd, Sandton',
-              status: 'preparing',
-              delivery_status: 'finding_rider',
-              product_name: 'Big Double Burger Meal',
-              total_price: 125,
-              created_at: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-              phone: '082 555 0123'
-            },
-            {
-              id: 'mock-2',
-              customer_name: 'Marcus Thabo',
-              address: 'Unit 12, Skyview Apts',
-              status: 'pending',
-              delivery_status: 'finding_rider',
-              product_name: 'Chicken Wings (12pc)',
-              total_price: 89,
-              created_at: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-              phone: '071 222 9988'
-            },
-            {
-              id: 'mock-3',
-              customer_name: 'Aisha Kahn',
-              address: '15 Rose Street, Cape Town',
-              status: 'ready',
-              delivery_status: 'accepted',
-              product_name: 'Vegetarian Platter',
-              total_price: 145,
-              created_at: new Date(Date.now() - 1000 * 60 * 25).toISOString(),
-              phone: '066 333 4455',
-              rider: { name: 'Dumisani', current_latitude: -33.9, current_longitude: 18.4 } as unknown as RiderProfile,
-              rider_dist_to_shop: 2.1
-            }
-          ] as unknown as DeliveryOrder[]);
-
-          setActiveRiders([
-            { id: 'r1', name: 'Rider Thabo', is_online: true },
-            { id: 'r2', name: 'Rider Sipho', is_online: true },
-            { id: 'r3', name: 'Rider Lerato', is_online: true }
-          ] as RiderProfile[]);
-          return;
-        }
-
-        const { data: ordersData, error: ordersError } = await getSupabase()
-          .from('orders')
-          .select('*, rider:rider_profiles(name, current_latitude, current_longitude)')
-          .order('created_at', { ascending: false });
-        
-        if (ordersError) throw ordersError;
-        if (ordersData) {
-          const fetchedOrders = ordersData as unknown as DeliveryOrder[];
-          
-          // Backwards-Compatible Cleanup: wipe finding_rider from completed orders
-          const stuckIds = fetchedOrders
-            .filter(o => o.status === 'completed' && o.delivery_status === 'finding_rider')
-            .map(o => o.id);
-            
-          if (stuckIds.length > 0) {
-            getSupabase().from('orders').update({ delivery_status: null }).in('id', stuckIds).then(() => {
-              console.log('Cleaned up stuck orders:', stuckIds.length);
-            });
-            // Immediately clean locally to reflect
-            fetchedOrders.forEach(o => {
-              if (stuckIds.includes(o.id)) o.delivery_status = null as unknown as DeliveryStatus;
-            });
-          }
-          
-          setOrders(fetchedOrders);
-        }
-
-        const { data: ridersData, error: ridersError } = await getSupabase()
-          .from('rider_profiles')
-          .select('*')
-          .eq('is_online', true);
-        
-        if (ridersError) throw ridersError;
-        if (ridersData) setActiveRiders(ridersData as RiderProfile[]);
-      } catch (_e) {
-        console.error('Fetch error:', _e);
-        toast.error('Local Grid sync failed. Using offline cache.');
-        // Fallback to minimal mock if real fetch fails
-        setOrders(prev => {
-           if (prev.length === 0) {
-              return [{ id: 'err-1', customer_name: 'Network Fallback', address: 'Mode: Offline', status: 'pending', product_name: 'Retry connection...', created_at: new Date().toISOString() }] as unknown as DeliveryOrder[];
-           }
-           return prev;
-        });
-      }
-    };
-
-    fetchData();
-    if (isSupabaseMocked()) return;
-    
-    const channel = getSupabase()
-      .channel(`merchant_updates_${Math.random()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rider_profiles' }, () => {
-        fetchData();
-      })
-      .subscribe();
-    
-    return () => { 
-      getSupabase().removeChannel(channel); 
-    };
-  }, []);
-
-  const createTestOrder = async () => {
-    try {
-      setLoading(true);
-      if (isSupabaseMocked()) {
-        const newOrder = {
-          id: `mock-${Date.now()}`,
-          customer_name: 'Test Customer',
-          address: 'Tembisa Plaza',
-          city: 'Tembisa',
-          status: 'pending',
-          delivery_status: 'finding_rider',
-          product_name: 'Super Deluxe Burger',
-          total_price: 155,
-          delivery_fee: 5.00,
-          created_at: new Date().toISOString(),
-          phone: '000 000 0000',
-          shop_id: 'mock-shop',
-          restaurant_name: 'Tembisa Local Merchant',
-          items: ['1x Super Deluxe Burger', '1x Fries', '1x Coke']
-        } as unknown as DeliveryOrder;
-        setOrders(prev => [newOrder, ...prev]);
-        toast.success('Test order generated in Tembisa sector.');
-        return;
-      }
-
-      // Find first shop connection for this merchant (mocked/simplified logic)
-      const { data: shops } = await getSupabase().from('shops').select('id, name, city').limit(1);
-      if (!shops || shops.length === 0) {
-        toast.error('No nodes found. Ensure a shop exists in Tembisa.');
-        return;
-      }
-
-      const { data, error } = await getSupabase().from('orders').insert({
-        shop_id: shops[0].id,
-        customer_name: 'Tembisa Unit',
-        address: 'Rev. R.T.J. Namane Dr',
-        city: 'Tembisa',
-        status: 'pending',
-        delivery_status: 'finding_rider',
-        product_name: 'Giga-Byte Meal',
-        restaurant_name: shops[0].name || 'Tembisa Merchant',
-        items: ['1x Giga-Byte Burger', '1x Data Chips'],
-        total_price: 85,
-        delivery_fee: 5.00,
-        order_type: 'delivery'
-      }).select().single();
-
-      if (error) {
-        console.error('Insert error:', error);
-        throw error;
-      }
-      if (data) {
-        toast.success('New mission signal broadcasted!');
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Uplink failed';
-      toast.error(`ERROR: ${message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdateStatus = async (id: string, status: string) => {
-    try {
-      if (isSupabaseMocked()) {
-        setOrders(prev => prev.map(o => {
-          if (o.id === id) {
-            const upd: DeliveryOrder = { ...o, status: status as DeliveryOrder['status'] };
-            if (status === 'completed') {
-               upd.delivery_status = 'none';
-            } else if (status === 'preparing' || status === 'ready') {
-               // Enforce broadcast if regular order becomes active
-               if (!o.delivery_status || o.delivery_status === 'none') {
-                 upd.delivery_status = 'finding_rider';
-               }
-            }
-            return upd;
-          }
-          return o;
-        }));
-        toast.success(`Order protocol updated: ${status.toUpperCase()}`);
-        return;
-      }
-      
-      const payload: Record<string, unknown> = { status };
-      const currentOrder = orders.find(o => o.id === id);
-      
-      if (status === 'completed') {
-        payload.delivery_status = 'none';
-      } else if ((status === 'preparing' || status === 'ready') && currentOrder) {
-        if (!currentOrder.delivery_status || currentOrder.delivery_status === 'none' || currentOrder.delivery_status === 'finding_rider') {
-           payload.delivery_status = 'finding_rider';
-           // Data Enrichment for Rider Feed
-           const { data: shop } = await getSupabase().from('shops').select('name, city').eq('id', currentOrder.shop_id).single();
-           if (shop) {
-             payload.restaurant_name = shop.name;
-             payload.city = shop.city;
-           }
-           if (!currentOrder.items || currentOrder.items.length === 0) {
-             payload.items = [currentOrder.product_name || 'Assorted Items'];
-           }
-        }
-      }
-      
-      await getSupabase().from('orders').update(payload).eq('id', id);
-      toast.success(`Order protocol updated: ${status.toUpperCase()}`);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Keep these for future feature expansion or internal use
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleRequestRider = async (id: string) => {
-    try {
-      await getSupabase().from('orders').update({ delivery_status: 'finding_rider' }).eq('id', id);
-      toast.success('Rider request broadcasted to Sector Alpha.');
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleSubmitRating = async () => {
-    if (!ratingOrder) return;
-    setLoading(true);
-    try {
-      await getSupabase()
-        .from('orders')
-        .update({ 
-          merchant_rating: rating, 
-          merchant_feedback: feedback 
-        })
-        .eq('id', ratingOrder.id);
-      
-      toast.success('Mission feedback synced with Fleet Headquarters.');
-      setRatingOrder(null);
-      setRating(5);
-      setFeedback('');
-    } catch {
-      toast.error('Feedback upload failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const activeOrders = orders.filter(o => ['pending', 'preparing', 'ready'].includes(o.status));
-  const completedCount = orders.filter(o => o.status === 'completed').length;
-  const preparingCount = orders.filter(o => o.status === 'preparing').length;
-  const readyCount = orders.filter(o => o.status === 'ready').length;
-  const newCount = orders.filter(o => o.status === 'pending').length;
-
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 15000);
-    return () => clearInterval(timer);
-  }, []);
-
-  return (
-    <div className="bg-[#F8F9FA] min-h-screen text-zinc-900 font-sans pb-32">
-       {/* Top Navigation Bar */}
-      <header className="bg-white border-b border-zinc-200 h-16 flex items-center justify-between px-6 sticky top-0 z-50">
-        <div className="flex items-center gap-8">
-           <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-[#f58220] rounded-xl flex items-center justify-center">
-                 <ShoppingBag className="w-5 h-5 text-white" />
-              </div>
-              <h1 className="text-xl font-headline font-black italic uppercase tracking-tighter">
-                Local<span className="text-[#f58220]">Eats</span>
-              </h1>
-           </div>
-           
-           <nav className="hidden lg:flex items-center gap-6">
-              {['Dashboard', 'Menu', 'Orders', 'Marketing', 'Coupons', 'Payments', 'Insights', 'Riders', 'Settings'].map(tab => (
-                <button 
-                  key={tab}
-                  onClick={() => setActiveTab(tab.toLowerCase() as typeof activeTab)}
-                  className={cn(
-                    "text-xs font-bold uppercase tracking-widest transition-colors",
-                    activeTab === tab.toLowerCase() ? "text-[#f58220]" : "text-zinc-500 hover:text-zinc-800"
-                  )}
-                >
-                  {tab}
-                </button>
-              ))}
-           </nav>
-        </div>
-
-        <div className="flex items-center gap-4">
-           <button 
-             onClick={() => setView('checkout_demo')}
-             className="flex items-center gap-2 text-[10px] font-black uppercase text-[#f58220] border border-[#f58220]/30 px-4 py-2 rounded-2xl bg-[#f58220]/5 active:scale-95 transition-all"
-           >
-             <ShoppingBag className="w-3.5 h-3.5" />
-             Checkout Demo
-           </button>
-           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-full">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              <span className="text-[10px] font-black uppercase text-green-700">Accepting Orders</span>
-           </div>
-           <button onClick={onSwitchRole} className="p-2 text-zinc-400 hover:text-zinc-600 bg-zinc-50 rounded-xl">
-              <LogOut className="w-5 h-5" />
-           </button>
-        </div>
-      </header>
-
-      {/* IMPROVEMENT #8 — Merchant Secondary Mobile Navigation */}
-      <div className="lg:hidden bg-white border-b border-zinc-100 sticky top-16 z-40 overflow-x-auto no-scrollbar">
-        <div className="flex items-center gap-2 px-4 py-3 min-w-max">
-          {['Dashboard', 'Menu', 'Orders', 'Marketing', 'Coupons', 'Riders', 'Insights', 'Settings'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab.toLowerCase() as typeof activeTab)}
-              className={cn(
-                "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                activeTab === tab.toLowerCase() 
-                  ? "bg-[#f58220] text-white shadow-lg shadow-[#f58220]/20" 
-                  : "bg-zinc-50 text-zinc-500 border border-zinc-100"
-              )}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="max-w-7xl mx-auto p-6 md:p-8">
-        {activeTab === 'marketing' ? (
-           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="flex flex-col gap-1">
-                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Marketing <span className="text-[#f58220]">Vector</span></h2>
-                <p className="text-zinc-500 text-sm">Boost your visibility and customer loyalty across the LocalEats grid.</p>
-             </div>
-
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm col-span-2">
-                   <div className="flex justify-between items-start mb-8">
-                      <div>
-                         <h3 className="text-lg font-bold">Grid Boost Campaigns</h3>
-                         <p className="text-xs text-zinc-400">Target specific clusters to increase order volume.</p>
-                      </div>
-                      <button className="bg-zinc-900 text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest">New Campaign</button>
-                   </div>
-
-                   <div className="space-y-4">
-                      {[
-                        { title: 'Lunch Rush Blitz', status: 'Active', reach: '2,450 users', conversion: '12.4%', spend: 'R450.00' },
-                        { title: 'Dinner Wave Pro', status: 'Scheduled', reach: '--', conversion: '--', spend: 'R800.00' }
-                      ].map(campaign => (
-                         <div key={campaign.title} className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-                            <div className="flex items-center gap-4">
-                               <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center">
-                                  <Zap className="w-5 h-5 text-orange-500" />
-                               </div>
-                               <div>
-                                  <p className="text-sm font-bold text-zinc-800">{campaign.title}</p>
-                                  <div className="flex gap-3 mt-0.5">
-                                     <span className="text-[8px] font-black uppercase text-green-600">{campaign.status}</span>
-                                     <span className="text-[8px] font-mono text-zinc-400">Reach: {campaign.reach}</span>
-                                  </div>
-                               </div>
-                            </div>
-                            <div className="text-right">
-                               <p className="text-xs font-black text-zinc-900">{campaign.spend}</p>
-                               <p className="text-[8px] font-mono text-zinc-400">Conv: {campaign.conversion}</p>
-                            </div>
-                         </div>
-                      ))}
-                   </div>
-                </BentoCard>
-
-                <div className="space-y-6">
-                   <BentoCard className="bg-[#f58220] p-6 text-white text-center">
-                      <Gift className="w-10 h-10 mx-auto mb-4" />
-                      <h3 className="text-lg font-black uppercase italic leading-none mb-2">Loyalty Multiplier</h3>
-                      <p className="text-[10px] opacity-80 font-medium mb-6">Users earn 2x tokens when ordering from your shop this weekend.</p>
-                      <button className="w-full bg-white text-[#f58220] py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-xl">Extend Period</button>
-                   </BentoCard>
-
-                   <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
-                      <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-widest mb-4">Top Customers</h4>
-                      <div className="space-y-4">
-                         {['Sarah J.', 'Marcus T.', 'Aisha K.'].map((name, i) => (
-                            <div key={name} className="flex items-center justify-between">
-                               <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-[10px] font-bold">{i+1}</div>
-                                  <span className="text-xs font-medium">{name}</span>
-                               </div>
-                               <span className="text-[10px] font-mono text-[#f58220]">{12 - i} Orders</span>
-                            </div>
-                         ))}
-                      </div>
-                   </BentoCard>
-                </div>
-             </div>
-           </div>
-        ) : activeTab === 'coupons' ? (
-           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="flex flex-col gap-1">
-                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Coupon <span className="text-[#f58220]">Forge</span></h2>
-                <p className="text-zinc-500 text-sm">Issue high-impact discount codes to drive customer retention.</p>
-             </div>
-
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <BentoCard className="bg-white border-zinc-200 p-8 shadow-sm">
-                   <h3 className="text-lg font-bold mb-6">Create New Voucher</h3>
-                   <div className="space-y-4">
-                      <div>
-                         <label className="text-[10px] font-black uppercase text-zinc-400 mb-1 block">Voucher Code</label>
-                         <input type="text" placeholder="e.g. GRID20" className="w-full bg-zinc-50 border border-zinc-100 p-3 rounded-xl font-mono text-sm focus:ring-2 focus:ring-[#f58220] outline-none" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                         <div>
-                            <label className="text-[10px] font-black uppercase text-zinc-400 mb-1 block">Discount Type</label>
-                            <select className="w-full bg-zinc-50 border border-zinc-100 p-3 rounded-xl text-sm outline-none">
-                               <option>Percentage (%)</option>
-                               <option>Fixed Amount (R)</option>
-                            </select>
-                         </div>
-                         <div>
-                            <label className="text-[10px] font-black uppercase text-zinc-400 mb-1 block">Value</label>
-                            <input type="number" placeholder="20" className="w-full bg-zinc-50 border border-zinc-100 p-3 rounded-xl text-sm outline-none" />
-                         </div>
-                      </div>
-                      <button className="w-full bg-zinc-900 text-white py-4 rounded-2xl text-xs font-black uppercase tracking-widest mt-4">Forge Coupon</button>
-                   </div>
-                </BentoCard>
-
-                <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
-                   <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-400 mb-6">Active Vouchers</h3>
-                   <div className="space-y-3">
-                      {[
-                        { code: 'FIRSTORDER', type: '30%', used: 142, limit: 500 },
-                        { code: 'WEEKENDBLAST', type: 'R50', used: 89, limit: 100 },
-                        { code: 'LUNCH10', type: '10%', used: 450, limit: '∞' }
-                      ].map(coupon => (
-                         <div key={coupon.code} className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100 flex items-center justify-between">
-                            <div>
-                               <p className="text-sm font-black font-mono text-zinc-800">{coupon.code}</p>
-                               <p className="text-[8px] font-bold text-[#f58220] uppercase">{coupon.type} OFF</p>
-                            </div>
-                            <div className="text-right">
-                               <p className="text-xs font-black text-zinc-900">{coupon.used} / {coupon.limit} uses</p>
-                               <div className="w-24 h-1.5 bg-zinc-200 rounded-full mt-1 overflow-hidden">
-                                  <div className="h-full bg-[#f58220]" style={{ width: typeof coupon.limit === 'number' ? `${(coupon.used / coupon.limit) * 100}%` : '40%' }} />
-                               </div>
-                            </div>
-                         </div>
-                      ))}
-                   </div>
-                </BentoCard>
-             </div>
-           </div>
-        ) : activeTab === 'riders' ? (
-          <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="flex flex-col gap-1 mb-2">
-                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Fleet <span className="text-[#f58220]">Management</span></h2>
-                <p className="text-zinc-500 text-sm">Monitor active couriers and authorize new neural uplinks.</p>
-             </div>
-
-             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div className="md:col-span-1 space-y-6">
-                   <BentoCard className="bg-zinc-900 border-zinc-800 p-8 text-white relative overflow-hidden">
-                      {/* FEATURE #1 — QR Code for pairing */}
-                      <div className="absolute -right-12 -bottom-12 opacity-10 group-hover:opacity-20 transition-opacity rotate-12">
-                         <QRCodeSVG 
-                           value={pairingCode} 
-                           size={200} 
-                           bgColor="#000000" 
-                           fgColor="#f59e0b" 
-                         />
-                      </div>
-
-                      <div className="flex items-center gap-3 mb-6">
-                         <div className="p-2 bg-[#f58220]/20 rounded-lg">
-                            <Zap className="w-5 h-5 text-[#f58220]" />
-                         </div>
-                         <h3 className="text-sm font-black uppercase tracking-widest">Active Tether</h3>
-                      </div>
-
-                      <div className="flex flex-col items-center justify-center py-6 gap-6">
-                         <div className="bg-white p-4 rounded-3xl shadow-[0_0_30px_rgba(245,130,32,0.3)]">
-                            <QRCodeSVG 
-                              value={pairingCode} 
-                              size={160} 
-                              bgColor="#FFFFFF" 
-                              fgColor="#000000" 
-                              level="H"
-                            />
-                         </div>
-                         
-                         <div className="text-center">
-                            <div className="text-4xl font-headline font-black italic tracking-widest text-[#f59e0b] mb-2 uppercase">
-                               {pairingCode}
-                            </div>
-                            <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Current Pairing Cipher</p>
-                         </div>
-                      </div>
-
-                      <button 
-                        onClick={() => {
-                          const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-                          setPairingCode(newCode);
-                          toast.success('Neural sequence rotated.', {
-                            description: `Cipher ${newCode} active for 24h`
-                          });
-                        }}
-                        className="w-full bg-[#f58220] text-black py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all mt-4"
-                      >
-                        Rotate Cipher
-                      </button>
-
-                      <div className="mt-8 pt-8 border-t border-white/5 space-y-4">
-                         <div className="flex justify-between items-center text-[10px] font-bold uppercase">
-                            <span className="text-zinc-500">Protocol</span>
-                            <span className="text-zinc-300">Handshake-V2</span>
-                         </div>
-                         <div className="flex justify-between items-center text-[10px] font-bold uppercase">
-                            <span className="text-zinc-500">TTL</span>
-                            <span className="text-zinc-300">24 Hours</span>
-                         </div>
-                      </div>
-                   </BentoCard>
-
-                   <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
-                      <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-[0.2em] mb-4">Neural Scan</h4>
-                      <p className="text-xs text-zinc-500 font-bold leading-relaxed">
-                         Authorizing a rider allows them to receive mission signals from this merchant node for 24 hours.
-                      </p>
-                   </BentoCard>
-                </div>
-
-                <div className="md:col-span-2 space-y-6">
-                   <div className="flex items-center justify-between mb-2">
-                      <h3 className="text-lg font-black italic uppercase tracking-tight">Active Couriers</h3>
-                      <span className="text-[10px] bg-zinc-100 text-zinc-500 px-2 py-1 rounded-full font-black uppercase">{activeRiders.length} Online</span>
-                   </div>
-
-                   <div className="space-y-4">
-                      {activeRiders.length > 0 ? activeRiders.map(rider => (
-                         <BentoCard key={rider.id} className="bg-white border-zinc-200 p-5 flex items-center justify-between shadow-sm hover:shadow-md transition-all">
-                            <div className="flex items-center gap-4">
-                               <div className="w-12 h-12 rounded-2xl bg-zinc-50 border border-zinc-100 flex items-center justify-center relative">
-                                  <Bike className="w-6 h-6 text-zinc-400" />
-                                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white" />
-                               </div>
-                               <div>
-                                  <h4 className="text-sm font-black text-zinc-800 uppercase tracking-tight">{rider.name}</h4>
-                                  <p className="text-[10px] text-zinc-400 font-bold uppercase">{rider.vehicle_type || 'Road Vector'} • {rider.rating || 5.0}★</p>
-                               </div>
-                            </div>
-                            <div className="flex gap-2">
-                               <button className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors">
-                                  <Smartphone className="w-4 h-4" />
-                               </button>
-                               <button className="p-2 text-zinc-400 hover:text-red-500 transition-colors">
-                                  <ShieldAlert className="w-4 h-4" />
-                               </button>
-                            </div>
-                         </BentoCard>
-                      )) : (
-                        <div className="py-12 text-center bg-zinc-50 rounded-[2rem] border-2 border-dashed border-zinc-200 flex flex-col items-center gap-4">
-                          <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-8">No riders currently tethered in this sector.</p>
-                          <button 
-                            onClick={() => setActiveTab('settings')}
-                            className="flex items-center gap-2 px-6 py-3 bg-zinc-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all shadow-xl"
-                          >
-                             <Plus className="w-4 h-4 text-[#f59e0b]" /> Generate First Pairing Code
-                          </button>
-                        </div>
-                      )}
-                   </div>
-                </div>
-             </div>
-          </div>
-         ) : activeTab === 'insights' ? (
-           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="flex flex-col gap-1">
-                <h2 className="text-3xl font-black italic uppercase tracking-tighter">Sector <span className="text-[#f58220]">Analytics</span></h2>
-                <p className="text-zinc-500 text-sm">Review operational telemetry and merchant node ROI performance.</p>
-             </div>
-
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm min-h-[400px]">
-                   <h3 className="text-sm font-black uppercase tracking-widest text-zinc-400 mb-8">Order Volume (24H Pulse)</h3>
-                   <div className="h-[300px]">
-                     <ResponsiveContainer width="100%" height="100%">
-                       <AreaChart data={[
-                         { time: '08:00', orders: 12 },
-                         { time: '10:00', orders: 18 },
-                         { time: '12:00', orders: 42 },
-                         { time: '14:00', orders: 25 },
-                         { time: '16:00', orders: 31 },
-                         { time: '18:00', orders: 58 },
-                         { time: '20:00', orders: 45 },
-                         { time: '22:00', orders: 15 },
-                       ]}>
-                         <defs>
-                           <linearGradient id="colorOrders" x1="0" y1="0" x2="0" y2="1">
-                             <stop offset="5%" stopColor="#f58220" stopOpacity={0.3}/>
-                             <stop offset="95%" stopColor="#f58220" stopOpacity={0}/>
-                           </linearGradient>
-                         </defs>
-                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-                         <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} />
-                         <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', background: '#000', color: '#fff' }} />
-                         <Area type="monotone" dataKey="orders" stroke="#f58220" strokeWidth={3} fillOpacity={1} fill="url(#colorOrders)" />
-                       </AreaChart>
-                     </ResponsiveContainer>
-                   </div>
-                </BentoCard>
-
-                <div className="space-y-6">
-                   <div className="grid grid-cols-2 gap-4">
-                      <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
-                         <p className="text-[10px] font-black uppercase text-zinc-400 mb-2">Avg Prep Time</p>
-                         <p className="text-3xl font-headline font-black italic">14.8 <span className="text-[10px] uppercase font-bold text-zinc-500">Mins</span></p>
-                      </BentoCard>
-                      <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
-                         <p className="text-[10px] font-black uppercase text-zinc-400 mb-2">Completion Rate</p>
-                         <p className="text-3xl font-headline font-black italic">98.4<span className="text-[10px] uppercase font-bold text-zinc-500">%</span></p>
-                      </BentoCard>
-                   </div>
-                   
-                   <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm">
-                      <h4 className="text-[10px] font-black uppercase text-zinc-400 tracking-widest mb-6">Heatmap: Order Clusters</h4>
-                      <div className="space-y-4">
-                         {[
-                           { area: 'Sector Alpha (Downtown)', freq: 45, trend: '+12%' },
-                           { area: 'Sector Beta (Residential)', freq: 32, trend: '-5%' },
-                           { area: 'Sector Gamma (Business)', freq: 28, trend: '+18%' }
-                         ].map(item => (
-                            <div key={item.area} className="space-y-2">
-                               <div className="flex justify-between items-center text-[11px] font-bold">
-                                  <span>{item.area}</span>
-                                  <span className={cn(item.trend.startsWith('+') ? "text-green-600" : "text-red-500")}>{item.trend}</span>
-                               </div>
-                               <div className="w-full h-2 bg-zinc-100 rounded-full overflow-hidden">
-                                  <div className="h-full bg-[#f58220]" style={{ width: `${item.freq}%` }} />
-                               </div>
-                            </div>
-                         ))}
-                      </div>
-                   </BentoCard>
-                </div>
-             </div>
-           </div>
-         ) : activeTab === 'settings' ? (
-          <div className="max-w-2xl mx-auto space-y-8">
-            <BentoCard className="bg-white border-zinc-200 p-8 shadow-sm">
-               <h2 className="text-2xl font-black italic uppercase tracking-tighter mb-8">System Configuration</h2>
-               
-               <div className="space-y-8">
-                  <div className="p-6 bg-zinc-900 rounded-[2rem] text-white">
-                     <div className="flex items-center justify-between mb-8">
-                        <div>
-                           <p className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1">Rider Uplink Protocol</p>
-                           <h3 className="text-xs font-bold text-zinc-400">Merchant Terminal Code</h3>
-                        </div>
-                        <div className="w-10 h-10 rounded-2xl bg-[#f59e0b]/10 flex items-center justify-center">
-                           <Zap className="w-5 h-5 text-[#f59e0b]" />
-                        </div>
-                     </div>
-                     
-                     <div className="flex flex-col items-center py-6">
-                        <div className="text-6xl font-headline font-black italic tracking-widest text-[#f59e0b] animate-pulse">
-                           {isSupabaseMocked() ? '123456' : '772 901'}
-                        </div>
-                        <p className="mt-4 text-[10px] font-black uppercase text-zinc-500 text-center max-w-[200px]">
-                           Share this sequence with a rider to establish a neural uplink.
-                        </p>
-                     </div>
-
-                     <div className="mt-6 pt-6 border-t border-white/5 flex gap-4">
-                        <button className="flex-1 bg-white/5 hover:bg-white/10 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">Regenerate Code</button>
-                        <button className="flex-1 bg-[#f59e0b] text-black py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">Display QR</button>
-                     </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-zinc-400 ml-2">Node Location (Verification)</h4>
-                    <div className="bg-white border text-zinc-900 border-zinc-200 rounded-3xl p-6 shadow-sm overflow-hidden h-[400px] flex flex-col gap-4">
-                       <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest leading-relaxed">
-                          Verify your merchant node's physical coordinates to ensure accurate mission broadcasts to nearby riders.
-                       </p>
-                       <CheckoutMap 
-                         onLocationSelect={(lat, lng, addr) => {
-                           console.log('Shop Location Updated:', lat, lng, addr);
-                           toast.info('Location signal received.', { description: addr });
-                         }}
-                       />
-                       <div className="flex items-center justify-between text-[10px] font-black uppercase text-zinc-400">
-                          <span>Status: LOCKED</span>
-                          <span className="text-green-600">Verified</span>
-                       </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-zinc-400 ml-2">Terminal Access</h4>
-                    <div className="divide-y divide-zinc-100 border rounded-2xl overflow-hidden bg-zinc-50">
-                       <div className="p-4 flex items-center justify-between bg-white">
-                          <span className="text-xs font-bold">Auto-Dispatch Mode</span>
-                          <div className="w-10 h-5 bg-[#f59e0b] rounded-full relative">
-                             <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm" />
-                          </div>
-                       </div>
-                       <div className="p-4 flex items-center justify-between bg-white">
-                          <span className="text-xs font-bold">Real-time Telemetry sharing</span>
-                          <div className="w-10 h-5 bg-[#f59e0b] rounded-full relative">
-                             <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow-sm" />
-                          </div>
-                       </div>
-                    </div>
-                  </div>
-               </div>
-            </BentoCard>
-
-            <BentoCard className="bg-red-50 border-red-100 p-8">
-               <h4 className="text-xs font-black uppercase tracking-widest text-red-500 mb-4">Danger Zone</h4>
-               <button onClick={onSwitchRole} className="w-full bg-red-500 text-white py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-red-500/20">
-                  Deactivate Merchant Node
-               </button>
-            </BentoCard>
-          </div>
-        ) : (
-          <div className="flex flex-col md:flex-row gap-8">
-          
-          {/* Left Column: Orders Queue */}
-          <div className="flex-1 space-y-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <h2 className="text-2xl font-bold flex items-center gap-3">
-                Active Queue <span className="text-zinc-400 text-sm font-medium">{activeOrders.length} Orders</span>
-              </h2>
-              <div className="flex items-center gap-4">
-                <button 
-                  onClick={createTestOrder}
-                  disabled={loading}
-                  className="px-6 py-2 bg-black text-white border border-[#f59e0b] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-zinc-900 transition-all flex items-center gap-2"
-                >
-                  <Plus className="w-3 h-3 text-[#f59e0b]" /> Create Test Mission
-                </button>
-                <div className="flex items-center gap-2 bg-zinc-100 p-1 rounded-xl">
-                   <button className="px-3 py-1.5 bg-white shadow-sm rounded-lg text-[10px] font-black uppercase tracking-widest text-[#f58220]">Date ↓</button>
-                   <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Price</button>
-                   <button className="px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-zinc-500">Order ID</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {activeOrders.map(order => {
-                const createdAt = new Date(order.created_at);
-                const diffSecs = Math.floor((now - createdAt.getTime()) / 1000);
-                const isOverdue = diffSecs > 1800; // 30 mins
-
-                return (
-                  <motion.div 
-                    key={order.id}
-                    layout
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden"
-                  >
-                    {isOverdue && (
-                       <div className="absolute top-0 left-0 right-0 bg-red-500 text-white text-[8px] font-black uppercase tracking-widest py-1 px-4 text-center">
-                          OVERDUE ({Math.floor(diffSecs / 60)}m)
-                       </div>
-                    )}
-                    
-                    <div className="flex justify-between items-start mb-4 mt-2">
-                       <div className="flex flex-col gap-1">
-                          <span className="text-[8px] font-mono text-zinc-400 uppercase">#LE-{order.id.slice(0, 8).toUpperCase()}</span>
-                          <h3 className="text-lg font-black text-zinc-800">{order.customer_name || 'Debug Customer'}</h3>
-                       </div>
-                       <div className="flex flex-col items-end gap-1">
-                          <div className={cn(
-                            "px-3 py-1 rounded-full text-[9px] font-black uppercase flex items-center gap-1.5",
-                            order.status === 'preparing' ? "bg-orange-100 text-orange-600" : "bg-blue-100 text-blue-600"
-                          )}>
-                             <div className="w-1.5 h-1.5 bg-current rounded-full" />
-                             {order.status}
-                          </div>
-                          <div className="flex flex-col items-end">
-                            <span className="text-[10px] font-mono text-zinc-400 flex items-center gap-1">
-                               <Clock className="w-3 h-3" /> {createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                            <span className="text-[9px] font-bold text-[#f58220] uppercase tracking-wider">
-                              {diffSecs < 60 ? 'Just now' : `${Math.floor(diffSecs / 60)}m ago`}
-                            </span>
-                          </div>
-                       </div>
-                    </div>
-
-                    <div className="space-y-1 mb-6">
-                       <div className="flex items-center gap-1.5 text-zinc-500">
-                          <Smartphone className="w-3 h-3" />
-                          <span className="text-xs font-medium font-mono">{order.phone || '000 000 0000'}</span>
-                       </div>
-                       <div className="flex items-center gap-1.5 text-zinc-500">
-                          <MapPin className="w-3 h-3" />
-                          <span className="text-xs font-medium truncate">{order.address || '123 Default St, Default City'}</span>
-                       </div>
-                    </div>
-
-                    {order.rider && (
-                       <div className="flex items-center gap-3 mb-6 p-3 bg-zinc-50 rounded-xl border border-zinc-100">
-                          <div className="w-10 h-10 rounded-xl bg-zinc-200 flex items-center justify-center flex-shrink-0">
-                             <Bike className="w-5 h-5 text-zinc-500" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                             <p className="text-[8px] font-black uppercase text-zinc-400 leading-none mb-1">Assigned Vector</p>
-                             <p className="text-sm font-black text-zinc-800 truncate">{order.rider.name}</p>
-                          </div>
-                          <div className="flex gap-2">
-                             <button className="w-8 h-8 flex items-center justify-center bg-white border border-zinc-200 rounded-lg shadow-sm text-zinc-600">
-                                <Smartphone className="w-4 h-4" />
-                             </button>
-                             <button 
-                               onClick={() => setTrackingOrderId(trackingOrderId === order.id ? null : order.id)}
-                               className={cn(
-                                 "w-8 h-8 flex items-center justify-center rounded-lg shadow-sm transition-all",
-                                 trackingOrderId === order.id ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-white border border-zinc-200 text-zinc-600"
-                               )}
-                             >
-                                <MapPin className="w-4 h-4" />
-                             </button>
-                          </div>
-                       </div>
-                    )}
-
-                    {trackingOrderId === order.id && order.rider && (
-                       <RiderTrackingMap 
-                         riderCoords={
-                           isSupabaseMocked() 
-                             ? riderSimCoords 
-                             : [order.rider.current_latitude || -33.9188, order.rider.current_longitude || 18.4233]
-                         }
-                       />
-                    )}
-
-                    <div className="flex items-center justify-between py-3 border-y border-zinc-100 mb-6 font-mono">
-                       <div className="flex flex-col">
-                          <span className="text-xs font-bold text-zinc-800">{order.product_name || 'Test Burger (Debug)'}</span>
-                          {order.status !== 'completed' && (
-                             <div className="mt-1 flex flex-col gap-0.5">
-                                {order.rider ? (
-                                   <span className="text-[8px] text-green-600 font-black uppercase tracking-widest flex items-center gap-1">
-                                      <Bike className="w-2.5 h-2.5" /> Rider arriving in ~{ getEstimatedMinutes(order.rider_dist_to_shop || 2.4) }m
-                                   </span>
-                                ) : (
-                                   <span className="text-[8px] text-orange-500 font-black uppercase tracking-widest flex items-center gap-1">
-                                      <Search className="w-2.5 h-2.5 animate-pulse" /> Dispatching nearest rider...
-                                   </span>
-                                )}
-                                <span className="text-[8px] text-zinc-400 font-black uppercase tracking-widest flex items-center gap-1">
-                                   <Clock className="w-2.5 h-2.5" /> Est. Delivery: {(createdAt.getHours() + 1) % 24}:{(createdAt.getMinutes() + 35) % 60}
-                                </span>
-                             </div>
-                          )}
-                       </div>
-                       <span className="text-xs font-black text-zinc-900">R {order.total_price || '55.00'}</span>
-                    </div>
-
-                    <div className="grid grid-cols-6 gap-2">
-                       <button 
-                        onClick={() => handleUpdateStatus(order.id, order.status === 'pending' ? 'preparing' : 'ready')}
-                        className="col-span-3 py-4 rounded-xl bg-[#f58220] text-white text-xs font-black uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-orange-500/20"
-                       >
-                         {order.status === 'pending' ? 'Begin Prep' : 'Mark as Ready'}
-                       </button>
-                       <button className="col-span-1 p-4 bg-zinc-100 rounded-xl flex items-center justify-center hover:bg-zinc-200 transition-colors">
-                          <List className="w-5 h-5 text-zinc-500" />
-                       </button>
-                       <button className="col-span-1 p-4 bg-zinc-100 rounded-xl flex items-center justify-center hover:bg-zinc-200 transition-colors">
-                          <Smartphone className="w-5 h-5 text-zinc-500" />
-                       </button>
-                       <button className="col-span-1 p-4 bg-red-50 rounded-xl flex items-center justify-center hover:bg-red-100 transition-colors">
-                          <ShieldAlert className="w-5 h-5 text-red-400" />
-                       </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Right Column: Insights */}
-          <aside className="w-full md:w-80 space-y-6">
-            <BentoCard className="bg-zinc-900 border-zinc-800 p-6 shadow-xl text-white relative overflow-hidden group">
-               <div className="absolute top-0 right-0 w-32 h-32 bg-[#f59e0b] opacity-5 -mr-16 -mt-16 rounded-full blur-3xl group-hover:opacity-10 transition-opacity" />
-               <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 mb-4">Quick Management</h3>
-               <button 
-                 onClick={() => setActiveTab('riders')}
-                 className="w-full flex items-center justify-between p-4 bg-white/5 border border-white/10 rounded-2xl group hover:bg-white/10 transition-all active:scale-95"
-               >
-                  <div className="flex items-center gap-3">
-                     <div className="w-8 h-8 rounded-lg bg-[#f59e0b]/20 flex items-center justify-center">
-                        <Bike className="w-4 h-4 text-[#f59e0b]" />
-                     </div>
-                     <span className="text-xs font-bold font-headline uppercase tracking-tight">Rider Fleet</span>
-                  </div>
-                  <Plus className="w-4 h-4 text-zinc-600" />
-               </button>
-            </BentoCard>
-
-            <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm text-zinc-900">
-               <h3 className="text-lg font-bold mb-6">Status Overview</h3>
-               <div className="space-y-4">
-                  {[
-                    { label: 'New Orders', count: newCount, color: 'bg-blue-500' },
-                    { label: 'Preparing', count: preparingCount, color: 'bg-orange-500' },
-                    { label: 'Ready for Pickup', count: readyCount, color: 'bg-green-500' },
-                    { label: 'Completed', count: completedCount, color: 'bg-zinc-300' },
-                  ].map(stat => (
-                    <div key={stat.label} className="flex justify-between items-center">
-                       <div className="flex items-center gap-3">
-                          <div className={cn("w-1.5 h-1.5 rounded-full", stat.color)} />
-                          <span className="text-xs font-medium text-zinc-600">{stat.label}</span>
-                       </div>
-                       <span className="text-sm font-black font-mono">{stat.count}</span>
-                    </div>
-                  ))}
-               </div>
-               
-               <div className="mt-8 pt-6 border-t border-zinc-100">
-                  <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest mb-1">Avg. Prep Time</p>
-                  <p className="text-3xl font-black italic color-zinc-900 tracking-tighter">16m 42s</p>
-               </div>
-            </BentoCard>
-
-            <BentoCard className="bg-white border-zinc-200 p-6 shadow-sm text-zinc-900">
-               <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-bold uppercase tracking-widest text-zinc-500">Live Riders</h3>
-                  <div className="flex items-center gap-1.5">
-                     <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                     <span className="text-[10px] font-black text-green-600 uppercase">{activeRiders.length} Online</span>
-                  </div>
-               </div>
-               <div className="space-y-3">
-                   {activeRiders.slice(0, 4).map(rider => (
-                     <div key={rider.id} className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                           <div className="w-6 h-6 rounded-lg bg-zinc-100 flex items-center justify-center">
-                              <Bike className="w-3 h-3 text-zinc-500" />
-                           </div>
-                           <span className="text-xs font-bold text-zinc-700">{rider.name}</span>
-                        </div>
-                        <span className="text-[8px] font-mono text-zinc-400">2.4 KM</span>
-                     </div>
-                   ))}
-               </div>
-            </BentoCard>
-
-            {/* Hidden rating triggers or menu logic could go here */}
-            {ratingOrder && (
-              <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-                <BentoCard className="bg-white p-6 max-w-sm w-full font-sans">
-                  <h3 className="text-xl font-bold mb-4">Rate Rider</h3>
-                  <div className="space-y-4">
-                    <StarRatingInput rating={rating} onRatingChange={setRating} />
-                    <textarea 
-                      value={feedback}
-                      onChange={(e) => setFeedback(e.target.value)}
-                      className="w-full border p-2 rounded text-zinc-900"
-                      placeholder="Comment..."
-                    />
-                    <div className="flex gap-2">
-                       <button onClick={handleSubmitRating} disabled={loading} className="flex-1 bg-[#f58220] text-white py-2 rounded font-bold">
-                         {loading ? 'Submitting...' : 'Submit'}
-                       </button>
-                       <button onClick={() => setRatingOrder(null)} className="flex-1 bg-zinc-100 py-2 rounded font-bold">Cancel</button>
-                    </div>
-                  </div>
-                </BentoCard>
-              </div>
-            )}
-          </aside>
-        </div>
-      )}
-      </div>
-    </div>
-  );
-};
-
-const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onSwitchRole, onToggleOnline }: { 
+const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
   now: number,
   onUpdateVehicle: (v: UserVehicle) => void,
   onLogout: () => void,
   onPair: (code?: string) => void,
-  onSwitchRole: () => void,
   onToggleOnline: () => void
 }) => {
   return (
@@ -2914,19 +2073,6 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
           </button>
         </BentoCard>
         
-        <BentoCard className="p-2 border-zinc-800/30">
-          <button 
-            onClick={onSwitchRole}
-            className="w-full flex items-center justify-between p-3 text-[#f59e0b] hover:text-[#f59e0b]/80 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <ShoppingBag className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-widest">Merchant Dashboard</span>
-            </div>
-            <ChevronRight className="w-4 h-4 text-zinc-600" />
-          </button>
-        </BentoCard>
-
         <BentoCard className="p-2 border-zinc-900 bg-red-500/5">
           <button 
             onClick={onLogout}
@@ -2948,6 +2094,112 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
   );
 };
 
+const OrderTrackingScreen = ({ orderId, onBack }: { orderId: string, onBack: () => void }) => {
+  const [order, setOrder] = useState<DeliveryOrder | null>(null);
+  const [riderLocation, setRiderLocation] = useState<[number, number] | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchOrder = async () => {
+      try {
+        const { data, error } = await getSupabase()
+          .from('orders')
+          .select('*, shops(name)')
+          .eq('id', orderId)
+          .single();
+        if (data) setOrder({ ...data, restaurant_name: data.shops?.name || 'Merchant' });
+        if (error) toast.error('Failed to load tracking data.');
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchOrder();
+
+    // Subscribe to real-time location updates
+    const channel = getSupabase()
+      .channel(`tracking:${orderId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'rider_locations',
+        filter: `order_id=eq.${orderId}`
+      }, (payload) => {
+        setRiderLocation([payload.new.latitude, payload.new.longitude]);
+        toast.info('Vector Update: Rider position updated.');
+      })
+      .subscribe();
+
+    return () => {
+      getSupabase().removeChannel(channel);
+    };
+  }, [orderId]);
+
+  if (loading) return <div className="h-full flex items-center justify-center p-12 text-zinc-500 font-mono text-[10px] uppercase tracking-widest">Initialising Tracking Array...</div>;
+  if (!order) return <div className="h-full flex flex-col items-center justify-center p-12 text-center">
+    <ShieldAlert className="w-12 h-12 text-zinc-800 mb-4" />
+    <p className="text-zinc-500 font-bold uppercase text-[10px]">Signal Lost: Mission not found.</p>
+    <button onClick={onBack} className="mt-6 text-[#f59e0b] text-[10px] uppercase font-black">Return</button>
+  </div>;
+
+  return (
+    <div className="h-full flex flex-col pt-4">
+      <div className="px-6 mb-6">
+        <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 group mb-6">
+          <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#f59e0b] transition-colors" />
+          <span className="text-[10px] font-black uppercase tracking-widest">Abort Tracking</span>
+        </button>
+        <div className="flex justify-between items-start">
+          <div>
+            <h2 className="text-2xl font-headline font-black italic uppercase tracking-tighter text-white mb-1">Payload Tracking</h2>
+            <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">Order ID: {order.id.slice(-8).toUpperCase()}</p>
+          </div>
+          <div className="bg-[#f59e0b]/10 px-3 py-1 rounded-full border border-[#f59e0b]/20">
+            <span className="text-[9px] font-black text-[#f59e0b] uppercase">{order.delivery_status.replace('_', ' ')}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 relative min-h-[400px] mx-6 mb-8 rounded-[2rem] overflow-hidden border border-zinc-800 shadow-2xl">
+         {/* Map placeholder or simple map if needed */}
+         <div className="absolute inset-0 z-0 bg-zinc-950">
+           <AppMapBackground 
+              isOnline={true} 
+              activeOrder={order} 
+              isVisible={true}
+              riderLocation={riderLocation}
+           />
+         </div>
+         
+         <div className="absolute bottom-6 left-6 right-6 z-10">
+            <BentoCard glow className="bg-black/90 backdrop-blur-md border-[#f59e0b]/40 p-5">
+              <div className="flex items-center gap-4 mb-4">
+                 <div className="w-12 h-12 rounded-2xl bg-[#f59e0b] flex items-center justify-center shadow-[0_0_15px_rgba(245,158,11,0.4)]">
+                    <Navigation className="w-6 h-6 text-black" />
+                 </div>
+                 <div>
+                    <p className="text-[9px] font-black text-[#f59e0b] uppercase tracking-widest">Mission Asset</p>
+                    <p className="text-lg font-headline font-black italic uppercase text-white leading-none tracking-tighter">ELITE RIDER TATA</p>
+                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                 <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                    <p className="text-[8px] text-zinc-500 font-black uppercase mb-1">Payload</p>
+                    <p className="text-xs font-bold text-white uppercase italic">{order.product_name}</p>
+                 </div>
+                 <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
+                    <p className="text-[8px] text-zinc-500 font-black uppercase mb-1">Destination</p>
+                    <p className="text-xs font-bold text-white uppercase italic truncate">{order.address.split(',')[0]}</p>
+                 </div>
+              </div>
+            </BentoCard>
+         </div>
+      </div>
+    </div>
+  );
+};
+
 const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (code: string) => void }) => {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -2963,7 +2215,11 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
       await onComplete(code);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Uplink rejected.';
-      toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Sync failed. Please verify the code.' : msg);
+      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
+        toast.error('Network Error: Cannot pair offline. Please reconnect to the grid.');
+      } else {
+        toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Sync failed. Please verify the code.' : msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -2988,7 +2244,11 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
       await onComplete(scannedCode.slice(0, 6));
     } catch (err) {
       const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || 'Invalid scan.';
-      toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Invalid QR code. Please scan a valid Merchant QR.' : msg);
+      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
+        toast.error('Network Error: Cannot pair offline. Please reconnect to the grid.');
+      } else {
+        toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Invalid QR code. Please scan a valid Merchant QR.' : msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -3065,7 +2325,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
 
 // --- App Hub ---
 
-type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'merchant_dash' | 'checkout_demo';
+type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'tracking';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -3075,7 +2335,6 @@ export default function App() {
   const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [role, setRole] = useState<'rider' | 'merchant'>('rider');
   const [view, setView] = useState<AppView>(() => {
     return (localStorage.getItem('localeats_view') as AppView) || 'dash';
   });
@@ -3084,10 +2343,68 @@ export default function App() {
     const saved = localStorage.getItem('localeats_active_orders');
     return saved ? JSON.parse(saved) : [];
   });
+  
+  const prevOrdersStatusRef = useRef<Record<string, string>>({});
+
+  // --- Pickup Ready Notification System ---
+  useEffect(() => {
+    if (activeOrders.length === 0) return;
+
+    activeOrders.forEach(order => {
+      const prevStatus = prevOrdersStatusRef.current[order.id];
+      const currentStatus = order.status;
+
+      // Trigger if status changes TO 'ready_for_pickup'
+      if (currentStatus === 'ready_for_pickup' && prevStatus !== 'ready_for_pickup') {
+        const triggerAlert = async () => {
+          try {
+            // 1. Audio Alert (Mixkit preview URL for notification)
+            const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+            await audio.play();
+
+            // 2. Haptic Feedback
+            if ('vibrate' in navigator) {
+              navigator.vibrate([200, 100, 200]);
+            }
+
+            // 3. Voice Announcement
+            if ('speechSynthesis' in window) {
+              const utterance = new SpeechSynthesisUtterance(`Order is ready at ${order.restaurant_name || 'the merchant'}`);
+              utterance.rate = 0.9;
+              utterance.pitch = 1.1;
+              window.speechSynthesis.speak(utterance);
+            }
+
+            toast.success(`READY FOR PICKUP: ${order.restaurant_name}`, {
+              description: "Proceed to merchant location immediately.",
+              duration: 10000,
+              icon: <Zap className="w-5 h-5 text-[#f59e0b]" />
+            });
+          } catch (error) {
+            console.error('Alert Protocol Error:', error);
+          }
+        };
+
+        triggerAlert();
+      }
+
+      // Update ref
+      prevOrdersStatusRef.current[order.id] = currentStatus;
+    });
+
+    // Cleanup stale orders from ref
+    const orderIds = new Set(activeOrders.map(o => o.id));
+    Object.keys(prevOrdersStatusRef.current).forEach(id => {
+      if (!orderIds.has(id)) {
+        delete prevOrdersStatusRef.current[id];
+      }
+    });
+  }, [activeOrders]);
   const [history, setHistory] = useState<DeliveryOrder[]>([]);
   const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [isGlobalNavVisible, setIsGlobalNavVisible] = useState(true);
+  const [selectedTrackingOrderId, setSelectedTrackingOrderId] = useState<string | null>(null);
 
   // Network Detection
   useEffect(() => {
@@ -3159,7 +2476,7 @@ export default function App() {
           .eq('id', user.id)
           .single();
         return res as { data: RiderProfile | null; error: { code: string; message: string } | null };
-      }, 1, 1000, 5000); // Only retry once, 5s timeout to avoid boot hang
+      }, 3, 1000, 10000); // 3 retries, 10s timeout to handle cold starts
 
       if (error && error.code === 'PGRST116') {
         addBootLog('WARN: NO_PROFILE - INITIALIZING...');
@@ -3212,8 +2529,28 @@ export default function App() {
       }
     } catch (e: unknown) {
       const errMessage = e instanceof Error ? e.message : 'Unknown error';
-      addBootLog(`CRITICAL: SYNC_FAILURE (${errMessage})`);
-      setSyncError(errMessage);
+      if (errMessage.toLowerCase().includes('fetch') || errMessage.toLowerCase().includes('network') || errMessage.toLowerCase().includes('timeout')) {
+        addBootLog(`WARN: NETWORK_FAILURE - ENGAGING SIMULATOR OVERRIDE`);
+        setProfile({
+          id: user.id,
+          name: 'Override_Rider',
+          full_name: 'Fallback Rider',
+          phone: '(Offline Node)',
+          is_online: true,
+          status: 'online',
+          vehicle_type: 'Road',
+          verification_status: 'verified',
+          rating: 5.0,
+          total_earnings: 0,
+          total_deliveries: 0,
+          active_points: 0,
+          updated_at: new Date().toISOString()
+        } as unknown as RiderProfile);
+        setSyncError(null);
+      } else {
+        addBootLog(`CRITICAL: SYNC_FAILURE (${errMessage})`);
+        setSyncError(errMessage);
+      }
     } finally {
       isFetchingProfileRef.current = false;
       setLoading(false);
@@ -3275,7 +2612,7 @@ export default function App() {
           .order('expires_at', { ascending: false });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return res as any;
-      }, 1, 1000, 5000);
+      }, 3, 1000, 10000);
       
       if (connData) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3352,8 +2689,14 @@ export default function App() {
       } else {
         setAvailableOrders([]);
       }
-    } catch (e) {
+    } catch (e: unknown) {
       console.error(e);
+      const errMessage = e instanceof Error ? e.message : 'Unknown error';
+      if (errMessage.toLowerCase().includes('fetch') || errMessage.toLowerCase().includes('network') || errMessage.toLowerCase().includes('timeout')) {
+        console.log('WARN: NETWORK_FAILURE - USING CACHED ORDERS');
+      } else {
+        toast.error(`ERROR: ${errMessage}`);
+      }
     } finally {
       isFetchingConnRef.current = false;
     }
@@ -3405,12 +2748,13 @@ export default function App() {
     let watchId: number;
 
     const updateLocation = async (lat: number, lng: number) => {
-      // PERF #6 — Throttle the location update to once every 15 seconds minimum
+      // Mission Sync Protocol: Update frequency adjusted to 10s for real-time tracking
       const now = Date.now();
-      if (now - lastLocationUpdateRef.current < 15000) return;
+      if (now - lastLocationUpdateRef.current < 10000) return;
       lastLocationUpdateRef.current = now;
 
       try {
+        // Update master profile telemetry
         await getSupabase()
           .from('rider_profiles')
           .update({ 
@@ -3419,8 +2763,24 @@ export default function App() {
             updated_at: new Date().toISOString() 
           })
           .eq('id', user.id);
+
+        // Share real-time vector with customers for picked_up missions
+        const pickedUpOrders = activeOrders.filter(o => o.delivery_status === 'picked_up');
+        if (pickedUpOrders.length > 0) {
+          const locationPushes = pickedUpOrders.map(order => 
+            getSupabase()
+              .from('rider_locations')
+              .insert({
+                rider_id: user.id,
+                order_id: order.id,
+                latitude: lat,
+                longitude: lng
+              })
+          );
+          await Promise.all(locationPushes);
+        }
       } catch (e) {
-        console.error('Location sync failed:', e);
+        console.error('Location sync failure:', e);
       }
     };
 
@@ -3451,7 +2811,7 @@ export default function App() {
     return () => {
       if (watchId) navigator.geolocation.clearWatch(watchId);
     };
-  }, [user, profile?.is_online, activeOrders.length]);
+  }, [user, profile?.is_online, activeOrders]);
 
   const loadingRef = useRef(loading);
   useEffect(() => {
@@ -3744,7 +3104,7 @@ export default function App() {
           if (rpcError) {
              console.warn('RPC failed, falling back to direct update', rpcError);
              const profileUpdates = {
-               total_earnings: profile.total_earnings + orderToUpdate.delivery_fee,
+               total_earnings: profile.total_earnings + (orderToUpdate.delivery_fee || 0),
                total_deliveries: profile.total_deliveries + 1,
                active_points: profile.active_points + 15,
                updated_at: new Date().toISOString()
@@ -3752,9 +3112,16 @@ export default function App() {
              await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile.id);
           }
           
+          setActiveOrders(prev => prev.filter(o => o.id !== orderId));
+          setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
+          
+          // Use the latest count from the setActiveOrders functional update if needed, 
+          // but here we can just check the current activeOrders length minus the one we just finished.
+          const remainingMissions = activeOrders.length - 1;
+          
           toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
           // If no more orders, prompt rating
-          if (activeOrders.length <= 1) {
+          if (remainingMissions <= 0) {
              setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
           }
         } else {
@@ -3763,7 +3130,11 @@ export default function App() {
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Update failed';
-      toast.error(message);
+      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
+        toast.error('Network Error: Cannot sync phase offline.');
+      } else {
+        toast.error(message);
+      }
     }
   }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, setShowRatingPrompt]);
 
@@ -3867,7 +3238,11 @@ export default function App() {
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Sync failed';
-      toast.error(message);
+      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
+        toast.error('Network Error: Cannot sync offline.');
+      } else {
+        toast.error(message);
+      }
     }
   }, [profile]);
 
@@ -3897,7 +3272,11 @@ export default function App() {
       if (error) toast.error('Sync failed');
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Sync failed';
-      toast.error(message);
+      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
+        toast.error('Network Error: Cannot sync vehicle offline.');
+      } else {
+        toast.error(message);
+      }
     }
   };
 
@@ -3922,8 +3301,23 @@ export default function App() {
   const handleOrderAccept = async (orderId: string) => {
     if (!profile || !user) return;
     
+    // Pairing Protocol: Ensure rider is connected to the merchant node
+    const orderToAccept = availableOrders.find(o => o.id === orderId);
+    if (!orderToAccept && !isSupabaseMocked()) {
+      toast.error('SIGNAL LOST: Mission or Merchant uplink unavailable.');
+      return;
+    }
+
+    if (orderToAccept) {
+      const isPaired = connections.some(c => c.shop_id === orderToAccept.shop_id && new Date(c.expires_at) > new Date());
+      if (!isPaired && !isSupabaseMocked()) {
+        toast.error('AUTH FAILURE: Connection to merchant node expired or missing.');
+        return;
+      }
+    }
+    
     // Profit-Driven Guard: Efficiency Batching Limit
-    if (activeOrders.length >= 3) {
+    if (activeOrders.length >= 2) {
       toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
       return;
     }
@@ -3971,7 +3365,11 @@ export default function App() {
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Accept failed';
-      toast.error(message);
+      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
+        toast.error('Network Error: Cannot accept mission offline.');
+      } else {
+        toast.error(message);
+      }
     }
   };
 
@@ -4111,7 +3509,7 @@ export default function App() {
     );
   }
 
-  if (!user) return <AuthView />;
+  if (!user) return <AuthView onMockLogin={() => setUser({ id: 'mock-user-123', email: 'mock@simulator.local' } as unknown as User)} />;
 
   if (!profile) {
     if (syncError && (syncError.toLowerCase().includes('fetch') || syncError.toLowerCase().includes('network') || syncError.toLowerCase().includes('timeout'))) {
@@ -4130,9 +3528,33 @@ export default function App() {
                 setSyncError(null);
                 fetchProfile();
               }}
-              className="w-full py-4 bg-zinc-900 border border-zinc-800 text-white font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
+              className="w-full py-4 bg-[#f59e0b] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all shadow-[0_0_20px_rgba(245,158,11,0.3)]"
             >
               Re-Establish Uplink
+            </button>
+            <button 
+              onClick={() => {
+                setSyncError(null);
+                setProfile({
+                  id: user.id,
+                  name: 'Offline_Unit',
+                  full_name: 'Fallback Simulator Rider',
+                  phone: '(Offline Node)',
+                  is_online: true,
+                  status: 'online',
+                  vehicle_type: 'Road',
+                  verification_status: 'verified',
+                  rating: 5.0,
+                  total_earnings: 1250,
+                  total_deliveries: 42,
+                  active_points: 156,
+                  updated_at: new Date().toISOString()
+                } as unknown as RiderProfile);
+                setLoading(false);
+              }}
+              className="w-full py-4 bg-zinc-900 border border-zinc-800 text-[#f59e0b] font-black uppercase tracking-widest rounded-xl active:scale-95 transition-all"
+            >
+              Engage Simulator Override
             </button>
             <button 
               onClick={() => getSupabase().auth.signOut()}
@@ -4234,16 +3656,32 @@ CREATE TABLE IF NOT EXISTS public.rider_connections (
   updated_at timestamp with time zone DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS public.rider_locations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  rider_id uuid REFERENCES public.rider_profiles(id),
+  order_id uuid REFERENCES public.orders(id),
+  latitude numeric NOT NULL,
+  longitude numeric NOT NULL,
+  created_at timestamp with time zone DEFAULT now()
+);
+
 -- 2. Enable RLS
 ALTER TABLE public.shops ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rider_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rider_connections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rider_locations ENABLE ROW LEVEL SECURITY;
 
 -- 3. Policies
 -- Shops
 DO $$ BEGIN
     CREATE POLICY "Public shops are viewable by everyone" ON public.shops FOR SELECT USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- Rider Locations
+DO $$ BEGIN
+    CREATE POLICY "Any authenticated user can view rider locations" ON public.rider_locations FOR SELECT USING (true);
+    CREATE POLICY "Riders can insert their own locations" ON public.rider_locations FOR INSERT WITH CHECK (auth.uid() = rider_id);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- Profiles
@@ -4351,8 +3789,6 @@ NOTIFY pgrst, 'reload schema';
       </div>
     );
   }
-
-  if (role === 'merchant') return <MerchantDashboard setView={setView} onSwitchRole={() => setRole('rider')} />;
 
   return (
     <div className="min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative">
@@ -4469,16 +3905,7 @@ NOTIFY pgrst, 'reload schema';
         )}
       </AnimatePresence>
       
-      {/* Background Map layer */}
-      {view === 'move' && (
-        <div className="fixed inset-0 z-0">
-          <AppMapBackground 
-              isOnline={profile.is_online} 
-              activeOrder={activeOrders.length > 0 ? activeOrders[0] : null} 
-              isVisible={true}
-          />
-        </div>
-      )}
+      {/* Background Map layer is managed within specific views to prevent redundant instances */}
       
       {/* HUD Header */}
       <AnimatePresence>
@@ -4696,16 +4123,63 @@ NOTIFY pgrst, 'reload schema';
               </div>
             )}
             {view === 'feed' && (
-              <OrdersFeed 
-                orders={availableOrders} 
-                onAccept={handleOrderAccept} 
-                isOnline={profile?.is_online || false} 
-                surgeMultiplier={surgeMultiplier} 
-                connectionCount={connections.length} 
-                onRefresh={fetchConnectionsAndOrders}
-                riderName={profile?.name}
-                vehicleType={profile?.vehicle_type}
-              />
+              <div className="space-y-6">
+                <AnimatePresence>
+                  {activeOrders.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      className="px-6 pt-6"
+                    >
+                      <BentoCard glow className="bg-black/95 border-[#f59e0b] p-5 shadow-[0_0_50px_rgba(245,158,11,0.2)]">
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex flex-col">
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1 animate-pulse">Active Deployment</span>
+                            <h2 className="text-xl font-headline font-black italic uppercase text-white">Tracking Signal</h2>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <p className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b]">ETA</p>
+                              <p className="text-xl font-mono font-bold text-white leading-none">
+                                {Math.max(1, Math.round((Number(activeOrders[0].distance_km) || 2) * 2.5))}m
+                              </p>
+                            </div>
+                            <div className="p-2.5 bg-[#f59e0b]/10 rounded-xl">
+                              <Activity className="w-5 h-5 text-[#f59e0b] animate-pulse" />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-6">
+                           <TelemetryData label="Carrier" value={profile?.name || 'Unit-1'} />
+                           <TelemetryData label="Objective" value={activeOrders[0].delivery_status.replace('_', ' ').toUpperCase()} />
+                           <TelemetryData label="Payload" value={`R${Number(activeOrders[0].delivery_fee || 0).toFixed(0)}`} />
+                        </div>
+                        <button 
+                          onClick={() => setView('move')}
+                          className="mt-5 w-full py-3.5 bg-zinc-900 border border-zinc-800 text-[#f59e0b] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 hover:bg-zinc-800"
+                        >
+                          OPEN TACTICAL HUD <ArrowRight className="w-4 h-4" />
+                        </button>
+                      </BentoCard>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <OrdersFeed 
+                  orders={availableOrders} 
+                  activeOrders={activeOrders}
+                  onAccept={handleOrderAccept} 
+                  isOnline={profile?.is_online || false} 
+                  surgeMultiplier={surgeMultiplier} 
+                  connectionCount={connections.length} 
+                  onRefresh={fetchConnectionsAndOrders}
+                  activeOrdersCount={activeOrders.length}
+                  riderName={profile?.name}
+                  vehicleType={profile?.vehicle_type}
+                  riderLat={profile?.current_latitude}
+                  riderLng={profile?.current_longitude}
+                />
+              </div>
             )}
             {view === 'move' && (
               activeOrders.length > 0 ? (
@@ -4724,6 +4198,10 @@ NOTIFY pgrst, 'reload schema';
                     orders={activeOrders} 
                     onUpdateStatus={handleUpdateStatus} 
                     onScreenTap={() => setIsGlobalNavVisible(prev => !prev)}
+                    onShowTracking={(id) => {
+                      setSelectedTrackingOrderId(id);
+                      setView('tracking');
+                    }}
                     profile={profile || undefined}
                   />
                 </div>
@@ -4736,6 +4214,12 @@ NOTIFY pgrst, 'reload schema';
               )
             )}
             {view === 'log' && <HistoryView history={history} />}
+            {view === 'tracking' && selectedTrackingOrderId && (
+              <OrderTrackingScreen 
+                orderId={selectedTrackingOrderId} 
+                onBack={() => setView('move')} 
+              />
+            )}
             {view === 'hub' && (
               <>
                 <ProfileView 
@@ -4747,10 +4231,6 @@ NOTIFY pgrst, 'reload schema';
                   onPair={() => {
                     setView('pair');
                   }}
-                  onSwitchRole={() => {
-                    setRole('merchant');
-                    setView('merchant_dash');
-                  }}
                   onToggleOnline={toggleOnline}
                 />
                 <VoiceController 
@@ -4759,21 +4239,6 @@ NOTIFY pgrst, 'reload schema';
                 />
               </>
             )}
-            {view === 'checkout_demo' && (
-              <CheckoutView 
-                onBack={() => setRole('merchant')}
-                onComplete={() => setView('merchant_dash')}
-              />
-            )}
-            {view === 'merchant_dash' && (
-              <MerchantDashboard 
-                setView={setView}
-                onSwitchRole={() => {
-                  setRole('rider');
-                  setView('dash');
-                }} 
-              />
-            )}
             {view === 'pair' && <PairingView onBack={() => setView('hub')} onComplete={handlePair} />}
           </motion.div>
         </AnimatePresence>
@@ -4781,7 +4246,7 @@ NOTIFY pgrst, 'reload schema';
 
       {/* HUD Navigation */}
       <AnimatePresence>
-        {(view !== 'merchant_dash' && (view !== 'move' ? true : isGlobalNavVisible)) && (
+        {(view !== 'move' ? true : isGlobalNavVisible) && (
           <motion.nav 
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

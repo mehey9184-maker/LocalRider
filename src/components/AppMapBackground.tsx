@@ -57,6 +57,7 @@ interface AppMapBackgroundProps {
   riderProfileLat?: number;
   riderProfileLng?: number;
   riderLocation?: [number, number] | null;
+  highlightedOrderId?: string | null;
 }
 
 function InnerMapListener({ onClick }: { onClick?: () => void }) {
@@ -124,7 +125,8 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   onDistanceUpdate, 
   riderProfileLat, 
   riderProfileLng,
-  riderLocation 
+  riderLocation,
+  highlightedOrderId 
 }: AppMapBackgroundProps) {
   const [riderPos, setRiderPos] = useState<[number, number] | null>(
     riderLocation || (riderProfileLat && riderProfileLng ? [riderProfileLat, riderProfileLng] : null)
@@ -593,15 +595,33 @@ export const AppMapBackground = React.memo(function AppMapBackground({
               </div>
             </div>
 
-            <button 
-              onClick={() => {
-                requestGeolocation();
-              }}
-              className="mt-4 w-full py-5 bg-red-600 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-red-500 transition-all active:scale-95 shadow-[0_15px_40px_rgba(220,38,38,0.4)] flex items-center justify-center gap-3"
-            >
-              <Zap className="w-5 h-5 fill-current" />
-              Reset Connection
-            </button>
+            <div className="flex flex-col gap-3 mt-4 w-full">
+              <button 
+                onClick={() => {
+                  requestGeolocation();
+                }}
+                className="w-full py-5 bg-red-600 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-red-500 transition-all active:scale-95 shadow-[0_15px_40px_rgba(220,38,38,0.4)] flex items-center justify-center gap-3"
+              >
+                <Zap className="w-5 h-5 fill-current" />
+                Reset Connection
+              </button>
+              
+              <button 
+                onClick={() => {
+                  setGeoError(false);
+                  setIsFallback(true);
+                  if (riderProfileLat && riderProfileLng) {
+                    setRiderPos([riderProfileLat, riderProfileLng]);
+                  } else {
+                    setRiderPos([-25.9864, 28.2198]);
+                  }
+                  toast.success("Simulation Protocol Engaged. Mock GPS active.");
+                }}
+                className="w-full py-3 bg-zinc-800 text-zinc-400 font-bold uppercase tracking-[0.2em] rounded-xl hover:bg-zinc-700 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2 border border-zinc-700"
+              >
+                Start Simulation Mode
+              </button>
+            </div>
             
             <p className="text-[9px] text-zinc-600 font-black uppercase tracking-widest mt-4">Security Protocol • Error Signal: 403_GEO_BLOCKED</p>
          </div>
@@ -679,6 +699,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
             {allOrders.map((order, idx) => {
               const shopPos: [number, number] = [order.shop_lat || -25.9924, order.shop_lng || 28.2048];
               const custPos: [number, number] | null = order.lat && order.lng ? [order.lat, order.lng] : null;
+              const isHighlight = highlightedOrderId === order.id;
               
               return (
                 <React.Fragment key={order.id}>
@@ -686,10 +707,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                   <Marker 
                     position={shopPos} 
                     icon={L.divIcon({
-                      html: `<div style="background-color: #f59e0b; padding: 4px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 15px rgba(245, 158, 11, 0.6); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: 11px; color: black; width: 28px; height: 28px;">${idx + 1}</div>`,
-                      className: 'order-sequence-marker',
-                      iconSize: [28, 28],
-                      iconAnchor: [14, 14],
+                      html: `<div style="background-color: #f59e0b; padding: 4px; border-radius: 50%; border: ${isHighlight ? '3px' : '2px'} solid white; box-shadow: 0 0 ${isHighlight ? '30px' : '15px'} rgba(245, 158, 11, ${isHighlight ? '1' : '0.6'}); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: ${isHighlight ? '14px' : '11px'}; color: black; width: ${isHighlight ? '36px' : '28px'}; height: ${isHighlight ? '36px' : '28px'}; transform: scale(${isHighlight ? 1.2 : 1}); transition: all 0.3s ease;">${idx + 1}</div>`,
+                      className: isHighlight ? 'order-sequence-marker z-50' : 'order-sequence-marker',
+                      iconSize: isHighlight ? [42, 42] : [28, 28],
+                      iconAnchor: isHighlight ? [21, 21] : [14, 14],
                     })}
                     eventHandlers={{
                       click: () => {
@@ -711,10 +732,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                     <Marker 
                       position={custPos} 
                       icon={L.divIcon({
-                        html: `<div style="background-color: #3b82f6; padding: 4px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 15px rgba(59, 130, 246, 0.6); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: 11px; color: white; width: 24px; height: 24px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
-                        className: 'customer-marker-mini',
-                        iconSize: [24, 24],
-                        iconAnchor: [12, 12],
+                        html: `<div style="background-color: #3b82f6; padding: 4px; border-radius: 50%; border: ${isHighlight ? '3px' : '2px'} solid white; box-shadow: 0 0 ${isHighlight ? '30px' : '15px'} rgba(59, 130, 246, ${isHighlight ? '1' : '0.6'}); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: ${isHighlight ? '14px' : '11px'}; color: white; width: ${isHighlight ? '32px' : '24px'}; height: ${isHighlight ? '32px' : '24px'}; transform: scale(${isHighlight ? 1.2 : 1}); transition: all 0.3s ease;"><svg width="${isHighlight ? '16' : '12'}" height="${isHighlight ? '16' : '12'}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
+                        className: isHighlight ? 'customer-marker-mini z-50' : 'customer-marker-mini',
+                        iconSize: isHighlight ? [38, 38] : [24, 24],
+                        iconAnchor: isHighlight ? [19, 19] : [12, 12],
                       })}
                       eventHandlers={{
                         click: () => {

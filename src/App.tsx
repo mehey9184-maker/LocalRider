@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from 'react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
 import { 
   Smartphone, 
@@ -121,7 +121,7 @@ const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 5, delay = 100
   }
 };
 
-const StatusBadge = ({ status }: { status: DeliveryStatus }) => {
+const StatusBadge = React.memo(({ status }: { status: DeliveryStatus }) => {
   const styles: Record<DeliveryStatus, string> = {
     finding_rider: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
     accepted: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
@@ -135,9 +135,9 @@ const StatusBadge = ({ status }: { status: DeliveryStatus }) => {
       {status.replace('_', ' ')}
     </span>
   );
-};
+});
 
-const TelemetryData = ({ label, value, unit }: { label: string, value: string | number, unit?: string }) => (
+const TelemetryData = React.memo(({ label, value, unit }: { label: string, value: string | number, unit?: string }) => (
   <div className="flex flex-col">
     <span className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] mb-1">{label}</span>
     <div className="flex items-baseline gap-1">
@@ -145,9 +145,9 @@ const TelemetryData = ({ label, value, unit }: { label: string, value: string | 
       {unit && <span className="text-xs text-zinc-400 font-bold uppercase">{unit}</span>}
     </div>
   </div>
-);
+));
 
-const BentoCard = ({ children, className, glow = false, ...props }: { children: React.ReactNode, className?: string, glow?: boolean } & React.HTMLAttributes<HTMLDivElement>) => (
+const BentoCard = React.memo(({ children, className, glow = false, ...props }: { children: React.ReactNode, className?: string, glow?: boolean } & React.HTMLAttributes<HTMLDivElement>) => (
   <div {...props} className={cn(
     "bg-[#0D0D0D] border border-zinc-800 rounded-3xl p-6 relative overflow-hidden group transition-all",
     glow && "shadow-[0_0_40px_rgba(57,255,20,0.1)] border-[#f59e0b]/20",
@@ -156,7 +156,7 @@ const BentoCard = ({ children, className, glow = false, ...props }: { children: 
     {glow && <div className="absolute -top-10 -right-10 w-32 h-32 bg-[#f59e0b]/5 rounded-full blur-3xl" />}
     <div className="relative z-10">{children}</div>
   </div>
-);
+));
 
 const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken, disabled = false }: { 
   label: string, 
@@ -483,7 +483,7 @@ const SOSButton = ({ riderName }: { riderName: string }) => {
   );
 };
 
-const Dashboard = ({ 
+const Dashboard = React.memo(({ 
   profile, 
   todayEarnings, 
   totalDeliveries, 
@@ -719,9 +719,9 @@ const Dashboard = ({
       </div>
     </div>
   );
-};
+});
 
-const OrdersFeed = ({ 
+const OrdersFeed = React.memo(({ 
   orders,
   activeOrders = [],
   onAccept, 
@@ -752,9 +752,11 @@ const OrdersFeed = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showNearbyMap, setShowNearbyMap] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [sortMethod, setSortMethod] = useState<'distance' | 'fee' | 'eta'>('distance');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'active'>('available');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'accepted' | 'picked_up'>('available');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const isLimitReached = activeOrdersCount >= 2;
@@ -768,20 +770,22 @@ const OrdersFeed = ({
   const filteredAndSortedOrders = useMemo(() => {
     // Combine available and active orders for comprehensive filtering
     let combined = [...orders];
-    if (statusFilter === 'all' || statusFilter === 'active') {
+    if (statusFilter !== 'available') {
       combined = [...combined, ...activeOrders.filter(ao => !orders.some(o => o.id === ao.id))];
     }
 
     let result = combined.filter(o => 
-      o.restaurant_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.product_name?.toLowerCase().includes(searchQuery.toLowerCase())
+      o.restaurant_name?.toLowerCase().includes(deferredSearchQuery.toLowerCase()) ||
+      o.customer_name?.toLowerCase().includes(deferredSearchQuery.toLowerCase()) ||
+      o.product_name?.toLowerCase().includes(deferredSearchQuery.toLowerCase())
     );
 
     if (statusFilter === 'available') {
       result = result.filter(o => o.delivery_status === 'none' || o.delivery_status === 'finding_rider');
-    } else if (statusFilter === 'active') {
-      result = result.filter(o => o.delivery_status === 'accepted' || o.delivery_status === 'picked_up');
+    } else if (statusFilter === 'accepted') {
+      result = result.filter(o => o.delivery_status === 'accepted');
+    } else if (statusFilter === 'picked_up') {
+      result = result.filter(o => o.delivery_status === 'picked_up');
     }
 
     result = [...result].sort((a, b) => {
@@ -805,7 +809,7 @@ const OrdersFeed = ({
     });
 
     return result;
-  }, [orders, activeOrders, searchQuery, sortMethod, statusFilter]);
+  }, [orders, activeOrders, deferredSearchQuery, sortMethod, statusFilter]);
 
   const handleMarkerClick = (id: string) => {
     setHighlightedOrderId(id);
@@ -885,7 +889,7 @@ const OrdersFeed = ({
                   sortMethod === 'eta' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900 border-zinc-800 text-zinc-500"
                 )}
               >
-                ETA
+                ETA (Ascending)
               </button>
             </div>
           </div>
@@ -911,13 +915,22 @@ const OrdersFeed = ({
               Available
             </button>
             <button 
-              onClick={() => setStatusFilter('active')}
+              onClick={() => setStatusFilter('accepted')}
               className={cn(
                 "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
-                statusFilter === 'active' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
+                statusFilter === 'accepted' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
               )}
             >
-              In Progress
+              Accepted
+            </button>
+            <button 
+              onClick={() => setStatusFilter('picked_up')}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                statusFilter === 'picked_up' ? "bg-blue-500/20 text-blue-400 border-blue-500/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
+              )}
+            >
+              Picked Up
             </button>
           </div>
         </div>
@@ -954,6 +967,7 @@ const OrdersFeed = ({
               riderProfileLng={riderLng} 
               allOrders={filteredAndSortedOrders}
               onOrderMarkerClick={handleMarkerClick}
+              highlightedOrderId={highlightedOrderId}
             />
             
             <div className="absolute bottom-6 left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
@@ -978,7 +992,7 @@ const OrdersFeed = ({
         >
           <BentoCard className="w-full max-w-sm border-[#f59e0b]/30">
             <ShieldAlert className="w-12 h-12 text-[#f59e0b] mb-4 mx-auto" />
-            <h3 className="text-xl font-black italic uppercase text-center text-white mb-2">Initiate Mission?</h3>
+            <h3 className="text-xl font-black italic text-center text-white mb-2">Are you sure you want to accept this mission?</h3>
             <div className="flex justify-center items-center gap-2 mb-4">
               <span className="text-sm font-bold text-white uppercase">{riderName || 'Rider'}</span>
               {vehicleType && (
@@ -1051,14 +1065,19 @@ const OrdersFeed = ({
         </div>
       ) : (
         <div className="space-y-4">
-          {filteredAndSortedOrders.map(order => (
-            <motion.div 
-              key={order.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="relative overflow-hidden rounded-[2rem]"
-              ref={el => scrollRefs.current[order.id] = el}
-            >
+          <AnimatePresence mode="popLayout">
+            {filteredAndSortedOrders.map(order => (
+              <motion.div 
+                layout
+                key={order.id}
+                initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
+                transition={{ duration: 0.3, type: "spring", bounce: 0.3 }}
+                className="relative overflow-hidden rounded-[2rem]"
+                ref={el => scrollRefs.current[order.id] = el}
+                onClick={() => setHighlightedOrderId(order.id)}
+              >
               {/* Revealed Quick Actions */}
               <div className="absolute inset-0 flex items-center justify-end px-6 gap-3 bg-zinc-900 border border-zinc-800 rounded-[2rem]">
                 <button 
@@ -1082,6 +1101,7 @@ const OrdersFeed = ({
               </div>
 
               <motion.div
+                layout
                 drag="x"
                 dragConstraints={{ left: -180, right: 0 }}
                 dragElastic={0.1}
@@ -1143,10 +1163,26 @@ const OrdersFeed = ({
                                <Activity size={10} className="text-emerald-500 animate-pulse" />
                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-tighter">
                                  {(() => {
-                                   // formula: (distance_km / 20) * 60 minutes
-                                   const dist = Number(order.distance_km || 1);
-                                   const etaMinutes = Math.ceil((dist / 20) * 60);
-                                   return `${etaMinutes}M ETA`;
+                                    const isAccepted = order.delivery_status === 'accepted' || order.delivery_status === 'picked_up';
+                                    let totalDist = Number(order.distance_km || 1);
+                                    
+                                    const rad = Math.PI / 180;
+                                    const R = 6371;
+                                    const getDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+                                      const dLat = (lat2 - lat1) * rad;
+                                      const dLon = (lon2 - lon1) * rad;
+                                      const a = Math.sin(dLat/2)**2 + Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
+                                      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                                    };
+
+                                    if (isAccepted && riderLat && riderLng && order.lat && order.lng) {
+                                      totalDist = getDist(riderLat, riderLng, order.lat, order.lng);
+                                    } else if (!isAccepted && riderLat && riderLng && order.shop_lat && order.shop_lng && order.lat && order.lng) {
+                                      totalDist = getDist(riderLat, riderLng, order.shop_lat, order.shop_lng) + getDist(order.shop_lat, order.shop_lng, order.lat, order.lng);
+                                    }
+
+                                    const etaMinutes = Math.max(1, Math.ceil((totalDist / 20) * 60));
+                                    return `${etaMinutes}M ETA`;
                                  })()}
                                </span>
                             </div>
@@ -1154,8 +1190,19 @@ const OrdersFeed = ({
                         </div>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right group/fee relative cursor-help">
                       <div className="text-2xl font-headline font-black italic text-[#f59e0b] tracking-tighter">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
+                      <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-2xl opacity-0 group-hover/fee:opacity-100 pointer-events-none transition-opacity z-50 text-left">
+                        <p className="text-[10px] text-zinc-400 font-bold mb-2 uppercase tracking-widest">Fee Breakdown</p>
+                        <div className="flex justify-between text-xs mb-1"><span className="text-zinc-500">Base Pay</span><span className="text-white font-mono">R15.00</span></div>
+                        <div className="flex justify-between text-xs mb-1"><span className="text-zinc-500">Distance</span><span className="text-white font-mono">R{(Number(order.distance_km || 1) * 5).toFixed(2)}</span></div>
+                        {order.surge_multiplier && order.surge_multiplier > 1 && (
+                          <div className="flex justify-between text-xs mt-1 pt-1 border-t border-zinc-700 text-[#f59e0b]">
+                            <span className="font-bold">Surge ({order.surge_multiplier.toFixed(1)}x)</span>
+                            <span className="font-mono">R{((Number(order.delivery_fee) || 0) - (15 + Number(order.distance_km || 1) * 5)).toFixed(2)}</span>
+                          </div>
+                        )}
+                      </div>
                       <div className={cn(
                         "mt-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest text-center",
                         order.delivery_fee > 5 ? "bg-orange-500/20 text-orange-400 border border-orange-500/30" : "bg-green-500/20 text-green-400 border border-green-500/30"
@@ -1187,6 +1234,64 @@ const OrdersFeed = ({
                     </div>
                   </div>
 
+                  <div 
+                    className="mb-4 py-2 border border-zinc-800/50 bg-zinc-900/40 rounded-xl cursor-pointer hover:bg-zinc-800/80 transition-colors flex items-center justify-center gap-2"
+                    onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
+                  >
+                    <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] group-hover:text-white transition-colors">
+                      {expandedOrderId === order.id ? "Minimize Mission Intel" : "Expand Mission Intel"}
+                    </span>
+                  </div>
+
+                  <AnimatePresence>
+                    {expandedOrderId === order.id && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="overflow-hidden mb-6"
+                      >
+                        <div className="pt-2 pb-4 space-y-4">
+                          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
+                            <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Customer Profile</h4>
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[#f59e0b] font-black">
+                                {order.customer_name?.charAt(0) || 'C'}
+                              </div>
+                              <div>
+                                <div className="text-sm font-bold text-white uppercase tracking-tight">{order.customer_name || 'Classified'}</div>
+                                <div className="text-[10px] text-zinc-500 font-mono">{order.phone || 'Comms Offline'}</div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
+                            <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Drop-off Coordinates</h4>
+                            <p className="text-sm text-zinc-300 font-medium leading-relaxed">
+                              {order.address}<br />
+                              <span className="text-zinc-500">{order.city}</span>
+                            </p>
+                          </div>
+                          
+                          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
+                            <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Full Payload Request</h4>
+                            <ul className="space-y-2">
+                              {order.items && order.items.length > 0 ? order.items.map((it, i) => (
+                                <li key={i} className="text-xs text-zinc-400 flex gap-2">
+                                  <span className="text-[#f59e0b]">-</span> {it}
+                                </li>
+                              )) : (
+                                <li className="text-xs text-zinc-400 flex gap-2">
+                                  <span className="text-[#f59e0b]">-</span> {order.product_name}
+                                </li>
+                              )}
+                            </ul>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
                   <SwipeButton 
                     label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT"} 
                     onComplete={() => {
@@ -1204,11 +1309,12 @@ const OrdersFeed = ({
               </motion.div>
             </motion.div>
           ))}
+          </AnimatePresence>
         </div>
       )}
     </div>
   );
-};
+});
 
 const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
   const center: [number, number] = lat && lng ? [lat, lng] : [-25.9894, 28.2148];
@@ -1710,6 +1816,18 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               color="#f59e0b"
               resetToken={currentOrder.delivery_status}
             />
+            {currentOrder.delivery_status !== 'picked_up' && currentOrder.delivery_status !== 'delivered' && (
+              <button 
+                onClick={() => {
+                  if (window.confirm('Are you sure you want to abort this mission?')) {
+                    onUpdateStatus(currentOrder.id, 'finding_rider');
+                  }
+                }}
+                className="w-full mt-4 py-3 border border-red-500/20 text-red-500/80 hover:bg-red-500/10 hover:text-red-500 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
+              >
+                Abort Mission
+              </button>
+            )}
           </div>
         </motion.div>
       </AnimatePresence>
@@ -1725,7 +1843,7 @@ const StarRating = ({ rating }: { rating: number }) => (
   </div>
 );
 
-const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
+const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
   const chartData = useMemo(() => {
     // Group history by day of week
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1804,37 +1922,46 @@ const HistoryView = ({ history }: { history: DeliveryOrder[] }) => {
         {history.length === 0 ? (
           <div className="py-20 text-center opacity-20 italic text-sm">No archive data synced.</div>
         ) : (
-          history.map(item => (
-            <BentoCard key={item.id} className="p-4 bg-zinc-900/10 border-zinc-800/40">
-              <div className="flex items-center justify-between">
-                <div className="flex items-start gap-4 flex-1 min-w-0 mr-4">
-                  <div className="p-2 bg-zinc-800 rounded-lg shrink-0 mt-1">
-                    <CheckCircle className="w-4 h-4 text-[#f59e0b]" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-black italic text-zinc-200 uppercase truncate w-full">{item.restaurant_name}</h4>
-                    <p className="text-[9px] text-zinc-500 font-mono truncate w-full">{item.address}, {item.city}</p>
-                    <HistoryMap order={item} />
-                    {item.merchant_rating && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <StarRating rating={item.merchant_rating} />
-                        {item.merchant_feedback && <span className="text-[8px] text-zinc-400 font-bold italic truncate max-w-[150px]">"{item.merchant_feedback}"</span>}
+          <div className="space-y-4">
+            {history.map((item, i) => (
+              <motion.div 
+                key={item.id}
+                initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.3, delay: i * 0.05 }}
+              >
+                <BentoCard className="p-4 bg-zinc-900/10 border-zinc-800/40">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-start gap-4 flex-1 min-w-0 mr-4">
+                      <div className="p-2 bg-zinc-800 rounded-lg shrink-0 mt-1">
+                        <CheckCircle className="w-4 h-4 text-[#f59e0b]" />
                       </div>
-                    )}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-sm font-black italic text-zinc-200 uppercase truncate w-full">{item.restaurant_name}</h4>
+                        <p className="text-[9px] text-zinc-500 font-mono truncate w-full">{item.address}, {item.city}</p>
+                        <HistoryMap order={item} />
+                        {item.merchant_rating && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <StarRating rating={item.merchant_rating} />
+                            {item.merchant_feedback && <span className="text-[8px] text-zinc-400 font-bold italic truncate max-w-[150px]">"{item.merchant_feedback}"</span>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-base font-black italic text-[#f59e0b]">R{Number(item.delivery_fee || 0).toFixed(2)}</span>
+                      <p className="text-[8px] text-zinc-600 font-mono">CODE-{item.id.slice(-4).toUpperCase()}</p>
+                    </div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-base font-black italic text-[#f59e0b]">R{Number(item.delivery_fee || 0).toFixed(2)}</span>
-                  <p className="text-[8px] text-zinc-600 font-mono">CODE-{item.id.slice(-4).toUpperCase()}</p>
-                </div>
-              </div>
-            </BentoCard>
-          ))
+                </BentoCard>
+              </motion.div>
+            ))}
+          </div>
         )}
       </div>
     </div>
   );
-};
+});
 
 const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingChange: (r: number) => void }) => (
   <div className="flex gap-2">
@@ -1855,7 +1982,7 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
   </div>
 );
 
-const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline }: { 
+const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
   now: number,
@@ -2092,7 +2219,7 @@ const ProfileView = ({ profile, connections, now, onUpdateVehicle, onLogout, onP
       </div>
     </div>
   );
-};
+});
 
 const OrderTrackingScreen = ({ orderId, onBack }: { orderId: string, onBack: () => void }) => {
   const [order, setOrder] = useState<DeliveryOrder | null>(null);
@@ -3081,6 +3208,10 @@ export default function App() {
            if (activeOrders.length <= 1) {
              setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
            }
+        } else if (status === 'finding_rider') {
+           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
+           setAvailableOrders(prev => [...prev, {...orderToUpdate, delivery_status: 'finding_rider'}]);
+           toast.success('Mission aborted. Signal released.');
         } else {
            toast.success('Vector updated.');
         }
@@ -3115,17 +3246,16 @@ export default function App() {
           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
           setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
           
-          // Use the latest count from the setActiveOrders functional update if needed, 
-          // but here we can just check the current activeOrders length minus the one we just finished.
           const remainingMissions = activeOrders.length - 1;
-          
-          toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
-          // If no more orders, prompt rating
-          if (remainingMissions <= 0) {
-             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
+          if (remainingMissions === 0) {
+            setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
           }
+          toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
+        } else if (status === 'finding_rider') {
+           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
+           toast.success('Mission aborted. Signal released.');
         } else {
-          toast.success('Vector updated.');
+          toast.success('Phase sync confirmed');
         }
       }
     } catch (e: unknown) {

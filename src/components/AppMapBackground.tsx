@@ -70,10 +70,11 @@ function InnerMapListener({ onClick }: { onClick?: () => void }) {
 }
 
 // Map Auto-Panning and Rotation Logic
-function MapController({ riderPos, activeOrder }: { riderPos: [number, number] | null, activeOrder: DeliveryOrder | null | undefined }) {
+function MapController({ riderPos, activeOrder, highlightedOrder }: { riderPos: [number, number] | null, activeOrder: DeliveryOrder | null | undefined, highlightedOrder?: DeliveryOrder | null }) {
   const map = useMapEvents({});
   const lastPos = useRef<[number, number] | null>(null);
   const prevOrder = useRef<string | null | undefined>(null);
+  const prevHighlighted = useRef<string | null | undefined>(null);
 
   // Distance calculating utility
   const getDistance = (p1: [number, number], p2: [number, number]) => {
@@ -89,6 +90,14 @@ function MapController({ riderPos, activeOrder }: { riderPos: [number, number] |
   };
 
   useEffect(() => {
+    if (highlightedOrder && highlightedOrder.id !== prevHighlighted.current) {
+      if (highlightedOrder.shop_lat && highlightedOrder.shop_lng) {
+        map.setView([highlightedOrder.shop_lat, highlightedOrder.shop_lng], 16, { animate: true });
+        prevHighlighted.current = highlightedOrder.id;
+        return;
+      }
+    }
+    
     if (riderPos) {
       const orderChanged = prevOrder.current !== activeOrder?.id;
       let significantMove = false;
@@ -107,8 +116,9 @@ function MapController({ riderPos, activeOrder }: { riderPos: [number, number] |
       
       lastPos.current = riderPos;
       prevOrder.current = activeOrder?.id;
+      if (!highlightedOrder) prevHighlighted.current = null;
     }
-  }, [riderPos, map, activeOrder]);
+  }, [riderPos, map, activeOrder, highlightedOrder]);
 
   return null;
 }
@@ -153,14 +163,14 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   const [isGoogleView, setIsGoogleView] = useState(false);
   const [isNetworkOffline, setIsNetworkOffline] = useState(!navigator.onLine);
   
-  // Custom Tembisa Tile Preloader (Browser Native Caching)
+  // Custom Regional Tile Preloader (Browser Native Caching)
   useEffect(() => {
-    // Tembisa roughly 28.2... -26.0...
+    // Tembisa, Ivory Park, Kaalfontein Sector
     // Preload basic z14-16 tiles aggressively into browser cache for the pilot region
-    const preloadTembisa = () => {
+    const preloadRegion = () => {
       const z = 15;
-      const tLat = -26.0;
-      const tLng = 28.22;
+      const tLat = -25.993; // Centered between Ivory Park and Tembisa
+      const tLng = 28.210;
       const n = Math.pow(2, z);
       const x = Math.floor((tLng + 180) / 360 * n);
       const latRad = tLat * Math.PI / 180;
@@ -174,14 +184,14 @@ export const AppMapBackground = React.memo(function AppMapBackground({
           img.src = `https://${s}.basemaps.cartocdn.com/light_all/${z}/${x+dx}/${y+dy}.png`;
         }
       }
-      console.log("TEMBISA PILOT CACHE: Preloaded region tiles for offline resilience.");
+      console.log("REGION PILOT CACHE: Preloaded Tembisa, Ivory Park & Kaalfontein sector tiles.");
     };
     
     // Only run when idle to prevent boot lag
     if ('requestIdleCallback' in window) {
-      window.requestIdleCallback(preloadTembisa);
+      window.requestIdleCallback(preloadRegion);
     } else {
-      setTimeout(preloadTembisa, 5000);
+      setTimeout(preloadRegion, 5000);
     }
   }, []);
   
@@ -239,10 +249,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
 
   const isPickedUp = activeOrder?.delivery_status === 'picked_up';
   
-  // Fake destination around Tembisa
+  // Refined regional destination fallbacks (Ivory Park / Tembisa / Kaalfontein)
   const targetPos: [number, number] | null = useMemo(() => {
     return activeOrder 
-      ? (isPickedUp ? [-25.9894, 28.2148] : [-25.9864, 28.2168]) 
+      ? (isPickedUp ? [activeOrder.lat || -25.9933, activeOrder.lng || 28.2125] : [activeOrder.shop_lat || -25.9922, activeOrder.shop_lng || 28.2045]) 
       : null;
   }, [activeOrder, isPickedUp]);
 
@@ -263,9 +273,9 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       if (riderProfileLat && riderProfileLng) {
         setRiderPos([riderProfileLat, riderProfileLng]);
       } else {
-        // Mock movement for demo if geolocation is missing (Tembisa Sector)
-        const mockLat = -25.9864 + (Math.random() - 0.5) * 0.005;
-        const mockLng = 28.2198 + (Math.random() - 0.5) * 0.005;
+        // Mock movement for demo if geolocation is missing (Region Center)
+        const mockLat = -25.9964 + (Math.random() - 0.5) * 0.005;
+        const mockLng = 28.2268 + (Math.random() - 0.5) * 0.005;
         setRiderPos([mockLat, mockLng]);
       }
       setLastUpdate(Date.now());
@@ -276,10 +286,12 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       (pos) => {
         const newLat = pos.coords.latitude;
         const newLng = pos.coords.longitude;
+        const accuracy = pos.coords.accuracy;
         
-        // Jitter Reduction: Apply a 0.2 Alpha Low-Pass Filter if we have a previous position
-        if (prevPos.current) {
-          const alpha = 0.25; // Slightly more responsive
+        // Jitter Reduction: Apply a 0.2 Alpha Low-Pass Filter
+        // Only trust coordinates with accuracy < 100m for smoothing
+        if (accuracy < 100 && prevPos.current) {
+          const alpha = 0.25; 
           const filteredLat = (alpha * newLat) + ((1 - alpha) * prevPos.current[0]);
           const filteredLng = (alpha * newLng) + ((1 - alpha) * prevPos.current[1]);
           setRiderPos([filteredLat, filteredLng]);
@@ -297,19 +309,22 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         if (err.code === 1) {
           setGeoError(true);
         } else if (err.code === 2 || err.code === 3) {
-          // Timeout or unavailable - show interference but don't block fully
-          setLastUpdate(prev => prev - 5000); // artificially degrade signal
-          toast.warning(`GPS Warning: ${err.message}. Open app in a new tab if it persists.`, { id: 'gps_warn' });
+          // Timeout or unavailable - show interference
+          setLastUpdate(prev => prev - 5000); 
           
-          // Try to fallback to mock if no initial position was ever found
+          // Try to fallback to regional center if no initial position was found
           if (!prevPos.current && !riderProfileLat) {
-             const mockLat = -25.9864 + (Math.random() - 0.5) * 0.005;
-             const mockLng = 28.2198 + (Math.random() - 0.5) * 0.005;
+             const mockLat = -25.9964 + (Math.random() - 0.5) * 0.005;
+             const mockLng = 28.2268 + (Math.random() - 0.5) * 0.005;
              setRiderPos([mockLat, mockLng]);
           }
         }
       },
-      { enableHighAccuracy: true, timeout: 30000, maximumAge: Infinity }
+      { 
+        enableHighAccuracy: true, 
+        timeout: 15000, 
+        maximumAge: 0 
+      }
     );
     
     return watchId;
@@ -533,9 +548,9 @@ export const AppMapBackground = React.memo(function AppMapBackground({
             <div className="absolute inset-0 bg-[#f59e0b]/10 blur-2xl animate-pulse" />
           </div>
           <div>
-            <p className="text-sm font-sans font-medium text-white mb-2">{isNetworkOffline ? 'Network Missing' : 'Signal Lost'}</p>
+            <p className="text-sm font-sans font-medium text-white mb-2">{isNetworkOffline ? 'Network Missing' : 'Searching for signal'}</p>
             <p className="text-xs text-zinc-400 font-sans leading-relaxed">
-              {isNetworkOffline ? 'Switching to local cache protocols. Awaiting uplink...' : 'System is offline. Awaiting activation...'}
+              {isNetworkOffline ? 'Switching to local mode. Awaiting connection...' : 'System is offline. Awaiting start...'}
             </p>
             {lastUpdate && (
               <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mt-4">
@@ -565,16 +580,16 @@ export const AppMapBackground = React.memo(function AppMapBackground({
 
             <div className="relative z-10">
               <h2 className="text-[18px] font-black uppercase tracking-[0.4em] text-red-500 mb-3 italic">
-                Uplink Denied
+                Location access denied
               </h2>
               <div className="mb-4 inline-flex items-center gap-2 px-3 py-1 bg-red-500/10 border border-red-500/20 rounded-lg">
                 <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
                 <span className="text-[9px] font-black uppercase tracking-widest text-red-500">
-                  Signal Status: CRITICAL_FAILURE
+                  Signal Status: FAILED
                 </span>
               </div>
               <p className="text-[11px] text-zinc-400 font-bold leading-relaxed uppercase tracking-widest px-4">
-                Orbital positioning requires active authorization. Location services are restricted or signal is blocked by heavy interference.
+                We need location access to show the map. Please enable location services in your browser settings.
               </p>
               
               <div className="mt-6 flex flex-col gap-3">
@@ -603,7 +618,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                 className="w-full py-5 bg-red-600 text-white font-black uppercase tracking-[0.3em] rounded-2xl hover:bg-red-500 transition-all active:scale-95 shadow-[0_15px_40px_rgba(220,38,38,0.4)] flex items-center justify-center gap-3"
               >
                 <Zap className="w-5 h-5 fill-current" />
-                Reset Connection
+                Retry connection
               </button>
               
               <button 
@@ -634,7 +649,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       <div className={`${rootClassName} flex items-center justify-center bg-zinc-900 z-[900]`}>
          <div className="flex flex-col items-center gap-4 text-zinc-500 bg-black/80 backdrop-blur-md p-8 rounded-3xl border border-zinc-800 shadow-2xl">
             <Zap className="w-12 h-12 animate-pulse text-[#f59e0b]" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] text-center">Acquiring Lock<br/><span className="text-zinc-500">Orbital Positioning</span></p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] text-center">Finding location<br/><span className="text-zinc-500">Updating GPS</span></p>
          </div>
       </div>
     );
@@ -665,7 +680,11 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         <InnerMapListener onClick={() => {
           if (onMapClick) onMapClick();
         }} />
-        <MapController riderPos={riderPos} activeOrder={activeOrder} />
+        <MapController 
+          riderPos={riderPos} 
+          activeOrder={activeOrder} 
+          highlightedOrder={allOrders?.find(o => o.id === highlightedOrderId)} 
+        />
         {isGoogleView ? (
           <TileLayer
             url="https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
@@ -681,15 +700,15 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         
         <Marker position={riderPos} icon={mockRiderIcon} zIndexOffset={100} />
         
-        {/* Delivery Zone Boundaries (Central Dispatch Node: Tembisa) */}
+        {/* Delivery Zone Boundaries (Tembisa, Ivory Park & Kaalfontein Sector) */}
         <Circle 
-          center={[-25.9924, 28.2048]} 
-          radius={3000} 
+          center={[-25.993, 28.210]} 
+          radius={4000} 
           pathOptions={{ color: '#22c55e', weight: 1, fillColor: '#22c55e', fillOpacity: 0.03, dashArray: '10, 20' }} 
         />
         <Circle 
-          center={[-25.9924, 28.2048]} 
-          radius={6000} 
+          center={[-25.993, 28.210]} 
+          radius={8000} 
           pathOptions={{ color: '#f59e0b', weight: 1, fillColor: '#f59e0b', fillOpacity: 0.02, dashArray: '5, 15' }} 
         />
         
@@ -697,7 +716,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         {!activeOrder && allOrders.length > 0 && (
           <>
             {allOrders.map((order, idx) => {
-              const shopPos: [number, number] = [order.shop_lat || -25.9924, order.shop_lng || 28.2048];
+              const shopPos: [number, number] = [order.shop_lat || -25.9922, order.shop_lng || 28.2045];
               const custPos: [number, number] | null = order.lat && order.lng ? [order.lat, order.lng] : null;
               const isHighlight = highlightedOrderId === order.id;
               
@@ -715,13 +734,13 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                     eventHandlers={{
                       click: () => {
                         onOrderMarkerClick?.(order.id);
-                        toast.info(`Target: ${order.restaurant_name}`, { description: "Signal cross-referenced to mission manifest." });
+                        toast.info(`Target: ${order.restaurant_name}`, { description: "Order location found." });
                       }
                     }}
                   >
                     <Popup className="custom-popup">
                       <div className="p-2">
-                        <p className="text-[10px] font-black uppercase text-[#f59e0b] mb-1">RESTAURANT NODE {idx + 1}</p>
+                        <p className="text-[10px] font-black uppercase text-[#f59e0b] mb-1">STORE {idx + 1}</p>
                         <p className="text-xs font-bold text-white uppercase italic">{order.restaurant_name}</p>
                       </div>
                     </Popup>
@@ -740,13 +759,13 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                       eventHandlers={{
                         click: () => {
                           onOrderMarkerClick?.(order.id);
-                          toast.info(`Destination: ${order.customer_name || 'Customer'}`, { description: "Drop-off vector identified." });
+                          toast.info(`Destination: ${order.customer_name || 'Customer'}`, { description: "Drop-off area identified." });
                         }
                       }}
                     >
                       <Popup className="custom-popup">
                         <div className="p-2">
-                          <p className="text-[10px] font-black uppercase text-[#3b82f6] mb-1">CUSTOMER NODE {idx + 1}</p>
+                          <p className="text-[10px] font-black uppercase text-[#3b82f6] mb-1">CUSTOMER {idx + 1}</p>
                           <p className="text-xs font-bold text-white uppercase italic">{order.customer_name || 'Anonymous'}</p>
                         </div>
                       </Popup>
@@ -766,7 +785,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
             
             {/* Draw optimized route sequence lines connecting rider and points */}
             <Polyline 
-              positions={[riderPos, ...allOrders.map(o => [o.shop_lat || -25.9924, o.shop_lng || 28.2048])] as [number, number][]}
+              positions={[riderPos, ...allOrders.map(o => [o.shop_lat || -25.9922, o.shop_lng || 28.2045])] as [number, number][]}
               pathOptions={{
                 color: '#f59e0b',
                 weight: 3,
@@ -833,8 +852,8 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                  ))}
               </div>
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]/80 text-center px-8">
-                 SCANNING SECTOR [ALPHA]... <br/>
-                 NO UNASSIGNED SIGNALS DETECTED
+                 Searching for orders... <br/>
+                 Looking for new deliveries
               </span>
            </div>
         </div>
@@ -852,7 +871,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
             <div className="bg-blue-600/90 backdrop-blur-md px-6 py-2 rounded-full border border-blue-400/30 flex items-center gap-3 shadow-2xl">
               <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
               <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white">
-                Offline Mode • Navigating via Cached Uplink
+                Offline Mode • Using saved map
               </span>
             </div>
           </motion.div>
@@ -894,19 +913,19 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         )}>
            {(!isHealthy || isInterference) && <Activity size={10} className="animate-pulse" />}
            <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
-             {isHealthy && !isNetworkOffline ? "Link Stable" : isNetworkOffline ? "Local Cache" : isStale ? "OUT OF RANGE" : "INTERFERENCE"}
+             {isHealthy && !isNetworkOffline ? "Connection Stable" : isNetworkOffline ? "Using Offline Data" : isStale ? "NO SIGNAL" : "POOR SIGNAL"}
            </span>
            {isHealthy && <Radar size={10} className="opacity-40" />}
         </div>
 
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/5 border border-blue-500/20 backdrop-blur-md">
            <Zap size={10} className="text-blue-500 fill-blue-500" />
-           <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-500/80">MISSION DATA CACHED</span>
+           <span className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-500/80">ORDER UPDATED</span>
         </div>
 
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/5 border border-emerald-500/20 backdrop-blur-md">
            <Activity size={10} className="text-emerald-500" />
-           <span className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-500/80">PRE-CACHING MAP TILES</span>
+           <span className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-500/80">MAP LIVE</span>
         </div>
       </div>
     </div>
@@ -925,7 +944,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                <div className="absolute inset-0 bg-gradient-to-br from-zinc-900/50 to-transparent pointer-events-none" />
                
                <div className="flex items-center justify-between relative z-10">
-                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-[#f59e0b] italic">TACTICAL NAV</span>
+                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-[#f59e0b] italic">NAVIGATION LIVE</span>
                </div>
 
                <div className="flex items-start gap-4 relative z-10">

@@ -1,6 +1,6 @@
 {
   "name": "LocalEats Rider",
-  "description": "Tembisa Pilot: A high-performance, mobile-first delivery application for cyclists using Supabase as the realtime backend. Localized for Tembisa sector operations.",
+  "description": "Tembisa, Kaalfontein & Ivory Park Pilot: A high-performance, mobile-first delivery application for cyclists using Supabase as the realtime backend. Localized for the Tembisa and Ivory Park sector operations.",
   "requestFramePermissions": ["geolocation"],
   "majorCapabilities": []
 }

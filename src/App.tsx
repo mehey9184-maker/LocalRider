@@ -38,7 +38,8 @@ import {
   EyeOff,
   Phone,
   ExternalLink,
-  Navigation2
+  Navigation2,
+  ShieldCheck,
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
@@ -533,8 +534,8 @@ const Dashboard = React.memo(({
                <ShieldAlert className="w-6 h-6" />
             </div>
             <div className="flex-1">
-               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">Grid Restricted</h4>
-               <p className="text-sm font-bold text-white/70 italic leading-tight">No merchant tether detected. Link in Hub to scan sector.</p>
+               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">No Connections Found</h4>
+               <p className="text-sm font-bold text-white/70 italic leading-tight">You haven't connected to any stores yet. Go to the Hub to link your account.</p>
             </div>
             <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-red-500 transition-colors" />
          </motion.div>
@@ -545,8 +546,8 @@ const Dashboard = React.memo(({
           <div className="flex items-center gap-4">
             <ShieldAlert className="w-6 h-6 shrink-0" />
             <div className="flex flex-col">
-              <span className="text-[11px] font-black uppercase tracking-widest leading-none mb-1">Status: Verification Pending</span>
-              <span className="text-sm font-bold leading-tight text-white/80 italic">Fleet HQ is reviewing your registry uplink. Access restricted.</span>
+              <span className="text-[11px] font-black uppercase tracking-widest leading-none mb-1">Status: Under Review</span>
+              <span className="text-sm font-bold leading-tight text-white/80 italic">We are reviewing your profile. Some features might be unavailable.</span>
             </div>
           </div>
         </BentoCard>
@@ -582,7 +583,7 @@ const Dashboard = React.memo(({
           <div className="flex flex-col items-start leading-tight">
             <div className="flex items-center gap-2">
               <span className={cn("text-[16px] font-sans font-black uppercase tracking-widest italic", profile.is_online ? "text-white" : "text-zinc-400")}>
-                {profile.is_online ? 'System Online' : 'System Standby'}
+                {profile.is_online ? 'You are Online' : 'You are Offline'}
               </span>
               {profile.is_online && (
                 <div className="flex items-center gap-0.5">
@@ -593,8 +594,14 @@ const Dashboard = React.memo(({
                 </div>
               )}
             </div>
-            <span className={cn("text-[11px] font-sans mt-1 font-bold uppercase tracking-wider", profile.is_online ? "text-green-500/70" : "text-zinc-600")}>
-              {profile.is_online ? 'Synchronizing Telemetry' : 'Protocol Deactivated'}
+            <span className={cn("text-[11px] font-sans mt-1 font-bold uppercase tracking-wider items-center flex gap-1.5", profile.is_online ? "text-green-500/70" : "text-zinc-600")}>
+              {profile.is_online ? 'Looking for orders...' : 'Tap to go online'}
+              {profile.verification_status === 'verified' && (
+                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                  <ShieldCheck className="w-2.5 h-2.5 text-emerald-500" />
+                  <span className="text-[7px] text-emerald-500">VERIFIED</span>
+                </div>
+              )}
             </span>
           </div>
         </button>
@@ -661,7 +668,7 @@ const Dashboard = React.memo(({
             <div className="p-2 bg-amber-500/10 rounded-lg">
               <Rocket className="w-4 h-4 text-amber-500" />
             </div>
-            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-400 italic">Neural Calibration</span>
+            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-400 italic">Your Progress</span>
           </div>
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -690,7 +697,7 @@ const Dashboard = React.memo(({
           <div className="space-y-3">
             {history.length === 0 ? (
               <div className="py-12 text-center bg-zinc-900/10 rounded-[2rem] border border-dashed border-zinc-800">
-                <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest italic">Sector activity log empty.</p>
+                <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest italic">No recent deliveries.</p>
               </div>
             ) : (
               history.slice(0, 3).map(order => (
@@ -824,7 +831,7 @@ const OrdersFeed = React.memo(({
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       <header className="flex flex-col gap-4 pt-6">
         <div className="flex items-center justify-between">
-           <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Live Missions</h2>
+           <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Available Orders</h2>
            <div className="flex items-center gap-2">
               <button 
                 onClick={() => setShowNearbyMap(!showNearbyMap)}
@@ -857,11 +864,19 @@ const OrdersFeed = React.memo(({
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <input 
                 type="text" 
-                placeholder="Search Merchant/Customer Node..." 
+                placeholder="Search store or customer..." 
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-zinc-900/50 border border-zinc-800 pl-10 pr-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white focus:outline-none focus:border-[#f59e0b]/50 transition-colors"
+                className="w-full bg-zinc-900/50 border border-zinc-800 pl-10 pr-10 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest text-white focus:outline-none focus:border-[#f59e0b]/50 transition-colors"
               />
+              {searchQuery && (
+                <button 
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
               <button 
@@ -903,7 +918,7 @@ const OrdersFeed = React.memo(({
                 statusFilter === 'all' ? "bg-zinc-700 text-white border-zinc-600" : "bg-zinc-900 border-zinc-800 text-zinc-500"
               )}
             >
-              All Signals
+              All Orders
             </button>
             <button 
               onClick={() => setStatusFilter('available')}
@@ -937,11 +952,11 @@ const OrdersFeed = React.memo(({
 
         <div className="flex items-center gap-3">
            <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
-             Sector Alpha-12 Scan
+             Orders nearby
            </p>
            {surgeMultiplier > 1 && (
              <div className="bg-orange-600 text-white px-3 py-1 rounded-xl shadow-lg border border-orange-500 animate-pulse">
-                <span className="text-[10px] font-black uppercase">ROI x{surgeMultiplier.toFixed(1)}</span>
+                <span className="text-[10px] font-black uppercase">Bonus x{surgeMultiplier.toFixed(1)}</span>
              </div>
            )}
         </div>
@@ -958,7 +973,7 @@ const OrdersFeed = React.memo(({
             <div className="absolute inset-0 z-10 pointer-events-none bg-gradient-to-t from-black/80 via-transparent to-transparent" />
             <div className="absolute top-4 left-4 z-20 px-3 py-1.5 bg-black/80 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-2">
                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]" />
-               <span className="text-[9px] font-black text-white uppercase tracking-widest">Orbital Link Active</span>
+               <span className="text-[9px] font-black text-white uppercase tracking-widest">Map Live</span>
             </div>
             
             <AppMapBackground 
@@ -972,8 +987,8 @@ const OrdersFeed = React.memo(({
             
             <div className="absolute bottom-6 left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
               <div className="flex flex-col">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest italic mb-0.5">Deployment Sector</span>
-                <span className="text-sm font-black text-white uppercase italic tracking-tight">Tembisa Alpha-Node • {filteredAndSortedOrders.length} Signals Captured</span>
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest italic mb-0.5">Current Area</span>
+                <span className="text-sm font-black text-white uppercase italic tracking-tight">Tembisa, Kaalfontein & Ivory Park • {filteredAndSortedOrders.length} Orders found</span>
               </div>
               <div className="px-4 py-2 bg-[#f59e0b] text-black rounded-xl pointer-events-auto shadow-[0_10px_30px_rgba(245,158,11,0.4)] group-hover:scale-105 transition-transform flex items-center gap-2">
                 <Activity size={12} className="animate-pulse" />
@@ -992,7 +1007,7 @@ const OrdersFeed = React.memo(({
         >
           <BentoCard className="w-full max-w-sm border-[#f59e0b]/30">
             <ShieldAlert className="w-12 h-12 text-[#f59e0b] mb-4 mx-auto" />
-            <h3 className="text-xl font-black italic text-center text-white mb-2">Are you sure you want to accept this mission?</h3>
+            <h3 className="text-xl font-black italic text-center text-white mb-2">Accept this order?</h3>
             <div className="flex justify-center items-center gap-2 mb-4">
               <span className="text-sm font-bold text-white uppercase">{riderName || 'Rider'}</span>
               {vehicleType && (
@@ -1002,8 +1017,7 @@ const OrdersFeed = React.memo(({
               )}
             </div>
             <p className="text-xs text-zinc-500 text-center mb-6 leading-relaxed">
-              Are you sure you want to accept this mission? 
-              Initiating the delivery vector will assign you as the primary carrier.
+              Once accepted, you will be responsible for this delivery.
             </p>
             <div className="flex flex-col gap-3">
               <button 
@@ -1013,13 +1027,13 @@ const OrdersFeed = React.memo(({
                 }}
                 className="w-full py-4 bg-[#f59e0b] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all"
               >
-                Accept Mission
+                Accept Order
               </button>
               <button 
                 onClick={() => setConfirmId(null)}
                 className="w-full py-4 bg-zinc-900 border border-zinc-800 text-zinc-500 font-bold uppercase tracking-widest rounded-xl active:scale-95 transition-all"
               >
-                Abort Connection
+                Cancel
               </button>
             </div>
           </BentoCard>
@@ -1052,14 +1066,14 @@ const OrdersFeed = React.memo(({
               "text-[10px] font-black uppercase tracking-[0.4em]",
               !isOnline ? "text-red-500" : connectionCount === 0 ? "text-zinc-500" : "text-[#f59e0b]"
             )}>
-              {!isOnline ? "Network Offline" : connectionCount === 0 ? "No Tether" : "Scanning Sector [Alpha]"}
+              {!isOnline ? "Network Offline" : connectionCount === 0 ? "No Connection" : "Searching for orders..."}
             </h3>
             <p className="text-xs font-black uppercase tracking-widest text-zinc-500 max-w-[280px] leading-relaxed italic">
               {!isOnline 
-                ? "SIGNAL LOST - GO ONLINE TO SCAN FOR MISSIONS." 
+                ? "CONNECTION LOST - GO ONLINE TO SEE ORDERS." 
                 : connectionCount === 0 
-                ? "UNLINKED TERRITORY - SYNC WITH A MERCHANT TO RECEIVE MISSIONS." 
-                : searchQuery ? "NO SIGNALS MATCHING YOUR SEARCH PARAMS." : "SCANNING SECTOR [ALPHA]... NO UNASSIGNED SIGNALS DETECTED."}
+                ? "NO STORES LINKED - CONNECT WITH A STORE TO START RECEIVING ORDERS." 
+                : searchQuery ? "NO ORDERS MATCHING YOUR SEARCH." : "LOOKING FOR ORDERS... NONE FOUND IN YOUR AREA YET."}
             </p>
           </div>
         </div>
@@ -1121,7 +1135,7 @@ const OrdersFeed = React.memo(({
                          {order.match_score && (
                            <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
                              <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
-                               {Math.min(100, Math.round(order.match_score * 2.5))}% Match
+                               {Math.min(100, Math.round(order.match_score * 2.5))}% Store Match
                              </span>
                            </div>
                          )}
@@ -1140,7 +1154,7 @@ const OrdersFeed = React.memo(({
                         </div>
                         <div className="flex items-center gap-4 text-zinc-500">
                           <div className="flex flex-col gap-1">
-                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Dist to Merchant</span>
+                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Distance to store</span>
                             <div className="flex items-center gap-1.5">
                               <Navigation className="w-3.5 h-3.5 text-orange-600" />
                               <span className="text-[11px] font-black italic text-orange-600 uppercase tracking-widest">
@@ -1158,7 +1172,7 @@ const OrdersFeed = React.memo(({
                           </div>
                           
                           <div className="flex flex-col gap-1">
-                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">ETA to Customer</span>
+                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Delivery time</span>
                             <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded-md">
                                <Activity size={10} className="text-emerald-500 animate-pulse" />
                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-tighter">
@@ -1392,26 +1406,26 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       
       if (transcript.includes('pick up') || transcript.includes('picked up') || transcript.includes('arrived') || transcript.includes('merchant')) {
         onUpdateStatus(currentOrder.id, 'picked_up');
-        toast.success(`VOICE COMMAND: Status updated to Picked Up`, {
-          description: `Rider confirms pickup at ${currentOrder.restaurant_name}`
+        toast.success(`Voice: Pickup confirmed`, {
+          description: `Order picked up at ${currentOrder.restaurant_name}`
         });
       } else if (transcript.includes('delivered') || transcript.includes('complete') || transcript.includes('delivery') || transcript.includes('dropped off')) {
         onUpdateStatus(currentOrder.id, 'delivered');
-        toast.success(`VOICE COMMAND: Mission Complete`, {
-          description: `Rider confirms successful payload delivery`
+        toast.success(`Voice: Delivery completed`, {
+          description: `Order delivered successfully`
         });
       } else if (transcript.includes('optimize') || transcript.includes('shortest') || transcript.includes('route')) {
         optimizeRoute();
-        toast.success(`VOICE COMMAND: Route Optimized`, {
+        toast.success(`Voice: Route updated`, {
           icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
-          description: "Vector sequence recalibrated for efficiency."
+          description: "Finding the fastest path for you."
         });
       } else if (transcript.includes('next') || transcript.includes('skip') || transcript.includes('forward')) {
         setActiveIndex((prev) => (prev + 1) % displayOrders.length);
-        toast.info(`VOICE COMMAND: Cycling to next mission node`);
+        toast.info(`Voice: Next order`);
       } else if (transcript.includes('map') || transcript.includes('view') || transcript.includes('tactical')) {
         setIsSwapped(!isSwapped);
-        toast.info(`VOICE COMMAND: Switching visual uplink mode`);
+        toast.info(`Voice: Switching view`);
       }
     };
     
@@ -1437,9 +1451,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const optimizeRoute = () => {
     setSortMethod('optimized');
     setActiveIndex(0);
-    toast.success('Vector sequence optimized for range efficiency.', {
+    toast.success('Route updated', {
       icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
-      description: 'Calculating shortest flight path between nodes.'
+      description: 'Finding the fastest path between orders.'
     });
   };
 
@@ -1455,8 +1469,8 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const handleStartNav = (e: React.MouseEvent) => {
     e.stopPropagation();
     
-    const originLat = profile?.current_latitude || -25.9964; // Tembisa rider fallback
-    const originLng = profile?.current_longitude || 28.2298;
+    const originLat = profile?.current_latitude || -25.9964; // Regional rider fallback (Tembisa)
+    const originLng = profile?.current_longitude || 28.2268;
     
     if (!originLat || !originLng) {
       toast.error('Location Unavailable', { description: 'Missing rider coordinates.' });
@@ -1467,11 +1481,11 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
     let destLng: number | undefined;
 
     if (currentOrder.delivery_status === 'accepted') {
-      destLat = currentOrder.shop_lat || -25.9924; // Tembisa merchant fallback
-      destLng = currentOrder.shop_lng || 28.2048;
+      destLat = currentOrder.shop_lat || -25.9922; // Ivory Park merchant fallback
+      destLng = currentOrder.shop_lng || 28.2045;
     } else if (currentOrder.delivery_status === 'picked_up') {
-      destLat = currentOrder.lat || -25.9894; // Tembisa customer fallback
-      destLng = currentOrder.lng || 28.2148;
+      destLat = currentOrder.lat || -25.9933; // Kaalfontein customer fallback
+      destLng = currentOrder.lng || 28.2125;
     } else {
       toast.error('Navigation unavailable for current mission status');
       return;
@@ -1726,7 +1740,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           )}
 
           <button 
-            onClick={(e) => { e.stopPropagation(); toast('Support Uplink Activated. Connecting to Fleet HQ...'); }}
+            onClick={(e) => { e.stopPropagation(); toast('Support link activated. Connecting to HQ...'); }}
             className="bg-black/60 backdrop-blur-md border border-white/10 text-white font-black text-[9px] px-4 py-2 rounded-full shadow-2xl active:scale-95 transition-all uppercase tracking-[0.2em] hover:bg-zinc-800"
           >
             NEED HELP?
@@ -1741,7 +1755,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           exit={{ y: 100, opacity: 0 }}
           className="bg-black/60 backdrop-blur-2xl p-6 pb-12 pointer-events-auto border-t border-white/10 z-50 flex flex-col gap-6"
         >
-          {/* Mission Sequence & Controls */}
+          {/* Order Sequence & Controls */}
           <div className="flex items-center justify-between gap-4">
             <div className="flex gap-2 overflow-x-auto no-scrollbar">
               {displayOrders.map((o, idx) => (
@@ -1771,9 +1785,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
           <div className="flex items-center justify-between">
             <div className="flex flex-col min-w-0 flex-1 mr-4">
-              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic mb-1">MISSION OBJECTIVE</span>
+              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic mb-1">TASK</span>
               <h2 className="text-xl font-headline font-black italic text-white uppercase tracking-tight truncate">
-                {isPickedUp ? 'Deliver' : 'Pick up'} • {targetAddress || 'VECTOR LOCK'}
+                {isPickedUp ? 'Deliver' : 'Pick up'} • {targetAddress || 'ADDRESS LOCK'}
               </h2>
               {routeDistance > 0 && (
                 <div className="flex items-center gap-2 mt-1">
@@ -1864,10 +1878,10 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       <header className="pt-8 mb-4">
-        <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Telemetry</h2>
+        <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Activity</h2>
         <div className="flex items-center gap-3">
            <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
-             Operational Logs • Sector 7
+             Recent logs • Sector 7
            </p>
            <div className="p-1 bg-zinc-900 border border-zinc-800 rounded-md">
               <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse" />
@@ -1877,7 +1891,7 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
 
       <BentoCard className="h-72 border-zinc-800/40 bg-zinc-950/50 p-6" glow>
         <div className="flex items-center justify-between mb-6">
-           <span className="text-[11px] font-black text-zinc-500 uppercase tracking-widest">Yield Variance Pulse</span>
+           <span className="text-[11px] font-black text-zinc-500 uppercase tracking-widest">Earnings last 7 days</span>
            <Activity className="w-4 h-4 text-[#f59e0b] opacity-50" />
         </div>
         <div className="h-48 w-full">
@@ -1915,12 +1929,12 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
 
       <div className="space-y-4">
         <div className="flex items-center justify-between px-2">
-          <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Mission Archive</h3>
+          <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Order History</h3>
           <Search className="w-4 h-4 text-zinc-600" />
         </div>
         
         {history.length === 0 ? (
-          <div className="py-20 text-center opacity-20 italic text-sm">No archive data synced.</div>
+          <div className="py-20 text-center opacity-20 italic text-sm">No orders found.</div>
         ) : (
           <div className="space-y-4">
             {history.map((item, i) => (
@@ -1982,18 +1996,34 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
   </div>
 );
 
-const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline }: { 
+const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline, onBack }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
   now: number,
   onUpdateVehicle: (v: UserVehicle) => void,
   onLogout: () => void,
   onPair: (code?: string) => void,
-  onToggleOnline: () => void
+  onToggleOnline: () => void,
+  onBack: () => void
 }) => {
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
-      <header className="flex flex-col items-center pt-10 pb-6 text-center">
+      <div className="flex items-center justify-between pt-1 w-full">
+        <button 
+          onClick={onBack}
+          className="p-2 -ml-2 rounded-xl text-zinc-500 hover:text-white transition-colors"
+        >
+          <ArrowRight className="w-5 h-5 rotate-180" />
+        </button>
+        <button 
+          onClick={onLogout}
+          className="text-[10px] font-black uppercase text-red-500/80 border border-red-500/20 px-4 py-2 rounded-xl bg-red-500/5 active:scale-95 transition-all"
+        >
+          Logout
+        </button>
+      </div>
+
+      <header className="flex flex-col items-center pb-6 text-center">
         <div className="relative mb-6">
           <div className="w-28 h-28 rounded-[2.5rem] bg-zinc-900 border-2 border-zinc-800 flex items-center justify-center p-1.5 glow ring-4 ring-[#f59e0b]/5">
             {profile.photo_url ? (
@@ -2031,21 +2061,24 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
 
       <section className="space-y-4">
         <div className="flex items-center justify-between px-1">
-          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">Authorized Uplinks</h3>
+          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">Store Connections</h3>
           <button 
             onClick={() => onPair()}
             className="flex items-center gap-2 text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/30 px-4 py-2 rounded-2xl bg-[#f59e0b]/5 active:scale-95 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
-            Sync with Shop
+            Link with Shop
           </button>
         </div>
         
         {connections.length === 0 ? (
-          <BentoCard className="p-8 border-dashed border-zinc-800 bg-transparent text-center opacity-40">
-            <Link2 className="w-8 h-8 mx-auto mb-3 text-zinc-600" />
-            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">No active merchant connections</p>
-          </BentoCard>
+              <BentoCard className="p-8 border-dashed border-zinc-800 bg-transparent text-center">
+                <Link2 className="w-8 h-8 mx-auto mb-3 text-zinc-600" />
+                <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">No active store connections</p>
+                <p className="text-xs text-zinc-600 max-w-[200px] mx-auto leading-relaxed">
+                  Connect with a store to start receiving mission requests in your sector.
+                </p>
+              </BentoCard>
         ) : (
           <div className="space-y-2">
             {connections.map(conn => {
@@ -2078,7 +2111,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                            "text-[13px] font-sans tracking-normal",
                            isExpired ? "text-red-500/80" : "text-zinc-400"
                          )}>
-                           {isExpired ? 'Sync required' : 'Uplink active'}
+                           {isExpired ? 'Link needs renewal' : 'Store link active'}
                          </span>
                          {isExpired && (
                            <button 
@@ -2113,7 +2146,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Fleet Configuration</h3>
         <BentoCard className="bg-zinc-900 border-zinc-800 p-5">
            <div className="flex items-center justify-between mb-4">
-              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Tactical Vehicle</span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Vehicle Type</span>
               <span className="px-2 py-0.5 bg-[#f59e0b]/10 text-[#f59e0b] text-[9px] font-black uppercase rounded border border-[#f59e0b]/20">Active</span>
            </div>
            
@@ -2263,10 +2296,10 @@ const OrderTrackingScreen = ({ orderId, onBack }: { orderId: string, onBack: () 
     };
   }, [orderId]);
 
-  if (loading) return <div className="h-full flex items-center justify-center p-12 text-zinc-500 font-mono text-[10px] uppercase tracking-widest">Initialising Tracking Array...</div>;
+  if (loading) return <div className="h-full flex items-center justify-center p-12 text-zinc-500 font-mono text-[10px] uppercase tracking-widest">Loading order tracking...</div>;
   if (!order) return <div className="h-full flex flex-col items-center justify-center p-12 text-center">
     <ShieldAlert className="w-12 h-12 text-zinc-800 mb-4" />
-    <p className="text-zinc-500 font-bold uppercase text-[10px]">Signal Lost: Mission not found.</p>
+    <p className="text-zinc-500 font-bold uppercase text-[10px]">Connection lost: Order not found.</p>
     <button onClick={onBack} className="mt-6 text-[#f59e0b] text-[10px] uppercase font-black">Return</button>
   </div>;
 
@@ -2275,11 +2308,11 @@ const OrderTrackingScreen = ({ orderId, onBack }: { orderId: string, onBack: () 
       <div className="px-6 mb-6">
         <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 group mb-6">
           <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#f59e0b] transition-colors" />
-          <span className="text-[10px] font-black uppercase tracking-widest">Abort Tracking</span>
+          <span className="text-[10px] font-black uppercase tracking-widest">Stop Tracking</span>
         </button>
         <div className="flex justify-between items-start">
           <div>
-            <h2 className="text-2xl font-headline font-black italic uppercase tracking-tighter text-white mb-1">Payload Tracking</h2>
+            <h2 className="text-2xl font-headline font-black italic uppercase tracking-tighter text-white mb-1">Order Status</h2>
             <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">Order ID: {order.id.slice(-8).toUpperCase()}</p>
           </div>
           <div className="bg-[#f59e0b]/10 px-3 py-1 rounded-full border border-[#f59e0b]/20">
@@ -2306,13 +2339,13 @@ const OrderTrackingScreen = ({ orderId, onBack }: { orderId: string, onBack: () 
                     <Navigation className="w-6 h-6 text-black" />
                  </div>
                  <div>
-                    <p className="text-[9px] font-black text-[#f59e0b] uppercase tracking-widest">Mission Asset</p>
+                    <p className="text-[9px] font-black text-[#f59e0b] uppercase tracking-widest">Rider</p>
                     <p className="text-lg font-headline font-black italic uppercase text-white leading-none tracking-tighter">ELITE RIDER TATA</p>
                  </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                  <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
-                    <p className="text-[8px] text-zinc-500 font-black uppercase mb-1">Payload</p>
+                    <p className="text-[8px] text-zinc-500 font-black uppercase mb-1">Order</p>
                     <p className="text-xs font-bold text-white uppercase italic">{order.product_name}</p>
                  </div>
                  <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
@@ -2341,11 +2374,11 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     try {
       await onComplete(code);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Uplink rejected.';
+      const msg = err instanceof Error ? err.message : 'Connection failed.';
       if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
-        toast.error('Network Error: Cannot pair offline. Please reconnect to the grid.');
+        toast.error('Network Error: Cannot pair offline. Please connect to the internet.');
       } else {
-        toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Sync failed. Please verify the code.' : msg);
+        toast.error(msg === 'Connection failed.' ? 'Link failed. Please verify the code.' : msg);
       }
     } finally {
       setLoading(false);
@@ -2372,9 +2405,9 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     } catch (err) {
       const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || 'Invalid scan.';
       if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
-        toast.error('Network Error: Cannot pair offline. Please reconnect to the grid.');
+        toast.error('Network Error: Cannot pair offline. Please connect to the internet.');
       } else {
-        toast.error(msg === 'Uplink rejected. Testing failure protocol.' ? 'Invalid QR code. Please scan a valid Merchant QR.' : msg);
+        toast.error(msg === 'Connection failed.' ? 'Invalid QR code. Please scan a valid store QR.' : msg);
       }
     } finally {
       setLoading(false);
@@ -2392,8 +2425,8 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
          </button>
 
          <div className="text-center mb-12">
-            <h2 className="text-3xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Initialize Uplink</h2>
-            <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.2em]">Establish 24h pairing with Merchant</p>
+            <h2 className="text-3xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Connect to Store</h2>
+            <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.2em]">Establish 24h link with Store</p>
          </div>
 
          <div className="space-y-8 flex-1">
@@ -2496,19 +2529,19 @@ export default function App() {
 
             // 3. Voice Announcement
             if ('speechSynthesis' in window) {
-              const utterance = new SpeechSynthesisUtterance(`Order is ready at ${order.restaurant_name || 'the merchant'}`);
+              const utterance = new SpeechSynthesisUtterance(`Order is ready at ${order.restaurant_name || 'the store'}`);
               utterance.rate = 0.9;
               utterance.pitch = 1.1;
               window.speechSynthesis.speak(utterance);
             }
 
-            toast.success(`READY FOR PICKUP: ${order.restaurant_name}`, {
-              description: "Proceed to merchant location immediately.",
+            toast.success(`Order is ready: ${order.restaurant_name}`, {
+              description: "Proceed to pick up the order now.",
               duration: 10000,
               icon: <Zap className="w-5 h-5 text-[#f59e0b]" />
             });
           } catch (error) {
-            console.error('Alert Protocol Error:', error);
+            console.error('Alert Error:', error);
           }
         };
 
@@ -2537,11 +2570,11 @@ export default function App() {
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      toast.success('Uplink Re-established. Signal secure.');
+      toast.success('Connection restored.');
     };
     const handleOffline = () => {
       setIsOffline(true);
-      toast.error('Signal Loss Detected. Orbital telemetry suspended.');
+      toast.error('Connection lost.');
     };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -2638,9 +2671,9 @@ export default function App() {
       } else if (data) {
         addBootLog('SYNC: TELEMETRY_COMPLETE');
         const sanitizedData = { ...data };
-        // Fallback for null coordinates to prevent Inter-City routing errors (Default: Tembisa)
-        if (!sanitizedData.current_latitude) sanitizedData.current_latitude = -25.9864;
-        if (!sanitizedData.current_longitude) sanitizedData.current_longitude = 28.2198;
+        // Fallback for null coordinates to prevent Inter-City routing errors (Default: Region Center)
+        if (!sanitizedData.current_latitude) sanitizedData.current_latitude = -25.9964;
+        if (!sanitizedData.current_longitude) sanitizedData.current_longitude = 28.2268;
         
         setProfile(sanitizedData as RiderProfile);
         if (!data.onboarding_complete && localStorage.getItem('localeats_onboarding_seen') !== 'true') {
@@ -2804,8 +2837,8 @@ export default function App() {
 
         setAvailableOrders(prev => {
            if (sorted.length > prev.length) {
-              toast('NEW SIGNAL DETECTED', { 
-                description: 'A high-priority payload is waiting in your authorized sector.',
+              toast('New Order', { 
+                description: 'A new order is available in your area.',
                 duration: 5000,
                 icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
                 style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
@@ -2874,15 +2907,30 @@ export default function App() {
 
     let watchId: number;
 
-    const updateLocation = async (lat: number, lng: number) => {
-      // Mission Sync Protocol: Update frequency adjusted to 10s for real-time tracking
+    const updateLocation = async (lat: number, lng: number, accuracy?: number) => {
+      // Regional Boundary Validation (Tembisa, Ivory Park, Kaalfontein Sector)
+      // Roughly -26.1 to -25.9 Lat, 28.1 to 28.3 Lng
+      if (lat > -25.8 || lat < -26.1 || lng < 28.0 || lng > 28.4) {
+        if (!isSupabaseMocked()) {
+          console.warn('OUT_OF_SECTOR_VECTORED: GPS reporting coordinates outside pilot zone.');
+        }
+      }
+
+      // Mission Sync Protocol: Update frequency adjusted to 5s if active, 15s if idle
       const now = Date.now();
-      if (now - lastLocationUpdateRef.current < 10000) return;
+      const hasActiveOrder = activeOrders.some(o => o.delivery_status === 'accepted' || o.delivery_status === 'picked_up');
+      const throttleMs = hasActiveOrder ? 5000 : 15000;
+      
+      if (now - lastLocationUpdateRef.current < throttleMs) return;
       lastLocationUpdateRef.current = now;
+
+      if (accuracy && accuracy > 100) {
+        addBootLog(`GPS_LOW_ACCURACY: ${accuracy.toFixed(0)}m - High density interference possible`);
+      }
 
       try {
         // Update master profile telemetry
-        await getSupabase()
+        const { error: profileError } = await getSupabase()
           .from('rider_profiles')
           .update({ 
             current_latitude: lat, 
@@ -2890,6 +2938,8 @@ export default function App() {
             updated_at: new Date().toISOString() 
           })
           .eq('id', user.id);
+        
+        if (profileError) throw profileError;
 
         // Share real-time vector with customers for picked_up missions
         const pickedUpOrders = activeOrders.filter(o => o.delivery_status === 'picked_up');
@@ -2908,30 +2958,40 @@ export default function App() {
         }
       } catch (e) {
         console.error('Location sync failure:', e);
+        addBootLog('SYNC_FAIL: TELEMETRY_UPLINK_INTERRUPTED');
       }
     };
 
     if ("geolocation" in navigator) {
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
-          updateLocation(pos.coords.latitude, pos.coords.longitude);
+          updateLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
         },
         (err) => {
-          // Fallback logic for GPS signal failure
+          // Fallback logic for GPS signal failure in high-density areas (Kopanong / Ivory Park Ext)
           if (err.code === 1) { // Permission Denied
              addBootLog('ERROR: GPS_PERM_DENIED');
              toast.error('GPS AUTH FAILURE. Switch to simulator mode.', { id: 'gps-error' });
           } else if (err.code === 2) { // Position Unavailable
-             addBootLog('SIGNAL_LOST: TRIANGULATING...');
-             toast.warning('SIGNAL INTERFERENCE DETECTED', { id: 'gps-warning' });
+             addBootLog('SIGNAL_LOST: HIGH_DENSITY_INTERFERENCE');
+             toast.warning('SIGNAL INTERFERENCE: TRIANGULATING...', { id: 'gps-warning' });
+          } else if (err.code === 3) { // Timeout
+             addBootLog('GPS_TIMEOUT: RECALIBRATING...');
           }
           
-          // Fallback to mock movement to keep the UI valid
-          const mockLat = -33.9249 + (Math.random() - 0.5) * 0.001;
-          const mockLng = 18.4241 + (Math.random() - 0.5) * 0.001;
-          updateLocation(mockLat, mockLng);
+          // Regional Fallback (Kopanong Shopping Centre Centerpoint)
+          // Using a small jitter to keep the tactical map active
+          const baseLat = -26.002; 
+          const baseLng = 28.225;
+          const jitterLat = (Math.random() - 0.5) * 0.0005;
+          const jitterLng = (Math.random() - 0.5) * 0.0005;
+          updateLocation(baseLat + jitterLat, baseLng + jitterLng);
         },
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+        { 
+          enableHighAccuracy: true, 
+          timeout: 15000, 
+          maximumAge: 0 
+        }
       );
     }
 
@@ -3073,9 +3133,9 @@ export default function App() {
         table: 'rider_notifications',
         filter: `rider_id=eq.${user.id}` 
       }, payload => {
-        toast.info(`NUDGE RECEIVED: ${payload.new.message}`, {
+        toast.info(`Update from store: ${payload.new.message}`, {
           duration: 6000,
-          description: 'Merchant requires immediate attention.',
+          description: 'Store requires your attention.',
           icon: <Activity className="w-5 h-5 text-[#f59e0b]" />
         });
       })
@@ -3204,16 +3264,16 @@ export default function App() {
              total_deliveries: prev.total_deliveries + 1,
              active_points: prev.active_points + 15
            } : null);
-           toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
+           toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`);
            if (activeOrders.length <= 1) {
              setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
            }
         } else if (status === 'finding_rider') {
            setActiveOrders(prev => prev.filter(o => o.id !== orderId));
            setAvailableOrders(prev => [...prev, {...orderToUpdate, delivery_status: 'finding_rider'}]);
-           toast.success('Mission aborted. Signal released.');
+           toast.success('Order cancelled.');
         } else {
-           toast.success('Vector updated.');
+           toast.success('Location updated.');
         }
         return;
       }
@@ -3223,7 +3283,7 @@ export default function App() {
         .eq('id', orderId);
 
       if (error) {
-        toast.error('Phase sync failed');
+        toast.error('Update failed');
       } else {
         if (status === 'delivered') {
           const { error: rpcError } = await getSupabase().rpc('increment_rider_stats', {
@@ -3250,12 +3310,12 @@ export default function App() {
           if (remainingMissions === 0) {
             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
           }
-          toast.success(`Mission Success! +${orderToUpdate.delivery_fee} credits synced.`);
+          toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`);
         } else if (status === 'finding_rider') {
            setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-           toast.success('Mission aborted. Signal released.');
+           toast.success('Order cancelled.');
         } else {
-          toast.success('Phase sync confirmed');
+          toast.success('Order status updated');
         }
       }
     } catch (e: unknown) {
@@ -3285,8 +3345,8 @@ export default function App() {
 
     recognition.onstart = () => {
       setIsListening(true);
-      toast.info('VOICE UPLINK ACTIVE', {
-        description: 'Listening for mission triggers...',
+      toast.info('Voice listening', {
+        description: "Say 'picked up' or 'delivered'...",
         icon: <Mic className="w-5 h-5 text-[#f59e0b]" />
       });
     };
@@ -3302,17 +3362,17 @@ export default function App() {
       if (currentOrder) {
         if (transcript.includes('picked up') || transcript.includes('collected')) {
           handleUpdateStatus(currentOrder.id, 'picked_up');
-          toast.success('VOICE COMMAND: PICKUP LOGGED', { icon: <CheckCircle className="w-5 h-5 text-emerald-500" /> });
+          toast.success('Voice: Pickup confirmed', { icon: <CheckCircle className="w-5 h-5 text-emerald-500" /> });
           handled = true;
         } else if (transcript.includes('delivered') || transcript.includes('completed')) {
           handleUpdateStatus(currentOrder.id, 'delivered');
-          toast.success('VOICE COMMAND: MISSION SUCCESS', { icon: <Target className="w-5 h-5 text-white shadow-xl" /> });
+          toast.success('Voice: Delivery completed', { icon: <Target className="w-5 h-5 text-white shadow-xl" /> });
           handled = true;
         }
       }
 
       if (!handled) {
-        toast.error(`SIGNAL REJECTED: "${transcript}"`, { description: 'Command not recognized.' });
+        toast.error(`Command not recognized: "${transcript}"`, { description: 'Try saying "picked up" or "delivered".' });
       }
     };
 
@@ -3320,7 +3380,7 @@ export default function App() {
     recognition.onerror = (event: any) => {
       setIsListening(false);
       console.error('Voice Error:', event.error);
-      toast.error(`VOICE LINK FAILURE: ${event.error.toUpperCase()}`);
+      toast.error(`Voice error: ${event.error.toUpperCase()}`);
     };
 
     recognition.onend = () => {
@@ -3380,7 +3440,7 @@ export default function App() {
     if (!profile) return;
     
     if (profile.verification_status !== 'verified') {
-      toast.error('Identity Verification Pending. Access to Missions blocked until Fleet HQ authorizes.');
+      toast.error('Identity Verification Pending. Access blocked until verified.');
       return;
     }
 
@@ -3434,21 +3494,20 @@ export default function App() {
     // Pairing Protocol: Ensure rider is connected to the merchant node
     const orderToAccept = availableOrders.find(o => o.id === orderId);
     if (!orderToAccept && !isSupabaseMocked()) {
-      toast.error('SIGNAL LOST: Mission or Merchant uplink unavailable.');
+      toast.error('Store connection unavailable.');
       return;
     }
 
     if (orderToAccept) {
       const isPaired = connections.some(c => c.shop_id === orderToAccept.shop_id && new Date(c.expires_at) > new Date());
       if (!isPaired && !isSupabaseMocked()) {
-        toast.error('AUTH FAILURE: Connection to merchant node expired or missing.');
+        toast.error('Store link expired. Please reconnect to the store.');
         return;
       }
     }
     
-    // Profit-Driven Guard: Efficiency Batching Limit
     if (activeOrders.length >= 2) {
-      toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
+      toast.error('Too many active orders. Complete one first.');
       return;
     }
 
@@ -3464,13 +3523,10 @@ export default function App() {
           };
           setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
           setActiveOrders(prev => [...prev, accepted as DeliveryOrder]);
-          toast.success('Mission accepted. Navigation initialized.', {
-            description: surgeMultiplier > 1 ? `ROI Surge active: x${surgeMultiplier.toFixed(1)}` : undefined
+          toast.success('Order accepted. Starting navigation.', {
+            description: surgeMultiplier > 1 ? `Bonus active: x${surgeMultiplier.toFixed(1)}` : undefined
           });
-          setView('move'); // It used to be 'active' but looking at AppView type it might be different, 
-          // WAIT: looking at AppView definition on line 1834: 
-          // type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'merchant_dash';
-          // Previous edit set it to 'active' which isn't in the type. Fixing.
+          setView('move');
         }
         return;
       }
@@ -3488,9 +3544,9 @@ export default function App() {
         .single();
 
       if (error || !data) {
-        toast.error(`Error: ${error?.message || 'Mission already locked by another unit'}`);
+        toast.error(`Error: ${error?.message || 'Order already taken by another rider'}`);
       } else {
-        toast.success('Mission accepted. Navigation initialized.');
+        toast.success('Order accepted. Starting navigation.');
         setView('move');
       }
     } catch (e: unknown) {
@@ -3527,7 +3583,7 @@ export default function App() {
         .single();
       
       if (fetchError || !connection) {
-        throw new Error('Invalid or expired pairing cipher. Ensure the Merchant has generated a fresh sequence.');
+        throw new Error('Invalid or expired pairing code. Ensure the Store has generated a new one.');
       }
 
       let { error: updateError } = await getSupabase()
@@ -3562,15 +3618,15 @@ export default function App() {
         .single();
 
       if (verifyError || verification?.rider_id !== user.id) {
-        throw new Error('Handshake failed. Verification of the uplink was unsuccessful. Please try again.');
+        throw new Error('Connection failed. Please try again.');
       }
 
       // Haptic Feedback Trigger!
       if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
 
-      const shopName = connection.shops?.name || 'Authorized Merchant';
-      toast.success(`Uplink established!`, {
-        description: `Successfully tethered to ${shopName}. (24h Proxy active)`,
+      const shopName = connection.shops?.name || 'Store';
+      toast.success(`Connected!`, {
+        description: `Successfully linked with ${shopName}. (24h active)`,
         style: { background: '#050505', color: '#10b981', border: '1px solid #10b981' }
       });
       
@@ -3592,7 +3648,7 @@ export default function App() {
             transition={{ duration: 1.5, repeat: Infinity }}
             className="text-[#f59e0b] text-[10px] font-black uppercase tracking-[0.6em] mb-8"
           >
-            BOOTING_SYSTEM_v2.4
+            LOADING_SYSTEM...
           </motion.div>
           
           <div className="space-y-1 mb-10 min-h-[60px] text-left">
@@ -3631,7 +3687,7 @@ export default function App() {
               onClick={() => setLoading(false)}
               className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600 border border-zinc-900 px-6 py-3 rounded-xl hover:border-[#f59e0b]/30 hover:text-[#f59e0b] transition-all bg-zinc-950/50"
             >
-              Manual_Override_Bypass
+              Skip Loading
             </button>
           </motion.div>
         </div>
@@ -3646,9 +3702,9 @@ export default function App() {
       return (
         <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center">
           <WifiOff className="w-16 h-16 text-zinc-700 mb-6 animate-pulse" />
-          <h2 className="text-2xl font-black uppercase tracking-tighter text-white mb-2">Sync Interference</h2>
+          <h2 className="text-2xl font-black uppercase tracking-tighter text-white mb-2">Connection Error</h2>
           <p className="text-zinc-500 text-sm max-w-xs mb-8 uppercase font-bold tracking-wide">
-            Critical failure in orbital uplink. Failed to reach secure relay nodes.
+            Failed to connect to the server. Please check your internet connection.
             <span className="block mt-2 text-red-500/80 text-[10px] break-all">{syncError}</span>
           </p>
           <div className="flex flex-col gap-3 w-full max-w-xs">
@@ -3660,7 +3716,7 @@ export default function App() {
               }}
               className="w-full py-4 bg-[#f59e0b] text-black font-black uppercase italic tracking-widest rounded-xl active:scale-95 transition-all shadow-[0_0_20px_rgba(245,158,11,0.3)]"
             >
-              Re-Establish Uplink
+              Try Again
             </button>
             <button 
               onClick={() => {
@@ -3690,7 +3746,7 @@ export default function App() {
               onClick={() => getSupabase().auth.signOut()}
               className="w-full py-4 text-zinc-600 text-[10px] font-black uppercase tracking-widest"
             >
-              Terminate Session
+              Logout
             </button>
           </div>
         </div>
@@ -3731,19 +3787,19 @@ BEGIN
     END IF;
     
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='lat') THEN
-        ALTER TABLE public.orders ADD COLUMN lat numeric DEFAULT -25.9894;
+        ALTER TABLE public.orders ADD COLUMN lat numeric DEFAULT -25.9933;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='lng') THEN
-        ALTER TABLE public.orders ADD COLUMN lng numeric DEFAULT 28.2148;
+        ALTER TABLE public.orders ADD COLUMN lng numeric DEFAULT 28.2125;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='shop_lat') THEN
-        ALTER TABLE public.orders ADD COLUMN shop_lat numeric DEFAULT -25.9864;
+        ALTER TABLE public.orders ADD COLUMN shop_lat numeric DEFAULT -25.9922;
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='shop_lng') THEN
-        ALTER TABLE public.orders ADD COLUMN shop_lng numeric DEFAULT 28.2198;
+        ALTER TABLE public.orders ADD COLUMN shop_lng numeric DEFAULT 28.2045;
     END IF;
 END $$;
 
@@ -3765,10 +3821,10 @@ CREATE TABLE IF NOT EXISTS public.orders (
   rider_id uuid REFERENCES public.rider_profiles(id),
   merchant_rating numeric,
   merchant_feedback text,
-  lat numeric DEFAULT -25.9894,
-  lng numeric DEFAULT 28.2148,
-  shop_lat numeric DEFAULT -25.9864,
-  shop_lng numeric DEFAULT 28.2198,
+  lat numeric DEFAULT -25.9933,
+  lng numeric DEFAULT 28.2125,
+  shop_lat numeric DEFAULT -25.9922,
+  shop_lng numeric DEFAULT 28.2045,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT orders_delivery_status_check CHECK (delivery_status IN ('none', 'finding_rider', 'accepted', 'picked_up', 'delivered', 'cancelled', 'ready', 'pending', 'preparing', 'confirmed', 'completed', 'rider_assigned'))
@@ -3934,7 +3990,7 @@ NOTIFY pgrst, 'reload schema';
             className="fixed top-0 left-0 right-0 z-[1100] bg-red-600 text-white py-3 px-6 flex items-center justify-center gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl"
           >
             <WifiOff className="w-4 h-4 animate-pulse" />
-            Signal Loss: Orbital Telemetry Offline • Attempting Re-sync
+            Lost connection. Trying to reconnect...
           </motion.div>
         )}
       </AnimatePresence>
@@ -3955,9 +4011,9 @@ NOTIFY pgrst, 'reload schema';
               className="bg-zinc-900 border border-red-500/30 p-8 rounded-[2.5rem] max-w-sm w-full text-center shadow-[0_0_50px_rgba(239,68,68,0.15)] relative"
             >
               <ShieldAlert className="w-16 h-16 text-red-500 mx-auto mb-4 animate-pulse" />
-              <h3 className="text-xl font-black uppercase text-white mb-2">Protocol Violation</h3>
+              <h3 className="text-xl font-black uppercase text-white mb-2">Active Orders</h3>
               <p className="text-zinc-400 text-xs mb-8 leading-relaxed">
-                You have active missions. Going offline will unassign you from these missions and may impact your reliability rating. Are you sure you want to abort your connection?
+                You have active orders. Going offline will unassign you from these orders and may impact your activity rating. Are you sure you want to stop?
               </p>
               
               <div className="flex flex-col gap-3">
@@ -3968,13 +4024,13 @@ NOTIFY pgrst, 'reload schema';
                   }}
                   className="w-full py-4 bg-red-600 text-white font-black uppercase italic tracking-widest rounded-xl hover:bg-red-500 active:scale-95 transition-all text-sm shadow-lg shadow-red-600/20"
                 >
-                  Force Offline
+                  Go Offline Anyway
                 </button>
                 <button 
                   onClick={() => setShowOfflineWarning(false)}
                   className="w-full py-4 bg-zinc-800 text-zinc-300 font-bold uppercase tracking-widest rounded-xl hover:bg-zinc-700 active:scale-95 transition-all text-xs"
                 >
-                  Resume Mission
+                  Keep Working
                 </button>
               </div>
             </motion.div>
@@ -4362,6 +4418,7 @@ NOTIFY pgrst, 'reload schema';
                     setView('pair');
                   }}
                   onToggleOnline={toggleOnline}
+                  onBack={() => setView('dash')}
                 />
                 <VoiceController 
                   isListening={isListening} 

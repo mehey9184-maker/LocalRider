@@ -2979,10 +2979,72 @@ export default function App() {
       } catch (e) {
         console.error('Location sync failure:', e);
         addBootLog('SYNC_FAIL: TELEMETRY_UPLINK_INTERRUPTED');
+        
+        try {
+          const queueStr = localStorage.getItem('loc_sync_queue');
+          const queue = queueStr ? JSON.parse(queueStr) : [];
+          queue.push({
+            lat, lng, heading, speed, captured_at, is_mocked, suspicious,
+            orders: activeOrders.filter(o => o.delivery_status === 'picked_up').map(o => o.id)
+          });
+          localStorage.setItem('loc_sync_queue', JSON.stringify(queue));
+        } catch (storageErr) {
+          console.error("Failed to queue location", storageErr);
+        }
       }
     };
 
+    const syncLocationQueue = async () => {
+      if (!navigator.onLine) return;
+      try {
+         const queueStr = localStorage.getItem('loc_sync_queue');
+         if (!queueStr) return;
+         const queue = JSON.parse(queueStr);
+         if (!Array.isArray(queue) || queue.length === 0) return;
+         
+         const latest = queue[queue.length - 1];
+         await getSupabase().from('rider_profiles').update({ current_latitude: latest.lat, current_longitude: latest.lng, updated_at: new Date().toISOString() }).eq('id', user.id);
+         
+         const locationPushes = [];
+         for (const item of queue) {
+            for (const orderId of item.orders || []) {
+               locationPushes.push(getSupabase().from('rider_locations').insert({
+                  rider_id: user.id, order_id: orderId, latitude: item.lat, longitude: item.lng,
+                  heading: Math.round(item.heading), speed: item.speed, timestamp: item.captured_at,
+                  is_mocked: item.is_mocked, suspicious: item.suspicious
+               }));
+            }
+         }
+         await Promise.all(locationPushes);
+         localStorage.removeItem('loc_sync_queue');
+         addBootLog('SYNC_RESTORED: UPLINK_QUEUE_CLEARED');
+      } catch (e) {
+         console.error('Failed to sync location queue', e);
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+         if ("geolocation" in navigator) {
+           navigator.geolocation.getCurrentPosition((pos) => {
+             updateLocation(pos);
+           }, () => {}, { enableHighAccuracy: true, maximumAge: 0 });
+         }
+         syncLocationQueue();
+      }
+    };
+    
+    const handleOnline = () => {
+      syncLocationQueue();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+
     if ("geolocation" in navigator) {
+      // Periodic fallback sync if queue exists
+      syncLocationQueue();
+
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
           updateLocation(pos);
@@ -3016,6 +3078,8 @@ export default function App() {
 
     return () => {
       if (watchId) navigator.geolocation.clearWatch(watchId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
     };
   }, [user, profile?.is_online, activeOrders]);
 

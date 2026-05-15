@@ -1,0 +1,21 @@
+{
+  "name": "LocalEats Rider Hub",
+  "short_name": "LocalEats Rider",
+  "description": "LocalEats Rider App - Telemetry and Mission Control",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "permissions": [
+    "geolocation",
+    "background-sync",
+    "persistent-storage"
+  ],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}

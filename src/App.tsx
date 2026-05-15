@@ -2884,13 +2884,42 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const lastLocationUpdateRef = useRef<number>(0);
+  const lastLocationUpdateRef = useRef<{lat: number, lng: number, time: number} | null>(null);
+  const isMockedRef = useRef<boolean>(false);
   useEffect(() => {
     if (!user || !profile?.is_online || activeOrders.length === 0) return;
 
     let watchId: number;
 
-    const updateLocation = async (lat: number, lng: number, accuracy?: number) => {
+    const getHaversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+      const R = 6371e3;
+      const p1 = lat1 * Math.PI/180;
+      const p2 = lat2 * Math.PI/180;
+      const dp = (lat2-lat1) * Math.PI/180;
+      const dl = (lon2-lon1) * Math.PI/180;
+      const a = Math.sin(dp/2) * Math.sin(dp/2) + Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) * Math.sin(dl/2);
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updateLocation = async (pos: GeolocationPosition | { coords: any, timestamp: number, isFallback?: boolean }) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      const accuracy = pos.coords.accuracy;
+      
+      const heading = pos.coords.heading || 0;
+      const speed = pos.coords.speed || 0;
+      const captured_at = 'timestamp' in pos ? new Date(pos.timestamp).toISOString() : new Date().toISOString();
+      let is_mocked = ('isFallback' in pos) ? !!pos.isFallback : false;
+      
+      // Native OS wrapper mock detection
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((pos as any).mocked || (pos as unknown as any).is_mocked) {
+        is_mocked = true;
+      }
+      isMockedRef.current = is_mocked;
+      const suspicious = is_mocked;
+
       // Regional Boundary Validation (Tembisa, Ivory Park, Kaalfontein Sector)
       // Roughly -26.1 to -25.9 Lat, 28.1 to 28.3 Lng
       if (lat > -25.8 || lat < -26.1 || lng < 28.0 || lng > 28.4) {
@@ -2899,13 +2928,16 @@ export default function App() {
         }
       }
 
-      // Mission Sync Protocol: Update frequency adjusted to 5s if active, 15s if idle
       const now = Date.now();
-      const hasActiveOrder = activeOrders.some(o => o.delivery_status === 'accepted' || o.delivery_status === 'picked_up');
-      const throttleMs = hasActiveOrder ? 5000 : 15000;
+      const lastLoc = lastLocationUpdateRef.current;
       
-      if (now - lastLocationUpdateRef.current < throttleMs) return;
-      lastLocationUpdateRef.current = now;
+      const dist = lastLoc ? getHaversineDistance(lastLoc.lat, lastLoc.lng, lat, lng) : Infinity;
+      const timeElapsed = lastLoc ? now - lastLoc.time : Infinity;
+      
+      // Haversine Throttling: only update if moved > 5 meters OR 15 seconds have passed
+      if (dist < 5 && timeElapsed < 15000) return;
+
+      lastLocationUpdateRef.current = { lat, lng, time: now };
 
       if (accuracy && accuracy > 100) {
         addBootLog(`GPS_LOW_ACCURACY: ${accuracy.toFixed(0)}m - High density interference possible`);
@@ -2934,7 +2966,12 @@ export default function App() {
                 rider_id: user.id,
                 order_id: order.id,
                 latitude: lat,
-                longitude: lng
+                longitude: lng,
+                heading: Math.round(heading),
+                speed: parseFloat(speed.toFixed(2)),
+                timestamp: captured_at,
+                is_mocked,
+                suspicious
               })
           );
           await Promise.all(locationPushes);
@@ -2948,7 +2985,7 @@ export default function App() {
     if ("geolocation" in navigator) {
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
-          updateLocation(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+          updateLocation(pos);
         },
         (err) => {
           // Fallback logic for GPS signal failure in high-density areas (Kopanong / Ivory Park Ext)
@@ -2966,7 +3003,7 @@ export default function App() {
           if (!profile?.current_latitude) {
             const baseLat = -25.9964; 
             const baseLng = 28.2268;
-            updateLocation(baseLat, baseLng);
+            updateLocation({ coords: { latitude: baseLat, longitude: baseLng, accuracy: 50 }, timestamp: Date.now(), isFallback: true });
           }
         },
         { 
@@ -3235,6 +3272,13 @@ export default function App() {
       delivery_status: status, 
       updated_at: new Date().toISOString() 
     };
+
+    // Integrity Check: Block delivery if mock GPS detected
+    if (status === 'delivered' && isMockedRef.current) {
+      toast.error('SECURITY ALERT: Mock Location Detected. Cannot confirm arrival using spoofed GPS.', { duration: 5000 });
+      // Flag the payload or alert backend silently if needed.
+      return;
+    }
 
     // ROI Protocol: Mandatory Proof of Delivery simulation
     // Optimization: Swipe gesture in UI is sufficient confirmation
@@ -3848,6 +3892,11 @@ ALTER TABLE public.rider_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rider_connections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rider_locations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rider_locations ADD COLUMN IF NOT EXISTS heading numeric;
+ALTER TABLE public.rider_locations ADD COLUMN IF NOT EXISTS speed numeric;
+ALTER TABLE public.rider_locations ADD COLUMN IF NOT EXISTS timestamp timestamp with time zone;
+ALTER TABLE public.rider_locations ADD COLUMN IF NOT EXISTS is_mocked boolean DEFAULT false;
+ALTER TABLE public.rider_locations ADD COLUMN IF NOT EXISTS suspicious boolean DEFAULT false;
 
 -- 3. Policies
 -- Shops

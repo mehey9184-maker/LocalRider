@@ -823,7 +823,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
               if (!riderPos) return true;
               const shopPos: [number, number] = [order.shop_lat || -25.9922, order.shop_lng || 28.2045];
               return getDistance(riderPos, shopPos) < 5; // Cluster optimization: rendering only nearby orders
-            }).map((order, i) => {
+            }).map((order) => {
               // Preserve original indexing conceptually if needed, or just map sequentially from 0
               const idx = allOrders.findIndex(o => o.id === order.id);
               const shopPos: [number, number] = [order.shop_lat || -25.9922, order.shop_lng || 28.2045];

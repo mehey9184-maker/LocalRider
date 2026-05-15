@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Marker, Polyline, Popup, Circle, useMapEvents 
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { RoutingMachine } from './RoutingMachine';
+import { CustomMapControls } from './CustomMapControls';
 import { Zap, ArrowUp, ArrowLeft, ArrowRight, CornerUpLeft, CornerUpRight, MapPin, Radar, Activity, Map as MapIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -44,6 +45,39 @@ const mockCustomerIcon = L.divIcon({
   iconAnchor: [18, 18],
 });
 
+const customerMiniIconCache: Record<string, L.DivIcon> = {};
+const getCustomerMiniIcon = (isHighlight: boolean) => {
+  const key = `${isHighlight}`;
+  if (!customerMiniIconCache[key]) {
+    customerMiniIconCache[key] = L.divIcon({
+      html: `<div style="background-color: #3b82f6; padding: 4px; border-radius: 50%; border: ${isHighlight ? '3px' : '2px'} solid white; box-shadow: 0 0 ${isHighlight ? '30px' : '15px'} rgba(59, 130, 246, ${isHighlight ? '1' : '0.6'}); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: ${isHighlight ? '14px' : '11px'}; color: white; width: ${isHighlight ? '32px' : '24px'}; height: ${isHighlight ? '32px' : '24px'}; transform: scale(${isHighlight ? 1.2 : 1}); transition: all 0.3s ease;"><svg width="${isHighlight ? '16' : '12'}" height="${isHighlight ? '16' : '12'}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
+      className: isHighlight ? 'customer-marker-mini z-50' : 'customer-marker-mini',
+      iconSize: isHighlight ? [38, 38] : [24, 24],
+      iconAnchor: isHighlight ? [19, 19] : [12, 12],
+    });
+  }
+  return customerMiniIconCache[key];
+};
+
+const sequenceIconCache: Record<string, L.DivIcon> = {};
+const getSequenceIcon = (idx: number, isHighlight: boolean, statusColor: string, status: string) => {
+  const key = `${idx}-${isHighlight}-${statusColor}-${status}`;
+  if (!sequenceIconCache[key]) {
+    sequenceIconCache[key] = L.divIcon({
+      html: `
+        <div style="position: relative;">
+          <div style="background-color: #f59e0b; padding: 4px; border-radius: 50%; border: ${isHighlight ? '3px' : '2px'} solid white; box-shadow: 0 0 ${isHighlight ? '30px' : '15px'} rgba(245, 158, 11, ${isHighlight ? '1' : '0.6'}); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: ${isHighlight ? '14px' : '11px'}; color: black; width: ${isHighlight ? '36px' : '28px'}; height: ${isHighlight ? '36px' : '28px'}; transform: scale(${isHighlight ? 1.2 : 1}); transition: all 0.3s ease;">${idx + 1}</div>
+          <div style="position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: ${statusColor}; color: white; font-size: 7px; font-weight: 900; padding: 1px 4px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.2); white-space: nowrap;">${status}</div>
+        </div>
+      `,
+      className: isHighlight ? 'order-sequence-marker z-50' : 'order-sequence-marker',
+      iconSize: isHighlight ? [42, 42] : [28, 28],
+      iconAnchor: isHighlight ? [21, 21] : [14, 14],
+    });
+  }
+  return sequenceIconCache[key];
+};
+
 interface AppMapBackgroundProps {
   isOnline: boolean;
   activeOrder?: DeliveryOrder | null;
@@ -58,6 +92,7 @@ interface AppMapBackgroundProps {
   riderProfileLng?: number;
   riderLocation?: [number, number] | null;
   highlightedOrderId?: string | null;
+  hideNavigationHUD?: boolean;
 }
 
 function InnerMapListener({ onClick }: { onClick?: () => void }) {
@@ -111,7 +146,20 @@ function MapController({ riderPos, activeOrder, highlightedOrder }: { riderPos: 
       
       // If we significantly move, order changed, or it's the first fix, adjust zoom
       if (!lastPos.current || orderChanged || significantMove) {
-        map.setZoom(activeOrder ? 17 : 16);
+        let zoom = activeOrder ? 17 : 16;
+        
+        // Contextual Zoom: If we are within 200m of the destination, zoom in more
+        if (activeOrder && riderPos) {
+           const dest: [number, number] = activeOrder.delivery_status === 'picked_up' 
+             ? [activeOrder.lat || -25.9933, activeOrder.lng || 28.2125]
+             : [activeOrder.shop_lat || -25.9922, activeOrder.shop_lng || 28.2045];
+           
+           if (getDistance(riderPos, dest) < 0.2) { // 200m
+             zoom = 18;
+           }
+        }
+        
+        map.setZoom(zoom);
       }
       
       lastPos.current = riderPos;
@@ -136,21 +184,27 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   riderProfileLat, 
   riderProfileLng,
   riderLocation,
-  highlightedOrderId 
+  highlightedOrderId,
+  hideNavigationHUD = false
 }: AppMapBackgroundProps) {
   const [riderPos, setRiderPos] = useState<[number, number] | null>(
     riderLocation || (riderProfileLat && riderProfileLng ? [riderProfileLat, riderProfileLng] : null)
   );
   const [lastUpdate, setLastUpdate] = useState<number>(() => Date.now());
 
-  // Render-time sync for external tracking vector updates
-  const [prevRiderLocation, setPrevRiderLocation] = useState(riderLocation);
-  if (riderLocation !== prevRiderLocation) {
-    setPrevRiderLocation(riderLocation);
+  // State synchronization for external tracking vector updates
+  useEffect(() => {
     if (riderLocation) {
-      setRiderPos(riderLocation);
+      setTimeout(() => setRiderPos(riderLocation), 0);
     }
-  }
+  }, [riderLocation]);
+
+  useEffect(() => {
+    if (riderProfileLat && riderProfileLng && !riderLocation) {
+      setTimeout(() => setRiderPos([riderProfileLat, riderProfileLng]), 0);
+    }
+  }, [riderProfileLat, riderProfileLng, riderLocation]);
+
   const [isCharging, setIsCharging] = useState(false);
   const [localNow, setLocalNow] = useState<number>(() => Date.now());
   const [geoError, setGeoError] = useState<boolean>(false);
@@ -160,8 +214,13 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   const [turnDistance, setTurnDistance] = useState<number>(0);
   const [turnModifier, setTurnModifier] = useState<string | undefined>();
   const [turnType, setTurnType] = useState<string | undefined>();
-  const [isGoogleView, setIsGoogleView] = useState(false);
+  const [mapView, setMapView] = useState<'mapbox' | 'google' | 'osm'>(() => {
+    return import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ? 'mapbox' : 'osm';
+  });
   const [isNetworkOffline, setIsNetworkOffline] = useState(!navigator.onLine);
+  const [showOverlays, setShowOverlays] = useState(true);
+  
+  const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
   
   // Custom Regional Tile Preloader (Browser Native Caching)
   useEffect(() => {
@@ -176,15 +235,15 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       const latRad = tLat * Math.PI / 180;
       const y = Math.floor((1.0 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2.0 * n);
       
-      // Using CartoDB Light (No-Cost)
+      // Using OpenStreetMap Standard
       for (let dx = -2; dx <= 2; dx++) {
         for (let dy = -2; dy <= 2; dy++) {
           const img = new Image();
-          const s = ['a', 'b', 'c', 'd'][Math.abs(dx + dy) % 4];
-          img.src = `https://${s}.basemaps.cartocdn.com/light_all/${z}/${x+dx}/${y+dy}.png`;
+          const s = ['a', 'b', 'c'][Math.abs(dx + dy) % 3];
+          img.src = `https://${s}.tile.openstreetmap.org/${z}/${x+dx}/${y+dy}.png`;
         }
       }
-      console.log("REGION PILOT CACHE: Preloaded Tembisa, Ivory Park & Kaalfontein sector tiles.");
+      console.log("REGION PILOT CACHE: Preloaded Tembisa, Ivory Park & Kaalfontein sector OSM tiles.");
     };
     
     // Only run when idle to prevent boot lag
@@ -249,12 +308,26 @@ export const AppMapBackground = React.memo(function AppMapBackground({
 
   const isPickedUp = activeOrder?.delivery_status === 'picked_up';
   
-  // Refined regional destination fallbacks (Ivory Park / Tembisa / Kaalfontein)
+  // Refined regional destination fallbacks
+  const routeWaypoints: ([number, number] | null)[] = useMemo(() => {
+    if (!activeOrder || !routedStartPos) return [];
+    
+    const pickup: [number, number] = [activeOrder.shop_lat || -25.9922, activeOrder.shop_lng || 28.2045];
+    const dropoff: [number, number] = [activeOrder.lat || -25.9933, activeOrder.lng || 28.2125];
+    
+    if (activeOrder.delivery_status === 'picked_up') {
+      return [routedStartPos, dropoff];
+    } else {
+      return [routedStartPos, pickup, dropoff];
+    }
+  }, [activeOrder, routedStartPos]);
+
   const targetPos: [number, number] | null = useMemo(() => {
-    return activeOrder 
-      ? (isPickedUp ? [activeOrder.lat || -25.9933, activeOrder.lng || 28.2125] : [activeOrder.shop_lat || -25.9922, activeOrder.shop_lng || 28.2045]) 
-      : null;
-  }, [activeOrder, isPickedUp]);
+    if (!activeOrder) return null;
+    return activeOrder.delivery_status === 'picked_up' 
+      ? [activeOrder.lat || -25.9933, activeOrder.lng || 28.2125] 
+      : [activeOrder.shop_lat || -25.9922, activeOrder.shop_lng || 28.2045];
+  }, [activeOrder]);
 
   // Basic Signal Quality Logic
   const timeSinceLastUpdate = Math.floor((localNow - lastUpdate) / 1000);
@@ -288,10 +361,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         const newLng = pos.coords.longitude;
         const accuracy = pos.coords.accuracy;
         
-        // Jitter Reduction: Apply a 0.2 Alpha Low-Pass Filter
+        // Jitter Reduction: Apply a 0.5 Alpha Low-Pass Filter
         // Only trust coordinates with accuracy < 100m for smoothing
         if (accuracy < 100 && prevPos.current) {
-          const alpha = 0.25; 
+          const alpha = 0.5; 
           const filteredLat = (alpha * newLat) + ((1 - alpha) * prevPos.current[0]);
           const filteredLng = (alpha * newLng) + ((1 - alpha) * prevPos.current[1]);
           setRiderPos([filteredLat, filteredLng]);
@@ -304,7 +377,11 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         setLastUpdate(Date.now());
       },
       (err) => {
-        console.warn('Geolocation error:', err.message, err.code);
+        // Silencing timeout logs to reduce noise for users in low-signal areas
+        if (err.code !== 3) {
+          console.warn('Geolocation error:', err.message, err.code);
+        }
+        
         // 1: Permission Denied, 2: Position Unavailable, 3: Timeout
         if (err.code === 1) {
           setGeoError(true);
@@ -323,7 +400,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       { 
         enableHighAccuracy: true, 
         timeout: 15000, 
-        maximumAge: 0 
+        maximumAge: 5000 
       }
     );
     
@@ -474,6 +551,11 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       if (lastVibratedInstruction.current !== instructionAlpha) {
         try {
           navigator.vibrate([100, 50, 100]);
+          toast.info(turnInstructionText, { 
+            description: "Approach vector active",
+            icon: <Radar className="w-4 h-4 text-cyan-400" />,
+            duration: 3000
+          });
           lastVibratedInstruction.current = instructionAlpha;
           lastVibrationTime.current = now;
         } catch (e) {
@@ -489,6 +571,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
     if (isAtDestination && !hasVibratedArrival.current) {
       try {
         navigator.vibrate(500);
+        toast.success("Destination reached", { 
+          description: "Mission phase complete.",
+          icon: <Zap className="w-4 h-4 text-emerald-400" />
+        });
         hasVibratedArrival.current = true;
         lastVibrationTime.current = now;
       } catch (e) {
@@ -505,35 +591,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
     }
   }, [activeOrder]);
 
-  // SMOOTH RIDER MOVEMENT SIMULATION (MOCK)
-  // When an active mission is in progress, the rider visually drifts towards the target.
+  // SMOOTH RIDER MOVEMENT SIMULATION (Removed as requested to trust real telemetry)
+  // When an active mission is in progress, the rider visually trusts the real location from the platform.
   useEffect(() => {
-    if (!activeOrder || !targetPos || !riderPos) return;
-
-    // Movement speed: approx 2 meters every 2 seconds
-    const moveInterval = setInterval(() => {
-      const [rLat, rLng] = riderPos;
-      const [tLat, tLng] = targetPos;
-
-      // Distance check - stop moving if close enough (within 15m)
-      const dist = getDistance([rLat, rLng], [tLat, tLng]);
-      if (dist < 0.015) {
-        clearInterval(moveInterval);
-        return;
-      }
-
-      // Calculate direction vector
-      const vectorLat = tLat - rLat;
-      const vectorLng = tLng - rLng;
-      
-      const newLat = rLat + (vectorLat * 0.05);
-      const newLng = rLng + (vectorLng * 0.05);
-
-      setRiderPos([newLat, newLng]);
-      setLastUpdate(Date.now());
-    }, 2000);
-
-    return () => clearInterval(moveInterval);
+    // We trust external telemetry now
   }, [activeOrder, targetPos, riderPos]);
 
   const rootClassName = `absolute inset-0 z-0 overflow-hidden pointer-events-auto transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`;
@@ -668,37 +729,80 @@ export const AppMapBackground = React.memo(function AppMapBackground({
           [-25.930, 28.260]  // Northeast
         ]}
         maxBoundsViscosity={1.0}
-        zoomControl={true}
+        zoomControl={false}
         scrollWheelZoom={true}
         touchZoom={true}
         tap={false} /* Leaflet 1.0+ handles tap better without this */
-        className={cn(
-          "w-full h-full transition-all duration-1000",
-          !isGoogleView ? "brightness-[1.02] contrast-[0.98] saturate-[0.8]" : ""
-        )}
+        className="w-full h-full transition-all duration-1000 bg-[#0a0a0a]"
       >
         <InnerMapListener onClick={() => {
+          setShowOverlays(prev => !prev);
           if (onMapClick) onMapClick();
         }} />
+        <CustomMapControls riderPos={riderPos} />
         <MapController 
           riderPos={riderPos} 
           activeOrder={activeOrder} 
           highlightedOrder={allOrders?.find(o => o.id === highlightedOrderId)} 
         />
-        {isGoogleView ? (
+        {mapView === 'google' ? (
           <TileLayer
-            url="https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}"
+            url="https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
             subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
             attribution='&copy; Google Maps'
           />
+        ) : mapView === 'mapbox' && mapboxToken ? (
+          <TileLayer
+            url={`https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}?access_token=${mapboxToken}`}
+            attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a>'
+          />
+        ) : mapView === 'osm' ? (
+          <TileLayer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            className="filter invert-[1] hue-rotate-180 brightness-[0.8] contrast-[1.2]"
+          />
         ) : (
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            className="filter invert-[1] hue-rotate-180 brightness-[0.85] contrast-[1.1]"
           />
         )}
         
         <Marker position={riderPos} icon={mockRiderIcon} zIndexOffset={100} />
+        
+        {/* Prominent Map-Based ETA Overlay */}
+        {activeOrder && etaMins > 0 && (
+          <Marker 
+            position={[riderPos[0] + 0.0005, riderPos[1]]} 
+            icon={L.divIcon({
+              html: `
+                <div style="background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); padding: 4px 8px; border-radius: 20px; border: 1px solid rgba(0,242,255,0.4); display: flex; align-items: center; gap: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);">
+                  <div style="width: 6px; height: 6px; border-radius: 50%; background: #00f2ff; box-shadow: 0 0 8px #00f2ff;" class="animate-pulse"></div>
+                  <span style="color: white; font-family: 'Inter', sans-serif; font-weight: 900; font-style: italic; font-size: 10px; white-space: nowrap;">${etaMins} MIN ETA</span>
+                </div>
+              `,
+              className: 'eta-marker-bubble',
+              iconSize: [100, 30],
+              iconAnchor: [50, 40]
+            })}
+          />
+        )}
+        
+        {/* Rider-to-Destination Tactical Polyline */}
+        {activeOrder && targetPos && (
+          <Polyline 
+            positions={[riderPos, targetPos]}
+            pathOptions={{
+              color: '#00f2ff',
+              weight: 2,
+              dashArray: '5, 10',
+              opacity: 0.6,
+              className: 'tactical-tracker-line'
+            }}
+          />
+        )}
         
         {/* Delivery Zone Boundaries (Tembisa, Ivory Park & Kaalfontein Sector) */}
         <Circle 
@@ -715,22 +819,28 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         {/* Render markers for all available missions when not focusing on active order */}
         {!activeOrder && allOrders.length > 0 && (
           <>
-            {allOrders.map((order, idx) => {
+            {allOrders.filter(order => {
+              if (!riderPos) return true;
+              const shopPos: [number, number] = [order.shop_lat || -25.9922, order.shop_lng || 28.2045];
+              return getDistance(riderPos, shopPos) < 5; // Cluster optimization: rendering only nearby orders
+            }).map((order, i) => {
+              // Preserve original indexing conceptually if needed, or just map sequentially from 0
+              const idx = allOrders.findIndex(o => o.id === order.id);
               const shopPos: [number, number] = [order.shop_lat || -25.9922, order.shop_lng || 28.2045];
               const custPos: [number, number] | null = order.lat && order.lng ? [order.lat, order.lng] : null;
               const isHighlight = highlightedOrderId === order.id;
               
+              // Merchant status logic for pilot
+              const statuses = ['OPEN', 'BUSY', 'CLOSED'];
+              const status = statuses[idx % 3];
+              const statusColor = status === 'OPEN' ? '#22c55e' : status === 'BUSY' ? '#f59e0b' : '#ef4444';
+              
               return (
                 <React.Fragment key={order.id}>
-                  {/* Merchant Marker */}
+                  {/* Merchant Marker with Status Indicator */}
                   <Marker 
                     position={shopPos} 
-                    icon={L.divIcon({
-                      html: `<div style="background-color: #f59e0b; padding: 4px; border-radius: 50%; border: ${isHighlight ? '3px' : '2px'} solid white; box-shadow: 0 0 ${isHighlight ? '30px' : '15px'} rgba(245, 158, 11, ${isHighlight ? '1' : '0.6'}); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: ${isHighlight ? '14px' : '11px'}; color: black; width: ${isHighlight ? '36px' : '28px'}; height: ${isHighlight ? '36px' : '28px'}; transform: scale(${isHighlight ? 1.2 : 1}); transition: all 0.3s ease;">${idx + 1}</div>`,
-                      className: isHighlight ? 'order-sequence-marker z-50' : 'order-sequence-marker',
-                      iconSize: isHighlight ? [42, 42] : [28, 28],
-                      iconAnchor: isHighlight ? [21, 21] : [14, 14],
-                    })}
+                    icon={getSequenceIcon(idx, isHighlight, statusColor, status)}
                     eventHandlers={{
                       click: () => {
                         onOrderMarkerClick?.(order.id);
@@ -750,12 +860,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
                   {custPos && (
                     <Marker 
                       position={custPos} 
-                      icon={L.divIcon({
-                        html: `<div style="background-color: #3b82f6; padding: 4px; border-radius: 50%; border: ${isHighlight ? '3px' : '2px'} solid white; box-shadow: 0 0 ${isHighlight ? '30px' : '15px'} rgba(59, 130, 246, ${isHighlight ? '1' : '0.6'}); display: flex; align-items: center; justify-content: center; font-family: 'Inter', sans-serif; font-weight: 900; font-size: ${isHighlight ? '14px' : '11px'}; color: white; width: ${isHighlight ? '32px' : '24px'}; height: ${isHighlight ? '32px' : '24px'}; transform: scale(${isHighlight ? 1.2 : 1}); transition: all 0.3s ease;"><svg width="${isHighlight ? '16' : '12'}" height="${isHighlight ? '16' : '12'}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>`,
-                        className: isHighlight ? 'customer-marker-mini z-50' : 'customer-marker-mini',
-                        iconSize: isHighlight ? [38, 38] : [24, 24],
-                        iconAnchor: isHighlight ? [19, 19] : [12, 12],
-                      })}
+                      icon={getCustomerMiniIcon(isHighlight)}
                       eventHandlers={{
                         click: () => {
                           onOrderMarkerClick?.(order.id);
@@ -798,11 +903,11 @@ export const AppMapBackground = React.memo(function AppMapBackground({
           </>
         )}
 
-        {targetPos && (
+        {routeWaypoints.length >= 2 && (
           <>
-            <Marker position={targetPos} icon={isPickedUp ? mockCustomerIcon : mockMerchantIcon} />
+            {targetPos && <Marker position={targetPos} icon={isPickedUp ? mockCustomerIcon : mockMerchantIcon} />}
             {/* We only show the direct line if routing is unavailable or in fallback mode */}
-            {isFallback && (
+            {isFallback && targetPos && (
               <Polyline 
                 positions={[riderPos, targetPos] as [number, number][]} 
                 pathOptions={{ 
@@ -814,8 +919,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
               />
             )}
             <RoutingMachine 
-              start={routedStartPos} 
-              end={targetPos} 
+              waypoints={routeWaypoints}
               color="#00f2ff" 
               cacheId={activeOrder?.id}
               onFallback={setIsFallback}
@@ -891,18 +995,48 @@ export const AppMapBackground = React.memo(function AppMapBackground({
 
         {/* Status Pills */}
         <div className="flex flex-col gap-2 items-end">
-          <button 
-            onClick={() => setIsGoogleView(!isGoogleView)}
-            className={cn(
-              "px-3 py-1.5 rounded-full border flex items-center gap-2 transition-all duration-300 backdrop-blur-md shadow-lg pointer-events-auto",
-              isGoogleView ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900/40 border-white/10 text-white"
+          <div className="flex flex-wrap gap-2 justify-end">
+            {mapboxToken && (
+              <button 
+                onClick={() => setMapView('mapbox')}
+                className={cn(
+                  "px-3 py-1.5 rounded-full border flex items-center gap-2 transition-all duration-300 backdrop-blur-md shadow-lg pointer-events-auto",
+                  mapView === 'mapbox' ? "bg-cyan-500 text-black border-cyan-500" : "bg-zinc-900/40 border-white/10 text-white"
+                )}
+              >
+                <MapIcon size={10} className={cn(mapView === 'mapbox' && "fill-black")} />
+                <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
+                  MAPBOX
+                </span>
+              </button>
             )}
-          >
-            <MapIcon size={10} className={cn(isGoogleView && "fill-black")} />
-            <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
-              {isGoogleView ? "GOOGLE MAPS ON" : "COMPARE ROAD"}
-            </span>
-          </button>
+
+            <button 
+              onClick={() => setMapView('osm')}
+              className={cn(
+                "px-3 py-1.5 rounded-full border flex items-center gap-2 transition-all duration-300 backdrop-blur-md shadow-lg pointer-events-auto",
+                mapView === 'osm' ? "bg-emerald-500 text-black border-emerald-500" : "bg-zinc-900/40 border-white/10 text-white"
+              )}
+            >
+              <Activity size={10} className={cn(mapView === 'osm' && "fill-black")} />
+              <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
+                OSM
+              </span>
+            </button>
+            
+            <button 
+              onClick={() => setMapView('google')}
+              className={cn(
+                "px-3 py-1.5 rounded-full border flex items-center gap-2 transition-all duration-300 backdrop-blur-md shadow-lg pointer-events-auto",
+                mapView === 'google' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900/40 border-white/10 text-white"
+              )}
+            >
+              <MapIcon size={10} className={cn(mapView === 'google' && "fill-black")} />
+              <span className="text-[9px] font-black uppercase tracking-[0.2em] leading-none">
+                GOOGLE
+              </span>
+            </button>
+          </div>
 
           <div className={cn(
             "px-3 py-1.5 rounded-full border flex items-center gap-3 transition-all duration-500 backdrop-blur-md shadow-lg",
@@ -930,13 +1064,57 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       </div>
     </div>
 
+      {/* Proximity Alert Flash */}
+      <AnimatePresence>
+        {activeOrder && turnDistance < 100 && turnDistance > 0 && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.2, 0] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1, repeat: Infinity }}
+            className="absolute inset-0 z-[1000] bg-[#00f2ff]/10 pointer-events-none border-[10px] border-[#00f2ff]/20"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Navigation HUD Overlay - Top Center */}
       <AnimatePresence>
-        {activeOrder && (
+        {!hideNavigationHUD && showOverlays && activeOrder && (
           <motion.div 
-            initial={{ opacity: 0, y: -20 }}
+            initial={{ opacity: 0, x: -20, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: -20, scale: 0.95 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="absolute top-10 left-4 z-[700] pointer-events-none text-left"
+          >
+            <div className="p-4 bg-black/80 backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-2xl flex flex-col gap-1 items-start min-w-[200px]">
+               <div className="flex items-center gap-2 mb-1">
+                  <div className="w-2 h-2 bg-[#f59e0b] rounded-full animate-pulse shadow-[0_0_8px_#f59e0b]" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Mission Payout</span>
+               </div>
+               <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-headline font-black italic text-[#f59e0b]">
+                    R{activeOrder.delivery_fee?.toFixed(2) || (activeOrder.distance_km && activeOrder.distance_km > 3 ? '10.00' : '5.00')}
+                  </span>
+                  <span className="text-sm font-black uppercase text-white">FIXED</span>
+               </div>
+               <div className="mt-1 px-3 py-1 bg-white/5 rounded-full border border-white/10">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b]">
+                    {activeOrder.delivery_fee && activeOrder.delivery_fee > 5 ? "Zone B: Premium Sector (+R5)" : "Zone A: Standard Sector (R5)"}
+                  </span>
+               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {activeOrder && showOverlays && !hideNavigationHUD && (
+          <motion.div 
+            initial={{ opacity: 0, y: -40 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            exit={{ opacity: 0, y: -40 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className="absolute top-20 left-1/2 -translate-x-1/2 z-[600] pointer-events-none w-full max-w-[400px] px-4"
           >
             <div className="bg-zinc-950/95 backdrop-blur-2xl border border-zinc-800 p-4 rounded-[2rem] shadow-[0_30px_60px_-15px_rgba(0,0,0,0.8)] flex flex-col gap-2 relative overflow-hidden">

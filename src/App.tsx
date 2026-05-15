@@ -1348,7 +1348,7 @@ const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
         attributionControl={false}
         className="brightness-[1.05] contrast-[0.95] saturate-[0.8]"
       >
-        <TileLayer url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png" />
+        <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png" />
         <Marker 
           position={center} 
           icon={L.divIcon({
@@ -1362,12 +1362,13 @@ const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
   onShowTracking?: (id: string) => void;
   profile?: RiderProfile;
+  isNavVisible?: boolean;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -1517,27 +1518,8 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               onDistanceUpdate={setRouteDistance}
               riderProfileLat={profile?.current_latitude}
               riderProfileLng={profile?.current_longitude}
+              hideNavigationHUD={isNavVisible}
             />
-            {/* Tactical HUD Overlay for payout transparency */}
-            <div className="absolute top-10 left-4 z-[70] pointer-events-none">
-              <div className="p-4 bg-black/80 backdrop-blur-xl rounded-[2rem] border border-white/10 shadow-2xl flex flex-col gap-1 items-start min-w-[200px]">
-                 <div className="flex items-center gap-2 mb-1">
-                    <div className="w-2 h-2 bg-[#f59e0b] rounded-full animate-pulse shadow-[0_0_8px_#f59e0b]" />
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Mission Payout</span>
-                 </div>
-                 <div className="flex items-baseline gap-2">
-                    <span className="text-4xl font-headline font-black italic text-[#f59e0b]">
-                      R{currentOrder.delivery_fee?.toFixed(2) || (currentOrder.distance_km && currentOrder.distance_km > 3 ? '10.00' : '5.00')}
-                    </span>
-                    <span className="text-sm font-black uppercase text-white">FIXED</span>
-                 </div>
-                 <div className="mt-1 px-3 py-1 bg-white/5 rounded-full border border-white/10">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b]">
-                      {currentOrder.delivery_fee && currentOrder.delivery_fee > 5 ? "Zone B: Premium Sector (+R5)" : "Zone A: Standard Sector (R5)"}
-                    </span>
-                 </div>
-              </div>
-            </div>
           </>
         ) : (
           <SimpleMap 
@@ -1749,27 +1731,29 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       </div>
 
       <AnimatePresence>
-        <motion.div 
-          initial={{ y: 100, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          exit={{ y: 100, opacity: 0 }}
-          className="bg-black/60 backdrop-blur-2xl p-6 pb-12 pointer-events-auto border-t border-white/10 z-50 flex flex-col gap-6"
-        >
+        {!isNavVisible && (
+          <motion.div 
+            initial={{ y: 200, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 200, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="bg-black/80 backdrop-blur-3xl p-4 pb-10 pointer-events-auto border-t border-white/5 z-50 flex flex-col gap-3 shadow-[0_-20px_40px_rgba(0,0,0,0.4)]"
+          >
           {/* Order Sequence & Controls */}
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex gap-2 overflow-x-auto no-scrollbar">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
               {displayOrders.map((o, idx) => (
                 <button
                   key={o.id}
                   onClick={() => setActiveIndex(idx)}
                   className={cn(
-                    "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 border whitespace-nowrap",
+                    "px-3 py-1.5 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 border whitespace-nowrap",
                     activeIndex === idx 
                       ? "bg-[#f59e0b] text-black border-[#f59e0b]" 
                       : "bg-zinc-900 text-zinc-500 border-zinc-800"
                   )}
                 >
-                  <div className={cn("w-1.5 h-1.5 rounded-full", activeIndex === idx ? "bg-black" : (o.delivery_status === 'picked_up' ? "bg-emerald-500" : "bg-zinc-600"))} />
+                  <div className={cn("w-1 h-1 rounded-full", activeIndex === idx ? "bg-black" : (o.delivery_status === 'picked_up' ? "bg-emerald-500" : "bg-zinc-600"))} />
                   {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
                 </button>
               ))}
@@ -1777,22 +1761,26 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
             
             <button 
               onClick={optimizeRoute}
-              className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600 hover:text-white transition-colors shrink-0"
+              className="text-[8px] font-black uppercase tracking-[0.2em] text-zinc-600 hover:text-white transition-colors bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800 shrink-0"
             >
-              OPTIMIZE
+              OPT
             </button>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex flex-col min-w-0 flex-1 mr-4">
-              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic mb-1">TASK</span>
-              <h2 className="text-xl font-headline font-black italic text-white uppercase tracking-tight truncate">
-                {isPickedUp ? 'Deliver' : 'Pick up'} • {targetAddress || 'ADDRESS LOCK'}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 mb-1">
+                <div className={cn("px-1 py-0.5 rounded text-[8px] font-black tracking-tighter uppercase bg-transparent", isPickedUp ? "text-emerald-500" : "text-[#f59e0b]")}>
+                  • {isPickedUp ? 'DELIVERING' : 'HEADING TO PICK UP'}
+                </div>
+              </div>
+              <h2 className="text-lg font-headline font-black italic text-white uppercase tracking-tight truncate leading-none">
+                {targetAddress || 'ADDRESS LOCK'}
               </h2>
               {routeDistance > 0 && (
                 <div className="flex items-center gap-2 mt-1">
-                  <Activity size={10} className="text-[#f59e0b] animate-pulse" />
-                  <span className="text-[10px] font-mono text-zinc-500 uppercase">{(routeDistance / 1000).toFixed(1)} KM REMAINING</span>
+                  <Activity size={8} className="text-[#f59e0b] animate-pulse" />
+                  <span className="text-[8px] font-mono text-zinc-500 uppercase">{(routeDistance / 1000).toFixed(1)} KM OUT</span>
                 </div>
               )}
             </div>
@@ -1801,21 +1789,22 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               className="text-right flex flex-col items-end cursor-pointer group active:scale-95 transition-transform"
               onClick={(e) => { e.stopPropagation(); if(isVoiceSupported) startListening(); }}
             >
-              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic mb-1 flex items-center gap-2">
-                ETA {isListening && <Mic size={10} className="text-red-500 animate-pulse" />}
-              </span>
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest italic">ETA</span>
+                {isListening && <Mic size={8} className="text-red-500 animate-pulse" />}
+              </div>
               <p className={cn(
-                "text-2xl font-headline font-black italic leading-none transition-colors",
-                isListening ? "text-red-500" : "text-[#f59e0b]"
+                "text-xl font-headline font-black italic leading-none transition-colors px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl",
+                isListening ? "text-red-500 border-red-500/20" : "text-[#f59e0b]"
               )}>
-                {activeEta || etaDisplay} <span className="text-[10px] tracking-tighter">MIN</span>
+                {activeEta || etaDisplay} <span className="text-[8px] tracking-tighter">M</span>
               </p>
             </div>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* Progress Bar */}
-            <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden relative">
+            <div className="w-full h-0.5 bg-zinc-900 rounded-full overflow-hidden relative">
               <motion.div 
                 className="absolute left-0 top-0 bottom-0 bg-[#f59e0b] shadow-[0_0_10px_#f59e0b]" 
                 initial={{ width: 0 }} 
@@ -1825,25 +1814,14 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
             </div>
 
             <SwipeButton 
-              label={isPickedUp ? "SLIDE TO COMPLETE DELIVERY" : "SLIDE TO PICK UP"}
+              label={isPickedUp ? "COMPLETE DELIVERY" : "CONFIRM PICK UP"}
               onComplete={() => onUpdateStatus(currentOrder.id, isPickedUp ? 'delivered' : 'picked_up')}
               color="#f59e0b"
               resetToken={currentOrder.delivery_status}
             />
-            {currentOrder.delivery_status !== 'picked_up' && currentOrder.delivery_status !== 'delivered' && (
-              <button 
-                onClick={() => {
-                  if (window.confirm('Are you sure you want to abort this mission?')) {
-                    onUpdateStatus(currentOrder.id, 'finding_rider');
-                  }
-                }}
-                className="w-full mt-4 py-3 border border-red-500/20 text-red-500/80 hover:bg-red-500/10 hover:text-red-500 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all"
-              >
-                Abort Mission
-              </button>
-            )}
           </div>
         </motion.div>
+        )}
       </AnimatePresence>
   </div>
   );
@@ -2755,7 +2733,11 @@ export default function App() {
               created_at: new Date().toISOString(),
               restaurant_name: 'Test Burger Hub',
               shop_id: 's1',
-              distance_km: 2.3
+              distance_km: 2.3,
+              lat: -25.9933, // Match AppMapBackground fallback
+              lng: 28.2125,
+              shop_lat: -25.9922,
+              shop_lng: 28.2045
             }] as DeliveryOrder[];
             return mocks;
           });
@@ -2802,7 +2784,8 @@ export default function App() {
         .select('*, shops(name)')
         .eq('delivery_status', 'finding_rider')
         .in('shop_id', validShopIds)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(50);
 
       if (ordersError) throw ordersError;
 
@@ -2810,10 +2793,10 @@ export default function App() {
         const formatted = ordersData
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .map((item: any) => {
-            const shopLat = item.shop_lat || -33.9249;
-            const shopLng = item.shop_lng || 18.4241;
-            const riderLat = profile?.current_latitude || -33.9100; // default near shop if missing
-            const riderLng = profile?.current_longitude || 18.4100;
+            const shopLat = item.shop_lat || -25.9922;
+            const shopLng = item.shop_lng || 28.2045;
+            const riderLat = profile?.current_latitude || -25.9964; // Regional pilot fallback (Tembisa)
+            const riderLng = profile?.current_longitude || 28.2268;
             
             return {
               ...item,
@@ -2979,18 +2962,17 @@ export default function App() {
              addBootLog('GPS_TIMEOUT: RECALIBRATING...');
           }
           
-          // Regional Fallback (Kopanong Shopping Centre Centerpoint)
-          // Using a small jitter to keep the tactical map active
-          const baseLat = -26.002; 
-          const baseLng = 28.225;
-          const jitterLat = (Math.random() - 0.5) * 0.0005;
-          const jitterLng = (Math.random() - 0.5) * 0.0005;
-          updateLocation(baseLat + jitterLat, baseLng + jitterLng);
+          // Regional Fallback if NO initial position found (Kopanong Shopping Centre Centerpoint)
+          if (!profile?.current_latitude) {
+            const baseLat = -25.9964; 
+            const baseLng = 28.2268;
+            updateLocation(baseLat, baseLng);
+          }
         },
         { 
           enableHighAccuracy: true, 
-          timeout: 15000, 
-          maximumAge: 0 
+          timeout: 45000, 
+          maximumAge: 10000 
         }
       );
     }
@@ -3016,6 +2998,15 @@ export default function App() {
     }, 12000); // 12s safety timeout
 
     try {
+      if (isSupabaseMocked()) {
+        setTimeout(() => {
+          addBootLog('AUTH: MOCKED_MODE_ACTIVE');
+          setLoading(false);
+          clearTimeout(bootTimeout);
+        }, 0);
+        return () => clearTimeout(bootTimeout);
+      }
+
       getSupabase().auth.getSession().then(({ data: { session } }) => {
         addBootLog(session ? 'AUTH: SESSION_RESTORED' : 'AUTH: NO_SESSION_DETECTED');
         if (session) {
@@ -4389,6 +4380,7 @@ NOTIFY pgrst, 'reload schema';
                       setView('tracking');
                     }}
                     profile={profile || undefined}
+                    isNavVisible={isGlobalNavVisible}
                   />
                 </div>
               ) : (
@@ -4438,7 +4430,7 @@ NOTIFY pgrst, 'reload schema';
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 25 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className="fixed bottom-0 left-0 w-full p-6 z-[60] pointer-events-auto"
           >
             <div className="max-w-md md:max-w-5xl mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-[2.5rem] p-2 flex items-center justify-between xl:justify-center xl:gap-10 shadow-2xl">

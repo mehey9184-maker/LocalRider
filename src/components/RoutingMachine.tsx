@@ -4,6 +4,15 @@ import L from 'leaflet';
 import 'leaflet-routing-machine';
 import { toast } from 'sonner';
 
+// Suppress OSRM demo server warning from Leaflet Routing Machine
+const originalConsoleWarn = console.warn;
+console.warn = (...args) => {
+  if (args[0] && typeof args[0] === 'string' && args[0].includes("OSRM's demo server")) {
+    return; // Suppress this specific warning
+  }
+  originalConsoleWarn(...args);
+};
+
 // Need to fix icon issues with Leaflet
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -13,8 +22,7 @@ L.Icon.Default.mergeOptions({
 });
 
 interface RoutingMachineProps {
-  start: [number, number] | null;
-  end: [number, number];
+  waypoints: ([number, number] | null)[];
   color?: string;
   cacheId?: string; // Optional ID to cache the route for offline use
   onFallback?: (isFallback: boolean) => void;
@@ -24,11 +32,14 @@ interface RoutingMachineProps {
   }) => void;
 }
 
-export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallback, onRouteFound }: RoutingMachineProps) {
+export function RoutingMachine({ waypoints, color = '#00f2ff', cacheId, onFallback, onRouteFound }: RoutingMachineProps) {
   const map = useMap();
   const routingControlRef = useRef<L.Routing.Control | null>(null);
   const [useFallback, setUseFallback] = useState(false);
   const [cachedRoute, setCachedRoute] = useState<L.LatLng[] | null>(null);
+
+  const start = waypoints[0];
+  const end = waypoints[waypoints.length - 1];
 
   // Distance calculating utility (Haversine)
   const getDistance = (p1: [number, number], p2: [number, number]) => {
@@ -101,33 +112,31 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
   }, [cacheId, onRouteFound]);
 
   useEffect(() => {
-    if (!map || !start || !end) return;
+    const validWaypoints = waypoints.filter((w): w is [number, number] => w !== null);
+    if (!map || validWaypoints.length < 2) return;
 
-    // Guard: Prevent OSRM from choking on massive distances (Inter-city Routing)
-    const dist = getDistance(start, end);
-    if (dist > 50) {
-      console.warn(`DISTANCE_GUARD: Waypoint separation ${dist.toFixed(1)}km exceeds OSRM threshold. Engaging straight-line guide.`);
+    // Guard: Prevent OSRM from choking on massive distances
+    const totalStraightDist = getDistance(validWaypoints[0], validWaypoints[validWaypoints.length - 1]);
+    if (totalStraightDist > 50) {
+      console.warn(`DISTANCE_GUARD: Waypoint separation ${totalStraightDist.toFixed(1)}km exceeds OSRM threshold. Engaging straight-line guide.`);
       setTimeout(() => setUseFallback(true), 0);
       return;
     }
 
     const router = L.Routing.osrmv1({
           serviceUrl: 'https://router.project-osrm.org/route/v1',
-          useHints: false, // Helps avoid some failures on demo server
+          useHints: false,
           timeout: 10000
         });
 
     // Create the routing control once
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const routingControl = (L.Routing as any).control({
-      waypoints: [
-        L.latLng(start[0], start[1]),
-        L.latLng(end[0], end[1])
-      ],
+      waypoints: validWaypoints.map(w => L.latLng(w[0], w[1])),
       router: router,
       routeWhileDragging: false,
       addWaypoints: false,
-      fitSelectedRoutes: false, // Don't snap camera, we handle it with AutoPan
+      fitSelectedRoutes: false,
       show: false, 
       containerClassName: 'hidden',
       itineraryClassName: 'hidden',
@@ -135,12 +144,12 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
         extendToWaypoints: true,
         missingRouteTolerance: 10,
         styles: [
-          { color: '#00f2ff', weight: 10, opacity: 0.15 }, // Outer Glow
+          { color: '#00f2ff', weight: 10, opacity: 0.2 }, // Outer Glow
           { color: '#000', weight: 8, opacity: 0.3 },    // Shadow
-          { color: color || '#00f2ff', weight: 6, opacity: 1.0 }    // Core Neon Line
+          { color: color || '#00f2ff', weight: 5, opacity: 1.0 }    // Core Neon Line
         ]
       },
-      createMarker: () => null, // Hide default markers
+      createMarker: () => null,
       draggableWaypoints: false
     }).addTo(map);
 
@@ -168,7 +177,7 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
       setUseFallback(true);
     };
 
-    const handleRouteFound = (e: RoutingEvent) => {
+    const handleRouteFoundInternal = (e: RoutingEvent) => {
       if (e.routes && e.routes.length > 0) {
         const route = e.routes[0];
         setUseFallback(false);
@@ -184,17 +193,17 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
     };
 
     control.on('routingerror', handleRouteError);
-    control.on('routesfound', handleRouteFound);
+    control.on('routesfound', handleRouteFoundInternal);
 
     return () => {
       try {
         control.off('routingerror', handleRouteError);
-        control.off('routesfound', handleRouteFound);
+        control.off('routesfound', handleRouteFoundInternal);
         if (map && routingControlRef.current) {
           try {
              routingControlRef.current.getPlan().setWaypoints([]);
           } catch {
-            // Error when clearing plan waypoints usually means the control was already partially destroyed
+            // IGNORE
           }
           map.removeControl(routingControlRef.current);
         }
@@ -204,26 +213,24 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
       routingControlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, color, cacheId]); // re-run if map instance, color or cacheId changes
+  }, [map, color, cacheId]); 
 
   // Update waypoints dynamically
   useEffect(() => {
-    if (routingControlRef.current && start && end) {
-      routingControlRef.current.setWaypoints([
-        L.latLng(start[0], start[1]),
-        L.latLng(end[0], end[1])
-      ]);
+    const validWaypoints = waypoints.filter((w): w is [number, number] => w !== null);
+    if (routingControlRef.current && validWaypoints.length >= 2) {
+      routingControlRef.current.setWaypoints(validWaypoints.map(w => L.latLng(w[0], w[1])));
     }
-  }, [start, end]);
+  }, [waypoints]);
 
   if (useFallback && cachedRoute) {
     return (
       <Polyline 
         positions={cachedRoute} 
         color={color} 
-        weight={6} 
-        opacity={0.5} 
-        dashArray="15, 10" 
+        weight={5} 
+        opacity={0.8} 
+        dashArray="10, 5" 
         className="animate-pulse"
       />
     );
@@ -235,8 +242,8 @@ export function RoutingMachine({ start, end, color = '#3b82f6', cacheId, onFallb
       <Polyline 
         positions={[start, end]} 
         color={color} 
-        weight={4} 
-        opacity={0.3} 
+        weight={3} 
+        opacity={0.4} 
         dashArray="5, 10" 
       />
     );

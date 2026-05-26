@@ -41,6 +41,7 @@ import {
   ExternalLink,
   Navigation2,
   ShieldCheck,
+  HelpCircle,
 } from 'lucide-react';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -2613,6 +2614,9 @@ export function App() {
   const [showOnboarding, setShowOnboarding] = useState(() => {
     return localStorage.getItem('localeats_onboarding_seen') !== 'true';
   });
+  const [onboardingMode, setOnboardingMode] = useState<'onboarding' | 'helphub'>(() => {
+    return localStorage.getItem('localeats_onboarding_seen') !== 'true' ? 'onboarding' : 'helphub';
+  });
   const [bootLogs, setBootLogs] = useState<string[]>([]);
   const [showRatingPrompt, setShowRatingPrompt] = useState<{orderId: string, entity: "merchant"|"customer"} | null>(null);
   const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
@@ -3696,21 +3700,24 @@ export function App() {
   };
 
   const handleOnboardingComplete = async () => {
-    if (!user) return;
-    try {
+    if (onboardingMode === 'onboarding') {
       localStorage.setItem('localeats_onboarding_seen', 'true');
-      if (!isSupabaseMocked()) {
-        await getSupabase()
-          .from('rider_profiles')
-          .update({ onboarding_complete: true })
-          .eq('id', user.id);
+      if (user) {
+        try {
+          if (!isSupabaseMocked()) {
+            await getSupabase()
+              .from('rider_profiles')
+              .update({ onboarding_complete: true })
+              .eq('id', user.id);
+          }
+          setProfile(prev => prev ? { ...prev, onboarding_complete: true } : null);
+          addBootLog('SYS_READY: OPERATOR_CERTIFIED');
+        } catch (e) {
+          console.error(e);
+        }
       }
-      setProfile(prev => prev ? { ...prev, onboarding_complete: true } : null);
-      setShowOnboarding(false);
-      addBootLog('SYS_READY: OPERATOR_CERTIFIED');
-    } catch {
-      setShowOnboarding(false);
     }
+    setShowOnboarding(false);
   };
 
   const handleOrderAccept = async (orderId: string) => {
@@ -4259,7 +4266,7 @@ NOTIFY pgrst, 'reload schema';
           </motion.div>
         )}
       </AnimatePresence>
-      {showOnboarding && <TacticalOnboarding onComplete={handleOnboardingComplete} />}
+      {showOnboarding && <TacticalOnboarding onComplete={handleOnboardingComplete} mode={onboardingMode} />}
       
       {/* Offline Warning Modal */}
       <AnimatePresence>
@@ -4738,6 +4745,34 @@ NOTIFY pgrst, 'reload schema';
           </motion.nav>
         )}
       </AnimatePresence>
+
+      {/* Floating System Intel Manual Trigger (?) */}
+      <div 
+        className={cn(
+          "fixed right-6 z-[80] transition-all duration-300 md:right-8",
+          (view !== 'move' ? true : isGlobalNavVisible) ? "bottom-28" : "bottom-6"
+        )}
+      >
+        <button
+          onClick={() => {
+            setOnboardingMode('helphub');
+            setShowOnboarding(true);
+          }}
+          className="relative w-12 h-12 rounded-full bg-zinc-950/95 border border-[#f59e0b]/40 text-[#f59e0b] hover:bg-zinc-900 active:scale-95 transition-all shadow-[0_0_15px_rgba(245,158,11,0.2)] hover:shadow-[0_0_25px_rgba(245,158,11,0.45)] flex items-center justify-center group pointer-events-auto backdrop-blur-md"
+          title="Open System Manual & Tour"
+        >
+          {/* Subtle spinning outline */}
+          <div className="absolute inset-0 rounded-full border border-dashed border-[#f59e0b]/20 group-hover:rotate-45 transition-transform duration-500" />
+          
+          <HelpCircle size={20} className="stroke-[2.5] group-hover:scale-110 transition-transform" />
+          
+          {/* Active flashing signal beacon to guide first time operators */}
+          <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#f59e0b]/60 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-[#f59e0b] flex items-center justify-center text-[7px] font-black text-black">?</span>
+          </span>
+        </button>
+      </div>
     </div>
   );
 }

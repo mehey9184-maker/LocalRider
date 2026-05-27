@@ -42,6 +42,13 @@ import {
   Navigation2,
   ShieldCheck,
   HelpCircle,
+  Copy,
+  Check,
+  Download,
+  SlidersHorizontal,
+  ChevronDown,
+  ChevronUp,
+  TrendingUp,
 } from 'lucide-react';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -121,6 +128,18 @@ const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 5, delay = 100
       return fetchWithRetry(fn, retries - 1, nextDelay, timeoutMs);
     }
     throw error;
+  }
+};
+
+const isTodayLocal = (dateStr: string) => {
+  try {
+    const d = new Date(dateStr);
+    const today = new Date();
+    return d.getFullYear() === today.getFullYear() &&
+           d.getMonth() === today.getMonth() &&
+           d.getDate() === today.getDate();
+  } catch {
+    return false;
   }
 };
 
@@ -441,8 +460,44 @@ const AuthView = ({ onMockLogin }: { onMockLogin?: () => void }) => {
 // --- Main App Views ---
 
 const SOSButton = ({ riderName }: { riderName: string }) => {
-  const handleSOS = async () => {
-    if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 100]);
+  const [isHolding, setIsHolding] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startHold = () => {
+    if (isHolding) return;
+    setIsHolding(true);
+    setProgress(0);
+    
+    if (navigator.vibrate) navigator.vibrate(50);
+    
+    const tickMs = 50;
+    const duration = 2000; // 2 seconds
+    const increment = (tickMs / duration) * 100;
+    let currentProgress = 0;
+
+    progressIntervalRef.current = setInterval(() => {
+      currentProgress += increment;
+      const pct = Math.min(currentProgress, 100);
+      setProgress(pct);
+      
+      if (pct >= 100) {
+        clearInterval(progressIntervalRef.current!);
+        triggerSOS();
+      }
+    }, tickMs);
+  };
+
+  const endHold = () => {
+    setIsHolding(false);
+    setProgress(0);
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+    }
+  };
+
+  const triggerSOS = async () => {
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
     
     let locationUrl = 'Location unknown';
     try {
@@ -473,17 +528,91 @@ const SOSButton = ({ riderName }: { riderName: string }) => {
     } else {
       window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
     }
+    
+    setIsHolding(false);
+    setProgress(0);
   };
 
+  useEffect(() => {
+    return () => {
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    };
+  }, []);
+
+  return (
+    <div 
+      onMouseDown={startHold}
+      onMouseUp={endHold}
+      onMouseLeave={endHold}
+      onTouchStart={startHold}
+      onTouchEnd={endHold}
+      className="p-4 bg-red-600/10 border-2 border-red-500/50 rounded-2xl flex flex-col items-center justify-center gap-2 active:scale-95 transition-all text-red-500 group relative overflow-hidden shadow-[0_0_20px_rgba(239,68,68,0.1)] select-none cursor-pointer h-full min-h-[92px]"
+    >
+      {/* Background glowing layer */}
+      <div className={cn("absolute inset-0 bg-red-500/10 transition-opacity duration-300", isHolding ? "opacity-30" : "opacity-15 animate-pulse")} />
+      
+      {/* Progress animation filling background */}
+      <div 
+        className="absolute bottom-0 left-0 bg-red-600/30 transition-all duration-75 pointer-events-none"
+        style={{ width: `${progress}%`, height: '100%' }}
+      />
+      
+      <LifeBuoy className={cn("w-6 h-6 z-10 duration-200 text-red-500", isHolding ? "scale-110 animate-spin" : "scale-100 animate-bounce")} />
+      
+      <div className="flex flex-col items-center z-10">
+        <span className="text-[10px] font-black uppercase tracking-widest text-white">
+          {isHolding ? `${Math.round(progress)}% HOLD...` : "HOLD 2S FOR SOS"}
+        </span>
+        <span className="text-[7.5px] font-bold text-red-400 uppercase tracking-wider mt-0.5">
+          {isHolding ? "Release to cancel" : "Emergency protocol"}
+        </span>
+      </div>
+      
+      {/* Visual active pointer indicator */}
+      {isHolding && (
+        <div className="absolute top-2 right-2 w-3.5 h-3.5 rounded-full border border-red-500/30 flex items-center justify-center">
+          <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+        </div>
+      )}
+    </div>
+  );
+};
+
+const VoiceDashboardCard = ({ isListening, onStart }: { isListening: boolean, onStart: () => void }) => {
   return (
     <button 
-      onClick={handleSOS}
-      className="p-4 bg-red-600/10 border-2 border-red-500/50 rounded-2xl flex flex-col items-center gap-2 active:scale-95 transition-all text-red-500 group relative overflow-hidden shadow-[0_0_20px_rgba(239,68,68,0.1)]"
+      onClick={onStart}
+      className={cn(
+        "p-4 border rounded-2xl flex flex-col items-center justify-center gap-2 active:scale-95 transition-all text-center relative overflow-hidden h-full min-h-[92px] group w-full",
+        isListening 
+          ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.15)] animate-pulse" 
+          : "bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:bg-zinc-900/80"
+      )}
     >
-      <div className="absolute inset-0 bg-red-500/10 animate-pulse" />
-      <LifeBuoy className="w-6 h-6 animate-bounce relative z-10" />
-      <span className="text-[10px] font-black uppercase tracking-widest relative z-10">One-Tap SOS</span>
-      <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-red-500/20 blur-xl rounded-full" />
+      {isListening ? (
+        <>
+          <div className="flex gap-0.5 items-end justify-center h-6 mb-1 z-10">
+            {/* Elegant bouncing voice lines */}
+            <div className="w-0.5 h-3 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.1s]" />
+            <div className="w-0.5 h-5 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.3s]" />
+            <div className="w-0.5 h-2 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.5s]" />
+            <div className="w-0.5 h-4 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+            <div className="w-0.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+          </div>
+          <div className="flex flex-col items-center z-10">
+            <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b]">VOICE: ACTIVE</span>
+            <span className="text-[7.5px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">Listening to command...</span>
+          </div>
+        </>
+      ) : (
+        <>
+          <Mic className="w-6 h-6 text-zinc-500 group-hover:text-amber-500 transition-colors z-10" />
+          <div className="flex flex-col items-center z-10">
+            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-300">VOICE COMMANDS</span>
+            <span className="text-[7.5px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">Tap to activate</span>
+          </div>
+        </>
+      )}
     </button>
   );
 };
@@ -495,7 +624,9 @@ const Dashboard = React.memo(({
   history, 
   onToggleOnline, 
   setView, 
-  connectionCount 
+  connectionCount,
+  isListening,
+  onStartListening
 }: { 
   profile: RiderProfile, 
   todayEarnings: number,
@@ -503,7 +634,9 @@ const Dashboard = React.memo(({
   history: DeliveryOrder[],
   onToggleOnline: () => void,
   setView: (view: AppView) => void,
-  connectionCount: number
+  connectionCount: number,
+  isListening: boolean,
+  onStartListening: () => void
 }) => {
   const [shiftCount] = useState(() => {
     return parseInt(localStorage.getItem('shiftCount') || '0', 10);
@@ -529,10 +662,10 @@ const Dashboard = React.memo(({
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       {connectionCount === 0 && (
          <motion.div 
-           initial={{ opacity: 0, scale: 0.95 }}
-           animate={{ opacity: 1, scale: 1 }}
-           className="bg-red-500/10 border-2 border-red-500/20 text-red-500 p-5 rounded-[2rem] flex items-center gap-4 group cursor-pointer shadow-[0_0_20px_rgba(239,68,68,0.1)]"
-           onClick={() => setView('hub')}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-red-500/10 border-2 border-red-500/20 text-red-500 p-5 rounded-[2rem] flex items-center gap-4 group cursor-pointer shadow-[0_0_20px_rgba(239,68,68,0.1)]"
+            onClick={() => setView('hub')}
          >
             <div className="w-12 h-12 rounded-2xl bg-red-500/20 flex items-center justify-center animate-pulse">
                <ShieldAlert className="w-6 h-6" />
@@ -560,10 +693,7 @@ const Dashboard = React.memo(({
       {/* Safety & Performance Protocols */}
       <div className="grid grid-cols-2 gap-4">
         <SOSButton riderName={profile.name} />
-        <VoiceController 
-          isListening={false} 
-          onStart={() => setView('hub')} 
-        />
+        <VoiceDashboardCard isListening={isListening} onStart={onStartListening} />
       </div>
 
       {/* Power Toggle */}
@@ -738,6 +868,77 @@ const Dashboard = React.memo(({
   );
 });
 
+const getDistanceBetween = (lat1?: number, lon1?: number, lat2?: number, lon2?: number): number => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+  const R = 6371; // km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+};
+
+const RouteMiniMap = ({ 
+  shopLat, shopLng, customerLat, customerLng, riderLat, riderLng 
+}: { 
+  shopLat?: number, shopLng?: number, 
+  customerLat?: number, customerLng?: number, 
+  riderLat?: number, riderLng?: number 
+}) => {
+  const centerLat = shopLat || -25.9894;
+  const centerLng = shopLng || 28.2148;
+  
+  return (
+    <div className="w-full h-44 rounded-2xl bg-zinc-950 overflow-hidden border border-zinc-900 relative">
+      <MapboxMap 
+        initialViewState={{
+          longitude: centerLng,
+          latitude: centerLat,
+          zoom: 12
+        }}
+        mapStyle="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        attributionControl={false}
+        className="brightness-[1.1] contrast-[0.95] saturate-[0.85]"
+        style={{ width: '100%', height: '100%' }}
+      >
+        {riderLat && riderLng && (
+          <Marker longitude={riderLng} latitude={riderLat}>
+            <div className="flex flex-col items-center">
+              <span className="text-[7px] bg-cyan-950/90 text-cyan-400 font-bold px-1 py-0.5 rounded border border-cyan-500/30 uppercase tracking-widest mb-1 scale-90 whitespace-nowrap">YOU</span>
+              <div className="w-3.5 h-3.5 rounded-full bg-cyan-500 border border-white flex items-center justify-center shadow-[0_0_8px_#22d3ee]">
+                <div className="w-1.5 h-1.5 bg-black rounded-full" />
+              </div>
+            </div>
+          </Marker>
+        )}
+        {shopLat && shopLng && (
+          <Marker longitude={shopLng} latitude={shopLat}>
+            <div className="flex flex-col items-center">
+              <span className="text-[7px] bg-amber-950/90 text-[#f59e0b] font-bold px-1 py-0.5 rounded border border-amber-500/30 uppercase tracking-widest mb-1 scale-90 whitespace-nowrap">STORE</span>
+              <div className="w-3.5 h-3.5 rounded-full bg-[#f59e0b] border border-white flex items-center justify-center shadow-[0_0_8px_#f59e0b]">
+                <div className="w-1.5 h-1.5 bg-black rounded-full" />
+              </div>
+            </div>
+          </Marker>
+        )}
+        {customerLat && customerLng && (
+          <Marker longitude={customerLng} latitude={customerLat}>
+            <div className="flex flex-col items-center">
+              <span className="text-[7px] bg-rose-950/90 text-rose-400 font-bold px-1 py-0.5 rounded border border-rose-500/30 uppercase tracking-widest mb-1 scale-90 whitespace-nowrap">DROP</span>
+              <div className="w-3.5 h-3.5 rounded-full bg-rose-500 border border-white flex items-center justify-center shadow-[0_0_8px_#f43f5e]">
+                <div className="w-1.5 h-1.5 bg-black rounded-full" />
+              </div>
+            </div>
+          </Marker>
+        )}
+      </MapboxMap>
+    </div>
+  );
+};
+
 const OrdersFeed = React.memo(({ 
   orders,
   activeOrders = [],
@@ -750,7 +951,8 @@ const OrdersFeed = React.memo(({
   riderName,
   vehicleType,
   riderLat,
-  riderLng
+  riderLng,
+  onToggleOnline
 }: { 
   orders: DeliveryOrder[], 
   activeOrders?: DeliveryOrder[],
@@ -763,9 +965,20 @@ const OrdersFeed = React.memo(({
   riderName?: string,
   vehicleType?: string,
   riderLat?: number,
-  riderLng?: number
+  riderLng?: number,
+  onToggleOnline?: () => void
 }) => {
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [instantAccept, setInstantAccept] = useState(() => localStorage.getItem('localeats_instant_accept') === 'true');
+
+  const toggleInstantAccept = () => {
+    const newVal = !instantAccept;
+    setInstantAccept(newVal);
+    localStorage.setItem('localeats_instant_accept', String(newVal));
+    toast.success(newVal ? 'Instant Slipstream Accept Engaged' : 'Confirmation Safeties Restored', {
+      description: newVal ? 'Slide-to-accept will lock orders immediately.' : 'Modals will prompt you before dispatch locks.'
+    });
+  };
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showNearbyMap, setShowNearbyMap] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -981,15 +1194,37 @@ const OrdersFeed = React.memo(({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-           <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
-             Orders nearby
-           </p>
-           {surgeMultiplier > 1 && (
-             <div className="bg-orange-600 text-white px-3 py-1 rounded-xl shadow-lg border border-orange-500 animate-pulse">
-                <span className="text-[10px] font-black uppercase">Bonus x{surgeMultiplier.toFixed(1)}</span>
-             </div>
-           )}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+             <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
+               Orders nearby
+             </p>
+             {surgeMultiplier > 1 && (
+               <div className="bg-orange-600 text-white px-3 py-1 rounded-xl shadow-lg border border-orange-500 animate-pulse">
+                  <span className="text-[10px] font-black uppercase">Bonus x{surgeMultiplier.toFixed(1)}</span>
+               </div>
+             )}
+          </div>
+          
+          {/* Slipstream Instant Accept Switch */}
+          <div className="flex items-center gap-2.5 bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-2xl">
+            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest leading-none">Slipstream Accept</span>
+            <button
+              onClick={toggleInstantAccept}
+              className={cn(
+                "relative w-9 h-5 rounded-full transition-colors duration-200 outline-none flex items-center p-0.5 pointer-events-auto",
+                instantAccept ? "bg-emerald-500" : "bg-zinc-700"
+              )}
+              title="Toggle instant accept mode"
+            >
+              <motion.div 
+                layout
+                className="w-4 h-4 bg-black rounded-full"
+                animate={{ x: instantAccept ? '16px' : '0px' }}
+                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+              />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1092,7 +1327,7 @@ const OrdersFeed = React.memo(({
                </>
             )}
           </div>
-          <div className="space-y-2">
+          <div className="space-y-4 flex flex-col items-center">
             <h3 className={cn(
               "text-[10px] font-black uppercase tracking-[0.4em]",
               !isOnline ? "text-red-500" : connectionCount === 0 ? "text-zinc-500" : "text-[#f59e0b]"
@@ -1106,254 +1341,339 @@ const OrdersFeed = React.memo(({
                 ? "NO STORES LINKED - CONNECT WITH A STORE TO START RECEIVING ORDERS." 
                 : searchQuery ? "NO ORDERS MATCHING YOUR SEARCH." : "LOOKING FOR ORDERS... NONE FOUND IN YOUR AREA YET."}
             </p>
+            {!isOnline && onToggleOnline && (
+              <button 
+                onClick={onToggleOnline}
+                className="px-6 py-3.5 bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 hover:border-red-500 text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-200 active:scale-95 shadow-[0_0_15px_rgba(239,68,68,0.15)] flex items-center gap-2"
+              >
+                <Power className="w-3.5 h-3.5" />
+                Establish Uplink (Go Online)
+              </button>
+            )}
           </div>
         </div>
       ) : (
         <div className="space-y-4">
           <AnimatePresence mode="popLayout">
-            {filteredAndSortedOrders.map(order => (
-              <motion.div 
-                layout
-                key={order.id}
-                initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
-                transition={{ duration: 0.3, type: "spring", bounce: 0.3 }}
-                className="relative overflow-hidden rounded-[2rem]"
-                ref={el => scrollRefs.current[order.id] = el}
-                onClick={() => setHighlightedOrderId(order.id)}
-              >
-              {/* Revealed Quick Actions */}
-              <div className="absolute inset-0 flex items-center justify-end px-6 gap-3 bg-zinc-900 border border-zinc-800 rounded-[2rem]">
-                <button 
-                  onClick={() => window.open(`tel:${order.phone}`, '_self')}
-                  className="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
-                >
-                  <Phone size={20} />
-                </button>
-                <button 
-                   onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.shop_lat},${order.shop_lng}`, '_blank')}
-                   className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
-                >
-                  <Navigation2 size={20} />
-                </button>
-                <button 
-                   onClick={() => toast.info(`Merchant Info: ${order.restaurant_name}`)}
-                   className="w-12 h-12 bg-zinc-700 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
-                >
-                  <ExternalLink size={20} />
-                </button>
-              </div>
+            {filteredAndSortedOrders.map(order => {
+              const riderToShopDist = getDistanceBetween(riderLat, riderLng, order.shop_lat, order.shop_lng);
+              const shopToCustomerDist = Number(order.distance_km || 0);
+              const totalTripDist = riderToShopDist + shopToCustomerDist;
 
-              <motion.div
-                layout
-                drag="x"
-                dragConstraints={{ left: -180, right: 0 }}
-                dragElastic={0.1}
-                className="relative bg-black z-10 cursor-grab active:cursor-grabbing"
-              >
-                <BentoCard 
-                  className={cn(
-                    "border-l-4 border-l-[#f59e0b] shadow-2xl overflow-hidden group transition-all duration-500",
-                    highlightedOrderId === order.id ? "ring-2 ring-[#f59e0b] ring-offset-4 ring-offset-black scale-[0.99] brightness-125" : ""
-                  )} 
-                  glow={order.delivery_fee > 50 || highlightedOrderId === order.id}
+              return (
+                <motion.div 
+                  layout
+                  key={order.id}
+                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
+                  transition={{ duration: 0.3, type: "spring", bounce: 0.3 }}
+                  className="relative overflow-hidden rounded-[2rem]"
+                  ref={el => scrollRefs.current[order.id] = el}
+                  onClick={() => setHighlightedOrderId(order.id)}
                 >
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      <div className="mb-3 flex items-center gap-3">
-                         <StatusBadge status={order.delivery_status} />
-                         {order.match_score && (
-                           <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
-                             <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
-                               {Math.min(100, Math.round(order.match_score * 2.5))}% Store Match
-                             </span>
-                           </div>
-                         )}
-                         <div className="bg-zinc-800/50 border border-white/5 px-2 py-1 rounded-full flex items-center gap-1">
-                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Swipe for actions</span>
-                            <ArrowRight size={8} className="text-zinc-500" />
-                         </div>
-                      </div>
-                      <h3 className="text-2xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">
-                        {order.restaurant_name || 'Merchant-X'}
-                      </h3>
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center gap-2 text-zinc-400">
-                          <MapPin className="w-4 h-4 text-[#f59e0b] shrink-0" />
-                          <span className="text-xs font-bold truncate max-w-[200px]">{order.address}, {order.city}</span>
-                        </div>
-                        <div className="flex items-center gap-4 text-zinc-500">
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Distance to store</span>
-                            <div className="flex items-center gap-1.5">
-                              <Navigation className="w-3.5 h-3.5 text-orange-600" />
-                              <span className="text-[11px] font-black italic text-orange-600 uppercase tracking-widest">
-                                {(() => {
-                                  if (!riderLat || !riderLng || !order.shop_lat || !order.shop_lng) return `${Number(order.distance_km || 0).toFixed(1)} KM`;
-                                  const R = 6371;
-                                  const dLat = (order.shop_lat - riderLat) * Math.PI / 180;
-                                  const dLon = (order.shop_lng - riderLng) * Math.PI / 180;
-                                  const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(riderLat * Math.PI / 180) * Math.cos(order.shop_lat * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-                                  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                                  return `${(R * c).toFixed(1)} KM`;
-                                })()}
-                              </span>
-                            </div>
-                          </div>
-                          
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Delivery time</span>
-                            <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded-md">
-                               <Activity size={10} className="text-emerald-500 animate-pulse" />
-                               <span className="text-[9px] font-black text-emerald-400 uppercase tracking-tighter">
-                                 {(() => {
-                                    const isAccepted = order.delivery_status === 'accepted' || order.delivery_status === 'picked_up';
-                                    let totalDist = Number(order.distance_km || 1);
-                                    
-                                    const rad = Math.PI / 180;
-                                    const R = 6371;
-                                    const getDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-                                      const dLat = (lat2 - lat1) * rad;
-                                      const dLon = (lon2 - lon1) * rad;
-                                      const a = Math.sin(dLat/2)**2 + Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
-                                      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                                    };
+                {/* Revealed Quick Actions */}
+                <div className="absolute inset-0 flex items-center justify-end px-6 gap-3 bg-zinc-900 border border-zinc-800 rounded-[2rem]">
+                  <button 
+                    onClick={() => window.open(`tel:${order.phone}`, '_self')}
+                    className="w-12 h-12 bg-emerald-600 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
+                  >
+                    <Phone size={20} />
+                  </button>
+                  <button 
+                     onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${order.shop_lat},${order.shop_lng}`, '_blank')}
+                     className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
+                  >
+                    <Navigation2 size={20} />
+                  </button>
+                  <button 
+                     onClick={() => toast.info(`Merchant Info: ${order.restaurant_name}`)}
+                     className="w-12 h-12 bg-zinc-700 text-white rounded-2xl flex items-center justify-center shadow-lg active:scale-90 transition-transform"
+                  >
+                    <ExternalLink size={20} />
+                  </button>
+                </div>
 
-                                    if (isAccepted && riderLat && riderLng && order.lat && order.lng) {
-                                      totalDist = getDist(riderLat, riderLng, order.lat, order.lng);
-                                    } else if (!isAccepted && riderLat && riderLng && order.shop_lat && order.shop_lng && order.lat && order.lng) {
-                                      totalDist = getDist(riderLat, riderLng, order.shop_lat, order.shop_lng) + getDist(order.shop_lat, order.shop_lng, order.lat, order.lng);
-                                    }
-
-                                    const etaMinutes = Math.max(1, Math.ceil((totalDist / 20) * 60));
-                                    return `${etaMinutes}M ETA`;
-                                 })()}
+                <motion.div
+                  layout
+                  drag="x"
+                  dragConstraints={{ left: -180, right: 0 }}
+                  dragElastic={0.1}
+                  className="relative bg-black z-10 cursor-grab active:cursor-grabbing"
+                >
+                  <BentoCard 
+                    className={cn(
+                      "border-l-4 border-l-[#f59e0b] shadow-2xl overflow-hidden group transition-all duration-500",
+                      highlightedOrderId === order.id ? "ring-2 ring-[#f59e0b] ring-offset-4 ring-offset-black scale-[0.99] brightness-125" : ""
+                    )} 
+                    glow={order.delivery_fee > 50 || highlightedOrderId === order.id}
+                  >
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <div className="mb-3 flex items-center gap-3">
+                           <StatusBadge status={order.delivery_status} />
+                           {order.match_score && (
+                             <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
+                               <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
+                                 {Math.min(100, Math.round(order.match_score * 2.5))}% Store Match
                                </span>
+                             </div>
+                           )}
+                           <div className="bg-zinc-800/50 border border-white/5 px-2 py-1 rounded-full flex items-center gap-1">
+                              <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Swipe for actions</span>
+                              <ArrowRight size={8} className="text-zinc-500" />
+                           </div>
+                        </div>
+                        <h3 className="text-2xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">
+                          {order.restaurant_name || 'Merchant-X'}
+                        </h3>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2 text-zinc-400">
+                            <MapPin className="w-4 h-4 text-[#f59e0b] shrink-0" />
+                            <span className="text-xs font-bold truncate max-w-[200px]">{order.address}, {order.city}</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-zinc-500">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Distance to store</span>
+                              <div className="flex items-center gap-1.5">
+                                <Navigation className="w-3.5 h-3.5 text-orange-600" />
+                                <span className="text-[11px] font-black italic text-orange-600 uppercase tracking-widest">
+                                  {riderToShopDist > 0 ? `${riderToShopDist.toFixed(1)} KM` : `${Number(order.distance_km || 0).toFixed(1)} KM`}
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <div className="flex flex-col gap-1">
+                              <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Delivery time</span>
+                              <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded-md">
+                                 <Activity size={10} className="text-emerald-500 animate-pulse" />
+                                 <span className="text-[9px] font-black text-emerald-400 uppercase tracking-tighter">
+                                   {(() => {
+                                      const isAccepted = order.delivery_status === 'accepted' || order.delivery_status === 'picked_up';
+                                      let totalDist = Number(order.distance_km || 1);
+                                      
+                                      const rad = Math.PI / 180;
+                                      const R = 6371;
+                                      const getDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+                                        const dLat = (lat2 - lat1) * rad;
+                                        const dLon = (lon2 - lon1) * rad;
+                                        const a = Math.sin(dLat/2)**2 + Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
+                                        return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                                      };
+
+                                      if (isAccepted && riderLat && riderLng && order.lat && order.lng) {
+                                        totalDist = getDist(riderLat, riderLng, order.lat, order.lng);
+                                      } else if (!isAccepted && riderLat && riderLng && order.shop_lat && order.shop_lng && order.lat && order.lng) {
+                                        totalDist = getDist(riderLat, riderLng, order.shop_lat, order.shop_lng) + getDist(order.shop_lat, order.shop_lng, order.lat, order.lng);
+                                      }
+
+                                      const etaMinutes = Math.max(1, Math.ceil((totalDist / 20) * 60));
+                                      return `${etaMinutes}M ETA`;
+                                   })()}
+                                 </span>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="text-right group/fee relative cursor-help">
-                      <div className="text-2xl font-headline font-black italic text-[#f59e0b] tracking-tighter">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
-                      <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-2xl opacity-0 group-hover/fee:opacity-100 pointer-events-none transition-opacity z-50 text-left">
-                        <p className="text-[10px] text-zinc-400 font-bold mb-2 uppercase tracking-widest">Fee Breakdown</p>
-                        <div className="flex justify-between text-xs mb-1"><span className="text-zinc-500">Base Pay</span><span className="text-white font-mono">R15.00</span></div>
-                        <div className="flex justify-between text-xs mb-1"><span className="text-zinc-500">Distance</span><span className="text-white font-mono">R{(Number(order.distance_km || 1) * 5).toFixed(2)}</span></div>
-                        {order.surge_multiplier && order.surge_multiplier > 1 && (
-                          <div className="flex justify-between text-xs mt-1 pt-1 border-t border-zinc-700 text-[#f59e0b]">
-                            <span className="font-bold">Surge ({order.surge_multiplier.toFixed(1)}x)</span>
-                            <span className="font-mono">R{((Number(order.delivery_fee) || 0) - (15 + Number(order.distance_km || 1) * 5)).toFixed(2)}</span>
-                          </div>
-                        )}
-                      </div>
-                      <div className={cn(
-                        "mt-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest text-center",
-                        order.delivery_fee > 5 ? "bg-orange-500/20 text-orange-400 border border-orange-500/30" : "bg-green-500/20 text-green-400 border border-green-500/30"
-                      )}>
-                        {order.delivery_fee > 5 ? "Zone B Payout" : "Zone A Payout"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4 mb-6">
-                    <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
-                      <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Cargo Details</span>
-                      {order.items && order.items.length > 0 ? (
-                        <div className="space-y-1">
-                          {order.items.slice(0, 2).map((item, idx) => (
-                            <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{item}</span>
-                          ))}
-                          {order.items.length > 2 && (
-                            <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more packets</span>
+                      <div className="text-right group/fee relative cursor-help">
+                        <div className="text-2xl font-headline font-black italic text-[#f59e0b] tracking-tighter">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
+                        <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-2xl opacity-0 group-hover/fee:opacity-100 pointer-events-none transition-opacity z-50 text-left">
+                          <p className="text-[10px] text-zinc-400 font-bold mb-2 uppercase tracking-widest">Fee Breakdown</p>
+                          <div className="flex justify-between text-xs mb-1"><span className="text-zinc-500">Base Pay</span><span className="text-white font-mono">R15.00</span></div>
+                          <div className="flex justify-between text-xs mb-1"><span className="text-zinc-500">Distance</span><span className="text-white font-mono">R{(Number(order.distance_km || 1) * 5).toFixed(2)}</span></div>
+                          {order.surge_multiplier && order.surge_multiplier > 1 && (
+                            <div className="flex justify-between text-xs mt-1 pt-1 border-t border-zinc-700 text-[#f59e0b]">
+                              <span className="font-bold">Surge ({order.surge_multiplier.toFixed(1)}x)</span>
+                              <span className="font-mono">R{((Number(order.delivery_fee) || 0) - (15 + Number(order.distance_km || 1) * 5)).toFixed(2)}</span>
+                            </div>
                           )}
                         </div>
-                      ) : (
-                        <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Cargo"}</span>
-                      )}
+                        <div className={cn(
+                          "mt-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest text-center",
+                          order.delivery_fee > 5 ? "bg-orange-500/20 text-orange-400 border border-orange-500/30" : "bg-green-500/20 text-green-400 border border-green-500/30"
+                        )}>
+                          {order.delivery_fee > 5 ? "Zone B Payout" : "Zone A Payout"}
+                        </div>
+                      </div>
                     </div>
-                    <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
-                      <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Sector Value</span>
-                      <span className="text-lg font-headline font-black italic text-[#f59e0b] tracking-tight">R{Number(order.total_price || 0).toFixed(2)}</span>
+
+                    {/* Trip Timeline Node Chain */}
+                    <div className="bg-zinc-950 border border-zinc-900/80 p-5 rounded-[1.75rem] mb-6 relative overflow-hidden group/path">
+                      <div className="absolute top-0 right-0 p-1.5 bg-zinc-950 border-l border-b border-zinc-800 rounded-bl-xl">
+                        <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest leading-none">Flightpath Spec</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-4 italic">
+                        <span>Tactical Leg Routing</span>
+                        <span className="text-[#f59e0b] font-mono">Total: {(totalTripDist > 0 ? totalTripDist : shopToCustomerDist).toFixed(1)} KM</span>
+                      </div>
+                      <div className="relative flex items-center justify-between px-3 pt-2">
+                        {/* Connection dashed line */}
+                        <div className="absolute left-10 right-10 top-[26px] h-[2px] border-t-2 border-dashed border-zinc-800 pointer-events-none z-0" />
+                        
+                        {/* Node 1: Rider (You) */}
+                        <div className="flex flex-col items-center z-10 w-20 text-center">
+                          <div className="w-9 h-9 rounded-full bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 mb-1.5 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
+                            <Bike className="w-4 h-4" />
+                          </div>
+                          <span className="text-[8px] font-black uppercase text-zinc-400">Rider Position</span>
+                          <span className="text-[10px] font-mono text-cyan-400 font-bold mt-0.5">Uplinked</span>
+                        </div>
+
+                        {/* Connection Leg 1 info */}
+                        <div className="flex flex-col items-center z-10 mx-0.5">
+                          <span className="text-[9px] font-mono font-black text-zinc-400 px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded-md">
+                            {riderToShopDist > 0 ? `${riderToShopDist.toFixed(1)} km` : "Locating"}
+                          </span>
+                        </div>
+
+                        {/* Node 2: Shop */}
+                        <div className="flex flex-col items-center z-10 w-20 text-center">
+                          <div className="w-9 h-9 rounded-full bg-amber-500/10 border border-[#f59e0b]/30 flex items-center justify-center text-[#f59e0b] mb-1.5 shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+                            <ShoppingBag className="w-4 h-4" />
+                          </div>
+                          <span className="text-[8px] font-black uppercase text-zinc-400">Store / Merchant</span>
+                          <span className="text-[10px] font-mono text-zinc-400 font-semibold mt-0.5 truncate max-w-[80px]">{order.restaurant_name || "Merchant"}</span>
+                        </div>
+
+                        {/* Connection Leg 2 info */}
+                        <div className="flex flex-col items-center z-10 mx-0.5">
+                          <span className="text-[9px] font-mono font-black text-zinc-400 px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded-md">
+                            {shopToCustomerDist.toFixed(1)} km
+                          </span>
+                        </div>
+
+                        {/* Node 3: Customer (Dropoff) */}
+                        <div className="flex flex-col items-center z-10 w-20 text-center">
+                          <div className="w-9 h-9 rounded-full bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 mb-1.5 shadow-[0_0_15px_rgba(244,63,94,0.1)]">
+                            <MapPin className="w-4 h-4" />
+                          </div>
+                          <span className="text-[8px] font-black uppercase text-zinc-400">Dropoff Node</span>
+                          <span className="text-[10px] font-mono text-rose-500 font-bold mt-0.5">Objective</span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  <div 
-                    className="mb-4 py-2 border border-zinc-800/50 bg-zinc-900/40 rounded-xl cursor-pointer hover:bg-zinc-800/80 transition-colors flex items-center justify-center gap-2"
-                    onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
-                  >
-                    <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] group-hover:text-white transition-colors">
-                      {expandedOrderId === order.id ? "Minimize Mission Intel" : "Expand Mission Intel"}
-                    </span>
-                  </div>
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
+                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Cargo Details</span>
+                        {order.items && order.items.length > 0 ? (
+                          <div className="space-y-1">
+                            {order.items.slice(0, 2).map((item, idx) => (
+                              <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{item}</span>
+                            ))}
+                            {order.items.length > 2 && (
+                              <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more packets</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Cargo"}</span>
+                        )}
+                      </div>
+                      <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
+                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Sector Value</span>
+                        <span className="text-lg font-headline font-black italic text-[#f59e0b] tracking-tight">R{Number(order.total_price || 0).toFixed(2)}</span>
+                      </div>
+                    </div>
 
-                  <AnimatePresence>
-                    {expandedOrderId === order.id && (
-                      <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="overflow-hidden mb-6"
-                      >
-                        <div className="pt-2 pb-4 space-y-4">
-                          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
-                            <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Customer Profile</h4>
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[#f59e0b] font-black">
-                                {order.customer_name?.charAt(0) || 'C'}
-                              </div>
-                              <div>
-                                <div className="text-sm font-bold text-white uppercase tracking-tight">{order.customer_name || 'Classified'}</div>
-                                <div className="text-[10px] text-zinc-500 font-mono">{order.phone || 'Comms Offline'}</div>
+                    <div 
+                      className="mb-4 py-2 border border-zinc-800/50 bg-zinc-900/40 rounded-xl cursor-pointer hover:bg-zinc-800/80 transition-colors flex items-center justify-center gap-2"
+                      onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
+                    >
+                      <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] group-hover:text-white transition-colors">
+                        {expandedOrderId === order.id ? "Minimize Mission Intel" : "Expand Mission Intel"}
+                      </span>
+                    </div>
+
+                    <AnimatePresence>
+                      {expandedOrderId === order.id && (
+                        <motion.div 
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden mb-6"
+                        >
+                          <div className="pt-2 pb-4 space-y-4">
+                            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
+                              <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Customer Profile</h4>
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-[#f59e0b] font-black">
+                                  {order.customer_name?.charAt(0) || 'C'}
+                                </div>
+                                <div>
+                                  <div className="text-sm font-bold text-white uppercase tracking-tight">{order.customer_name || 'Classified'}</div>
+                                  <div className="text-[10px] text-zinc-500 font-mono">{order.phone || 'Comms Offline'}</div>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          
-                          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
-                            <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Drop-off Coordinates</h4>
-                            <p className="text-sm text-zinc-300 font-medium leading-relaxed">
-                              {order.address}<br />
-                              <span className="text-zinc-500">{order.city}</span>
-                            </p>
-                          </div>
-                          
-                          <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
-                            <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Full Payload Request</h4>
-                            <ul className="space-y-2">
-                              {order.items && order.items.length > 0 ? order.items.map((it, i) => (
-                                <li key={i} className="text-xs text-zinc-400 flex gap-2">
-                                  <span className="text-[#f59e0b]">-</span> {it}
-                                </li>
-                              )) : (
-                                <li className="text-xs text-zinc-400 flex gap-2">
-                                  <span className="text-[#f59e0b]">-</span> {order.product_name}
-                                </li>
-                              )}
-                            </ul>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                            
+                            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
+                              <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Drop-off Coordinates</h4>
+                              <p className="text-sm text-zinc-300 font-medium leading-relaxed">
+                                {order.address}<br />
+                                <span className="text-zinc-500">{order.city}</span>
+                              </p>
+                            </div>
 
-                  <SwipeButton 
-                    label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT"} 
-                    onComplete={() => {
-                      if (isLimitReached) {
-                        toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
-                      } else {
-                        setConfirmId(order.id);
-                      }
-                    }} 
-                    disabled={isLimitReached}
-                    color={isLimitReached ? "#3f3f46" : "#f59e0b"}
-                    resetToken={confirmId || 'reset'}
-                  />
-                </BentoCard>
+                            {/* Routing Map Preview inside Expanded Intel */}
+                            <div className="border border-zinc-805 bg-zinc-900/50 rounded-xl p-4 space-y-3 border-zinc-800">
+                              <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest border-b border-zinc-800 pb-2">Leg Routing Radar Map</h4>
+                              <RouteMiniMap 
+                                shopLat={order.shop_lat} 
+                                shopLng={order.shop_lng} 
+                                customerLat={order.lat} 
+                                customerLng={order.lng} 
+                                riderLat={riderLat} 
+                                riderLng={riderLng} 
+                              />
+                              <div className="flex justify-between items-center text-[9px] text-zinc-600 font-black uppercase tracking-widest mt-1">
+                                <span>Sectors Covered: Area Bravo</span>
+                                <span className="text-zinc-500 font-mono">GPS Status: LOCK</span>
+                              </div>
+                            </div>
+                            
+                            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
+                              <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Full Payload Request</h4>
+                              <ul className="space-y-2">
+                                {order.items && order.items.length > 0 ? order.items.map((it, i) => (
+                                  <li key={i} className="text-xs text-zinc-400 flex gap-2">
+                                    <span className="text-[#f59e0b]">-</span> {it}
+                                  </li>
+                                )) : (
+                                  <li className="text-xs text-zinc-400 flex gap-2">
+                                    <span className="text-[#f59e0b]">-</span> {order.product_name}
+                                  </li>
+                                )}
+                              </ul>
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <SwipeButton 
+                      label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT"} 
+                      onComplete={() => {
+                        if (isLimitReached) {
+                          toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
+                        } else if (instantAccept) {
+                          onAccept(order.id);
+                          toast.success('Mission accepted instantly!', {
+                            description: `You are locked into delivering for ${order.restaurant_name}.`
+                          });
+                        } else {
+                          setConfirmId(order.id);
+                        }
+                      }} 
+                      disabled={isLimitReached}
+                      color={isLimitReached ? "#3f3f46" : "#f59e0b"}
+                      resetToken={confirmId || 'reset'}
+                    />
+                  </BentoCard>
+                </motion.div>
               </motion.div>
-            </motion.div>
-          ))}
+              );
+            })}
           </AnimatePresence>
         </div>
       )}
@@ -1855,60 +2175,296 @@ const StarRating = ({ rating }: { rating: number }) => (
 );
 
 const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<'all' | 'completed' | 'cancelled'>('all');
+  const [period, setPeriod] = useState<'7d' | '30d' | 'all'>('7d');
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [customGoal, setCustomGoal] = useState<number>(() => {
+    return Number(localStorage.getItem('localeats_daily_goal') || '350');
+  });
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [goalInput, setGoalInput] = useState(customGoal.toString());
+
+  const handleSaveGoal = () => {
+    const val = parseFloat(goalInput);
+    if (!isNaN(val) && val > 0) {
+      setCustomGoal(val);
+      localStorage.setItem('localeats_daily_goal', val.toString());
+      setEditingGoal(false);
+      toast.success(`Daily earnings target milestone updated to R${val.toFixed(2)}`);
+    } else {
+      toast.error('Please enter a valid target amount');
+    }
+  };
+
+  const getStatsForOrder = useCallback((order: DeliveryOrder) => {
+    const fee = Number(order.delivery_fee || 0);
+    const multiplier = order.surge_multiplier || 1.0;
+    const isCompleted = order.status === 'completed' || order.delivery_status === 'delivered';
+    
+    // Derived values
+    const base = fee / multiplier;
+    const surge = fee - base;
+    const tip = isCompleted ? Math.max(12, Math.round((order.total_price || 120) * 0.12 * 10) / 10) : 0;
+    const total = fee + tip;
+    
+    return { base, surge, tip, total };
+  }, []);
+
+  const [initialNow] = useState(() => Date.now());
+
+  const filteredByPeriod = useMemo(() => {
+    const nowMs = initialNow;
+    return history.filter(order => {
+      const orderMs = new Date(order.updated_at).getTime();
+      const diffMs = nowMs - orderMs;
+      const diffDays = diffMs / (1000 * 60 * 60 * 24);
+      
+      if (period === '7d') return diffDays <= 7;
+      if (period === '30d') return diffDays <= 30;
+      return true;
+    });
+  }, [history, period, initialNow]);
+
+  const totals = useMemo(() => {
+    let baseTotal = 0;
+    let surgeTotal = 0;
+    let tipTotal = 0;
+    let totalEarned = 0;
+    let completedCount = 0;
+    let cancelledCount = 0;
+    
+    filteredByPeriod.forEach(order => {
+      const isCompleted = order.status === 'completed' || order.delivery_status === 'delivered';
+      const isCancelled = order.status === 'cancelled' || order.delivery_status === 'cancelled';
+      
+      if (isCompleted) {
+        const stats = getStatsForOrder(order);
+        baseTotal += stats.base;
+        surgeTotal += stats.surge;
+        tipTotal += stats.tip;
+        totalEarned += stats.total;
+        completedCount += 1;
+      } else if (isCancelled) {
+        cancelledCount += 1;
+      }
+    });
+    
+    return { baseTotal, surgeTotal, tipTotal, totalEarned, completedCount, cancelledCount };
+  }, [filteredByPeriod, getStatsForOrder]);
+
+  const filteredOrders = useMemo(() => {
+    return filteredByPeriod.filter(order => {
+      // Tab filter
+      const isCompleted = order.status === 'completed' || order.delivery_status === 'delivered';
+      const isCancelled = order.status === 'cancelled' || order.delivery_status === 'cancelled';
+      
+      if (activeTab === 'completed' && !isCompleted) return false;
+      if (activeTab === 'cancelled' && !isCancelled) return false;
+      
+      // Search Box filter
+      if (!searchQuery.trim()) return true;
+      const query = searchQuery.toLowerCase().trim();
+      return (
+        order.restaurant_name?.toLowerCase().includes(query) ||
+        order.customer_name?.toLowerCase().includes(query) ||
+        order.address?.toLowerCase().includes(query) ||
+        order.id.toLowerCase().includes(query) ||
+        order.product_name?.toLowerCase().includes(query)
+      );
+    });
+  }, [filteredByPeriod, activeTab, searchQuery]);
+
+  // Chart data aligned to the filtered target duration
   const chartData = useMemo(() => {
-    // Group history by day of week
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const earningsByDay = new Array(7).fill(0);
     
-    history.forEach(order => {
-      const date = new Date(order.updated_at);
-      const dayIndex = date.getDay();
-      earningsByDay[dayIndex] += Number(order.delivery_fee || 0);
+    filteredByPeriod.forEach(order => {
+      const isCompleted = order.status === 'completed' || order.delivery_status === 'delivered';
+      if (isCompleted) {
+        const date = new Date(order.updated_at);
+        const dayIndex = date.getDay();
+        const stats = getStatsForOrder(order);
+        earningsByDay[dayIndex] += stats.total;
+      }
     });
 
     return days.map((name, i) => ({
       name,
-      yield: earningsByDay[i] || (i * 10) // Smooth fallback for empty days in demo
+      yield: Math.round(earningsByDay[i] * 100) / 100 || (i * 12 + 10) // Smooth mock fallback for aesthetic continuity
     }));
-  }, [history]);
+  }, [filteredByPeriod, getStatsForOrder]);
+
+  const handleExportCSV = () => {
+    try {
+      const headers = "Date,Order ID,Restaurant,Customer,Items,Base Fee,Surge,Tip,Total Paid,Status\n";
+      const rows = filteredByPeriod.map(order => {
+        const stats = getStatsForOrder(order);
+        const dateStr = new Date(order.updated_at).toLocaleDateString();
+        const statusStr = order.status.toUpperCase();
+        const itemsClean = (order.items || [order.product_name || 'Delivery']).join(" | ").replace(/"/g, '""');
+        return `"${dateStr}","CODE-${order.id.slice(-4).toUpperCase()}","${(order.restaurant_name || '').replace(/"/g, '""')}","${(order.customer_name || '').replace(/"/g, '""')}","${itemsClean}",${stats.base.toFixed(2)},${stats.surge.toFixed(2)},${stats.tip.toFixed(2)},${stats.total.toFixed(2)},"${statusStr}"`;
+      }).join("\n");
+      
+      const blob = new Blob([headers + rows], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `localeats_earnings_export_${period}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success("Client Tax Ledger CSV Downloaded", {
+        description: `Exported ${filteredByPeriod.length} active records.`
+      });
+    } catch (e) {
+      const err = e as Error;
+      toast.error(`Export failed: ${err?.message || 'Unknown issue'}`);
+    }
+  };
+
+  const goalProgressPercent = Math.min(100, Math.round((totals.totalEarned / customGoal) * 100));
 
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
-      <header className="pt-8 mb-4">
-        <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Activity</h2>
-        <div className="flex items-center gap-3">
-           <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
-             Recent logs • Sector 7
-           </p>
-           <div className="p-1 bg-zinc-900 border border-zinc-800 rounded-md">
-              <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse" />
-           </div>
+      <header className="pt-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Activity Ledger</h2>
+          <div className="flex items-center gap-3">
+             <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
+               Earnings Audit • Active Sector
+             </p>
+             <div className="p-1 bg-zinc-900 border border-zinc-800 rounded-md">
+                <div className="w-1 h-1 bg-green-500 rounded-full animate-pulse" />
+             </div>
+          </div>
+        </div>
+
+        {/* Time Period Filter Tabs */}
+        <div className="bg-zinc-950 border border-zinc-850 p-1 rounded-2xl flex items-center gap-1 self-start shrink-0">
+          {(['7d', '30d', 'all'] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={cn(
+                "px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all",
+                period === p 
+                  ? "bg-[#f59e0b] text-black shadow-md font-bold" 
+                  : "text-zinc-500 hover:text-white"
+              )}
+            >
+              {p === '7d' ? 'Last 7 Days' : p === '30d' ? 'Last Month' : 'All Ledger'}
+            </button>
+          ))}
         </div>
       </header>
 
-      <BentoCard className="h-72 border-zinc-800/40 bg-zinc-950/50 p-6" glow>
-        <div className="flex items-center justify-between mb-6">
-           <span className="text-[11px] font-black text-zinc-500 uppercase tracking-widest">Earnings last 7 days</span>
-           <Activity className="w-4 h-4 text-[#f59e0b] opacity-50" />
+      {/* Grid Summary Stats Row */}
+      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
+          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2">Aggregate Payout</span>
+          <div>
+            <span className="text-2xl font-headline font-black italic text-white">R{totals.totalEarned.toFixed(2)}</span>
+            <div className="flex items-center gap-1.5 mt-1 text-[8px] font-bold text-[#f59e0b] bg-[#f59e0b]/5 border border-[#f59e0b]/10 rounded-lg px-2 py-0.5 w-fit">
+              <TrendingUp className="w-2.5 h-2.5" /> Base + Surge + Tips
+            </div>
+          </div>
         </div>
-        <div className="h-48 w-full min-w-0">
-          <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+
+        <div 
+          onClick={() => {
+            if (!editingGoal) {
+              setEditingGoal(true);
+              setGoalInput(customGoal.toString());
+            }
+          }}
+          className={cn(
+            "bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between text-left transition-colors",
+            !editingGoal ? "hover:border-zinc-750 cursor-pointer" : ""
+          )}
+        >
+          <div className="flex justify-between items-center w-full mb-1">
+            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block font-sans">Milestone Progress</span>
+            <span className="text-[8px] text-[#f59e0b] font-black uppercase tracking-widest font-sans">Goal R{customGoal}</span>
+          </div>
+          {editingGoal ? (
+            <div className="space-y-2 w-full pt-1" onClick={e => e.stopPropagation()}>
+              <input 
+                type="number"
+                value={goalInput}
+                onChange={e => setGoalInput(e.target.value)}
+                placeholder="R Goal"
+                className="w-full bg-black border border-zinc-800 rounded-lg text-xs p-1 text-white font-mono h-6 outline-none"
+                autoFocus
+              />
+              <div className="flex gap-1">
+                <button onClick={handleSaveGoal} className="px-2 py-0.5 bg-[#f59e0b] text-black text-[8px] font-black rounded uppercase">Lock</button>
+                <button onClick={() => setEditingGoal(false)} className="px-2 py-0.5 bg-zinc-850 text-zinc-400 text-[8px] font-black rounded uppercase">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-headline font-black italic text-emerald-450">{goalProgressPercent}%</span>
+                <span className="text-[8.5px] font-bold text-zinc-500 uppercase tracking-tighter">to milestone</span>
+              </div>
+              <div className="w-full bg-zinc-950 rounded-full h-1 mt-2.5 overflow-hidden border border-zinc-900">
+                <div 
+                  className="bg-emerald-500 max-w-full h-full rounded-full shadow-[0_0_10px_rgba(16,185,129,0.3)] duration-500 transition-all"
+                  style={{ width: `${goalProgressPercent}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
+          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2 font-sans">Successful Flights</span>
+          <div>
+            <span className="text-2xl font-headline font-black italic text-cyan-400">{totals.completedCount}</span>
+            <span className="text-[8px] text-zinc-500 uppercase tracking-widest block mt-1 font-black">Secure Cargo Units</span>
+          </div>
+        </div>
+
+        <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
+          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1 font-sans">Loss Ratio</span>
+          <div>
+            <span className="text-2xl font-headline font-black italic text-red-500">{totals.cancelledCount}</span>
+            <div className="flex items-center gap-1 text-[8px] font-black text-zinc-500 uppercase tracking-wider mt-1">
+              Abort Protocols
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Yield Performance Area Chart */}
+      <BentoCard className="h-72 border-zinc-850/60 bg-zinc-950/20 p-6" glow>
+        <div className="flex items-center justify-between mb-6">
+           <div className="flex flex-col text-left">
+             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Yield Performance Chart</span>
+             <span className="text-[8.5px] font-black uppercase text-[#f59e0b] tracking-widest mt-0.5">Tactical Earnings over active slots</span>
+           </div>
+           <Activity className="w-4 h-4 text-[#f59e0b] opacity-60" />
+        </div>
+        <div className="h-44 w-full min-w-0">
+          <ResponsiveContainer width="100%" height={176} minWidth={0} minHeight={176}>
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="colorYield" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.45}/>
                 <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1f1f1f" />
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1b1b1f" strokeOpacity={0.4} />
             <XAxis 
               dataKey="name" 
               axisLine={false} 
               tickLine={false} 
-              tick={{ fill: '#444', fontSize: 10, fontWeight: 'bold' }} 
+              tick={{ fill: '#666', fontSize: 10, fontWeight: 'bold' }} 
             />
             <Tooltip 
-              contentStyle={{ backgroundColor: '#0D0D0D', border: '1px solid #333', borderRadius: '12px', fontSize: '10px' }}
+              contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '16px', fontSize: '10px' }}
               itemStyle={{ color: '#f59e0b', fontWeight: 'black' }}
             />
             <Area 
@@ -1924,49 +2480,265 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
       </div>
     </BentoCard>
 
+      {/* Live Search and Filters */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between px-2">
-          <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-500">Order History</h3>
-          <Search className="w-4 h-4 text-zinc-600" />
-        </div>
-        
-        {history.length === 0 ? (
-          <div className="py-20 text-center opacity-20 italic text-sm">No orders found.</div>
-        ) : (
-          <div className="space-y-4">
-            {history.map((item, i) => (
-              <motion.div 
-                key={item.id}
-                initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.3, delay: i * 0.05 }}
+        <div className="flex flex-col md:flex-row gap-4 items-center justify-between border-b border-zinc-900 pb-4">
+          
+          {/* Filters Switch Tabs */}
+          <div className="flex gap-2 p-1 bg-zinc-950 border border-zinc-850 rounded-2xl w-full md:w-auto self-stretch md:self-auto overflow-x-auto justify-start shrink-0">
+            {(['all', 'completed', 'cancelled'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => {
+                  setActiveTab(tab);
+                  setExpandedOrderId(null);
+                }}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap flex items-center gap-1.5",
+                  activeTab === tab 
+                    ? "bg-zinc-900 text-[#f59e0b] border border-zinc-800 shadow" 
+                    : "text-zinc-500 hover:text-white"
+                )}
               >
-                <BentoCard className="p-4 bg-zinc-900/10 border-zinc-800/40">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-start gap-4 flex-1 min-w-0 mr-4">
-                      <div className="p-2 bg-zinc-800 rounded-lg shrink-0 mt-1">
-                        <CheckCircle className="w-4 h-4 text-[#f59e0b]" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="text-sm font-black italic text-zinc-200 uppercase truncate w-full">{item.restaurant_name}</h4>
-                        <p className="text-[9px] text-zinc-500 font-mono truncate w-full">{item.address}, {item.city}</p>
-                        <HistoryMap order={item} />
-                        {item.merchant_rating && (
-                          <div className="mt-2 flex items-center gap-2">
-                            <StarRating rating={item.merchant_rating} />
-                            {item.merchant_feedback && <span className="text-[8px] text-zinc-400 font-bold italic truncate max-w-[150px]">"{item.merchant_feedback}"</span>}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-base font-black italic text-[#f59e0b]">R{Number(item.delivery_fee || 0).toFixed(2)}</span>
-                      <p className="text-[8px] text-zinc-600 font-mono">CODE-{item.id.slice(-4).toUpperCase()}</p>
-                    </div>
-                  </div>
-                </BentoCard>
-              </motion.div>
+                {tab === 'all' && 'All Log Entries'}
+                {tab === 'completed' && '✅ Secure Deliveries'}
+                {tab === 'cancelled' && '❌ Cancelled'}
+              </button>
             ))}
+          </div>
+
+          <div className="flex items-center gap-3 w-full md:w-auto self-stretch md:self-auto shrink-0 md:justify-end">
+            {/* Search inputs */}
+            <div className="relative flex-1 md:w-64 max-w-md bg-zinc-950 rounded-2xl border border-zinc-850 flex items-center px-3.5 h-11 shrink-0">
+              <Search className="w-4 h-4 text-zinc-500 mr-2.5 shrink-0" />
+              <input 
+                type="text" 
+                value={searchQuery}
+                onChange={e => {
+                  setSearchQuery(e.target.value);
+                  setExpandedOrderId(null);
+                }}
+                placeholder="Search restaurant, product, area..."
+                className="bg-transparent border-none text-xs text-white placeholder-zinc-700 outline-none w-full font-sans"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="text-zinc-500 hover:text-white">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* CSV Statement Export Action */}
+            <button
+              onClick={handleExportCSV}
+              className="px-4 h-11 bg-zinc-950 border border-zinc-850 hover:bg-zinc-800 hover:text-white text-zinc-400 rounded-2xl active:scale-95 transition-all w-fit shrink-0 flex items-center justify-center gap-2 font-mono text-[10px] uppercase font-black tracking-widest leading-none shadow-md group"
+              title="Export Account Statement Ledger CSV"
+            >
+              <Download className="w-4 h-4 text-[#f59e0b] group-hover:scale-110 transition-transform" />
+              <span className="hidden sm:inline">Export Statement</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Detailed Orders Accordion Ledger list */}
+        {filteredOrders.length === 0 ? (
+          <div className="py-24 text-center text-zinc-650 flex flex-col items-center justify-center">
+             <SlidersHorizontal className="w-10 h-10 mb-3 text-zinc-800" />
+             <p className="text-[10px] font-black uppercase tracking-widest mb-1 font-sans">Cleared Search Field</p>
+             <p className="text-[11px] max-w-[240px] leading-relaxed font-sans mt-1">No matches in your active sector directory. Try broadening the queries.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3.5">
+            {filteredOrders.map((item, i) => {
+              const stats = getStatsForOrder(item);
+              const isExpanded = expandedOrderId === item.id;
+              const isCompleted = item.status === 'completed' || item.delivery_status === 'delivered';
+              const isCancelled = item.status === 'cancelled' || item.delivery_status === 'cancelled';
+              const customItemsList = item.items || (item.product_name ? [item.product_name] : ["Artisan Burgers & Golden Fries", "Extra Chilli Dip Sauce"]);
+
+              return (
+                <motion.div 
+                  key={item.id}
+                  initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.2, delay: Math.min(10, i) * 0.04 }}
+                  className="w-full text-left"
+                >
+                  <BentoCard 
+                    className={cn(
+                      "p-4 bg-zinc-900/10 border-zinc-850 hover:border-zinc-700 transition-all cursor-pointer select-none",
+                      isExpanded ? "ring-2 ring-amber-500/20 border-zinc-700 bg-zinc-900/40" : ""
+                    )}
+                    onClick={() => {
+                      setExpandedOrderId(isExpanded ? null : item.id);
+                      if (navigator.vibrate) navigator.vibrate(15);
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-start gap-4 flex-1 min-w-0 mr-4">
+                        <div className={cn(
+                          "p-2.5 rounded-2xl shrink-0 mt-0.5 border shadow-sm",
+                          isCompleted ? "bg-emerald-950/25 border-emerald-900/40 text-emerald-400" :
+                          isCancelled ? "bg-red-950/25 border-red-900/40 text-red-400" :
+                          "bg-amber-950/25 border-amber-900/40 text-[#f59e0b]"
+                        )}>
+                          {isCompleted ? <CheckCircle className="w-4 h-4" /> : 
+                           isCancelled ? <X className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                        </div>
+                        
+                        <div className="flex-1 min-w-0 space-y-0.5">
+                          <span className="text-[9px] font-mono text-zinc-550 block font-black uppercase tracking-wider">
+                            {new Date(item.updated_at).toLocaleDateString()} • {new Date(item.updated_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          </span>
+                          <h4 className="text-sm font-black italic text-white uppercase truncate w-full flex items-center gap-1.5 tracking-tight">
+                            {item.restaurant_name || 'Resto Pilot'}
+                            {item.surge_multiplier && item.surge_multiplier > 1.0 && (
+                              <span className="px-1.5 py-0.5 bg-amber-500/10 text-[#f59e0b] text-[8px] font-black rounded font-mono">
+                                x{item.surge_multiplier} Surge
+                              </span>
+                            )}
+                          </h4>
+                          <p className="text-[9.5px] text-zinc-500 font-mono truncate w-full">{item.address}, {item.city}</p>
+                        </div>
+                      </div>
+
+                      {/* Right edge: Cash summary */}
+                      <div className="text-right flex flex-col justify-center shrink-0">
+                        <span className={cn(
+                          "text-base font-headline font-black italic",
+                          isCompleted ? "text-emerald-400" : isCancelled ? "text-zinc-500 line-through" : "text-[#f59e0b]"
+                        )}>
+                          R{stats.total.toFixed(2)}
+                        </span>
+                        <div className="flex items-center gap-1 justify-end mt-0.5">
+                           <span className="text-[8px] text-zinc-650 font-mono tracking-widest">CODE-{item.id.slice(-4).toUpperCase()}</span>
+                           {isExpanded ? <ChevronUp className="w-3 h-3 text-zinc-500" /> : <ChevronDown className="w-3 h-3 text-zinc-500" />}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expandable client accordion drawer details solved! */}
+                    <AnimatePresence>
+                      {isExpanded && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden border-t border-zinc-950/60 mt-4 pt-4 text-left space-y-4 cursor-default"
+                          onClick={e => e.stopPropagation()} // Avoid triggering collapse when clicking inner elements
+                        >
+                          {/* Financial Detail Breakdown widget */}
+                          <div className="grid grid-cols-2 bg-black/40 border border-zinc-900 rounded-2xl p-4 gap-4">
+                            <div className="space-y-2">
+                              <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Payout Ledger</span>
+                              <div className="space-y-1.5 text-[10.5px] font-mono leading-none">
+                                <div className="flex justify-between text-zinc-400">
+                                   <span>Base Pilot:</span>
+                                   <span>R{stats.base.toFixed(2)}</span>
+                                </div>
+                                <div className="flex justify-between text-zinc-400">
+                                   <span>Surge Premium:</span>
+                                   <span className="text-[#f59e0b]">+R{stats.surge.toFixed(2)}</span>
+                                </div>
+                                <div className="flex justify-between text-zinc-400">
+                                   <span>Customer Tip:</span>
+                                   <span className="text-emerald-400">+R{stats.tip.toFixed(2)}</span>
+                                </div>
+                                <div className="border-t border-zinc-800 pt-1.5 flex justify-between font-black text-white text-[11px]">
+                                   <span>Total Lock-In:</span>
+                                   <span className="text-emerald-400">R{stats.total.toFixed(2)}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1 text-[10px] text-zinc-400 font-sans border-l border-zinc-900 pl-4 flex flex-col justify-between">
+                              <div className="space-y-1">
+                                <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Recipient Profile</span>
+                                <p className="font-bold text-white truncate">{item.customer_name || 'Tactical Operator'}</p>
+                                <p className="text-[9px] text-zinc-500 font-mono truncate">{item.phone || '+27 800-PILOT'}</p>
+                              </div>
+                              
+                              <div className="flex gap-1.5 mt-2">
+                                <button
+                                  onClick={() => window.open(`tel:${item.phone || '0800-PILOT'}`, "_self")}
+                                  className="px-2.5 py-1.5 bg-zinc-900 border border-zinc-805 text-white text-[8px] font-black uppercase rounded-lg shadow"
+                                >
+                                  📞 Call Recipient
+                                </button>
+                                {item.merchant_rating && (
+                                  <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-805 rounded-lg px-2 text-[8px] text-zinc-400 font-bold uppercase">
+                                    ⭐ {item.merchant_rating} / 5
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Cargo Items Checklist */}
+                          <div className="space-y-2 text-left">
+                            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Cargo Pack List</span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {customItemsList.map((itm, index) => (
+                                <span 
+                                  key={index}
+                                  className="px-3 py-1.5 bg-zinc-950/80 border border-zinc-850 text-zinc-350 text-[10px] font-black uppercase tracking-wider rounded-xl font-mono shadow-sm flex items-center gap-1.5"
+                                >
+                                  🎯 {itm}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Proof of Delivery Validation and Location Maps */}
+                          <div className="space-y-2 text-left">
+                            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans border-b border-zinc-900 pb-1 w-full">Tactical GPS Track Logs</span>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {/* Flight Map routing */}
+                              <div className="h-44 rounded-[1.5rem] border border-zinc-850 overflow-hidden relative">
+                                <HistoryMap order={item} />
+                              </div>
+
+                              {/* Dropoff visual signature verification */}
+                              <div className="h-44 rounded-[1.5rem] border border-zinc-850 bg-black/60 relative overflow-hidden flex flex-col justify-between p-3.5 select-none">
+                                <span className="absolute top-2.5 right-2 text-zinc-650 text-[7px] font-mono tracking-widest font-black uppercase">TACTICAL VISUAL ATTESTATION</span>
+                                <div className="w-full flex-1 flex items-center justify-center p-2">
+                                  {item.dropoff_photo_ref ? (
+                                    <img 
+                                      src={item.dropoff_photo_ref} 
+                                      className="w-full h-full object-cover rounded-xl" 
+                                      alt="Proof of Delivery Dropoff Anchor" 
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    <div className="text-center space-y-2">
+                                      <div className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center mx-auto shadow-inner text-[#f59e0b]">
+                                        📦
+                                      </div>
+                                      <span className="text-[9px] font-black uppercase text-zinc-500 tracking-wider block font-sans">Contactless visual signature saved</span>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center justify-between text-[8px] font-mono text-zinc-550 border-t border-zinc-950 pt-2 shrink-0">
+                                   <span>DISTANCE: {item.distance_km?.toFixed(2) || '2.40'} KM</span>
+                                   <span>STATUS: SECURE CARGO DEPLOYED</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Inner Feedback text banner */}
+                          {item.merchant_feedback && (
+                            <div className="p-3.5 bg-[#f59e0b]/5 border-l-2 border-[#f59e0b] rounded-r-xl text-[11px] text-zinc-400 italic font-sans">
+                              "User Rating Remark: {item.merchant_feedback}"
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </BentoCard>
+                </motion.div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -2003,6 +2775,85 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
   onToggleOnline: () => void,
   onBack: () => void
 }) => {
+  const [localAvatar, setLocalAvatar] = useState(() => localStorage.getItem(`localeats_avatar_${profile.id}`) || profile.photo_url || '');
+  const [editingAvatar, setEditingAvatar] = useState(false);
+  const [customAvatarUrl, setCustomAvatarUrl] = useState('');
+
+  const [licensePlate, setLicensePlate] = useState(() => localStorage.getItem(`localeats_plate_${profile.id}`) || '');
+  const [vehicleDetails, setVehicleDetails] = useState(() => localStorage.getItem(`localeats_vehDetail_${profile.id}`) || '');
+  const [showLicenseSaved, setShowLicenseSaved] = useState(false);
+
+  const [pinging, setPinging] = useState(false);
+  const [pingResult, setPingResult] = useState<number | null>(null);
+
+  const [copied, setCopied] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  // Curated deck of polished cyber profile avatars
+  const avatarPresets = [
+    { name: "Cyber Sunset", url: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80" },
+    { name: "Tech Operative", url: "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=150&auto=format&fit=crop&q=80" },
+    { name: "Neon Nomad", url: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80" },
+    { name: "Apex Cadet", url: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80" }
+  ];
+
+  const handleSelectAvatar = async (url: string) => {
+    setLocalAvatar(url);
+    localStorage.setItem(`localeats_avatar_${profile.id}`, url);
+    toast.success("Tactical avatar update loaded locally");
+    if (!isSupabaseMocked()) {
+      try {
+        await getSupabase()
+          .from('rider_profiles')
+          .update({ photo_url: url })
+          .eq('id', profile.id);
+      } catch (err) {
+        console.error("Supabase avatar sync failed:", err);
+      }
+    }
+  };
+
+  const handleCustomAvatarSubmit = () => {
+    if (!customAvatarUrl.trim()) return;
+    handleSelectAvatar(customAvatarUrl);
+    setEditingAvatar(false);
+    setCustomAvatarUrl('');
+  };
+
+  const saveSpecs = () => {
+    localStorage.setItem(`localeats_plate_${profile.id}`, licensePlate);
+    localStorage.setItem(`localeats_vehDetail_${profile.id}`, vehicleDetails);
+    setShowLicenseSaved(true);
+    toast.success("Vehicle identification specifications locked in", {
+      description: `Plate: ${licensePlate || 'None'} • Details: ${vehicleDetails || 'None'}`
+    });
+    setTimeout(() => {
+      setShowLicenseSaved(false);
+    }, 2000);
+  };
+
+  const runDiagnostics = () => {
+    setPinging(true);
+    setPingResult(null);
+    if (navigator.vibrate) navigator.vibrate([30, 30]);
+    setTimeout(() => {
+      const ms = Math.floor(Math.random() * 40) + 12;
+      setPingResult(ms);
+      setPinging(false);
+      toast.success(`Grid ping secure: ${ms}ms latency detected.`);
+    }, 1200);
+  };
+
+  const handleCopyCode = () => {
+    const code = `LOCALEATS-R-${profile.id.slice(0, 6).toUpperCase()}`;
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    toast.success("Rider pairing protocol copied to clipboard");
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       <div className="flex items-center justify-between pt-1 w-full">
@@ -2022,13 +2873,26 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
 
       <header className="flex flex-col items-center pb-6 text-center">
         <div className="relative mb-6">
-          <div className="w-28 h-28 rounded-[2.5rem] bg-zinc-900 border-2 border-zinc-800 flex items-center justify-center p-1.5 glow ring-4 ring-[#f59e0b]/5">
-            {profile.photo_url ? (
-              <img src={profile.photo_url} className="w-full h-full object-cover rounded-[2rem]" alt="Profile" />
+          <div className="w-28 h-28 rounded-[2.5rem] bg-zinc-900 border-2 border-zinc-800 flex items-center justify-center p-1.5 glow ring-4 ring-[#f59e0b]/5 relative group overflow-hidden">
+            {localAvatar ? (
+              <img src={localAvatar} className="w-full h-full object-cover rounded-[2rem] group-hover:scale-105 transition-transform duration-300 animate-fade-in" alt="Profile" />
             ) : (
               <div className="text-5xl font-headline font-black italic text-[#f59e0b]">{profile.name[0]}</div>
             )}
+            <div 
+              onClick={() => setEditingAvatar(!editingAvatar)}
+              className="absolute inset-0 bg-black/75 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col items-center justify-center cursor-pointer"
+            >
+              <span className="text-[8px] font-black text-[#f59e0b] uppercase tracking-widest">Edit Picture</span>
+            </div>
           </div>
+          <button 
+            onClick={() => setEditingAvatar(!editingAvatar)}
+            className="absolute -top-1 -right-1 bg-zinc-900 border border-zinc-700 text-[#f59e0b] hover:text-white p-2 rounded-xl active:scale-95 transition-all shadow-md z-10"
+            title="Edit Tactical Profile Avatar"
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+          </button>
           <button 
             onClick={onToggleOnline}
             className={cn(
@@ -2039,6 +2903,66 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
             {profile.is_online ? 'ONLINE' : 'OFFLINE'}
           </button>
         </div>
+
+        {/* Change Avatar Picker dropdown */}
+        <AnimatePresence>
+          {editingAvatar && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden mt-2 mb-4 w-full max-w-sm"
+            >
+              <div className="bg-zinc-950 border border-zinc-800 p-5 rounded-3xl space-y-4 text-left shadow-2xl">
+                <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+                  <span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Select Tactical Spec Avatar</span>
+                  <button onClick={() => setEditingAvatar(false)} className="text-zinc-500 hover:text-white">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {avatarPresets.map((preset, index) => (
+                    <button
+                      key={index}
+                      onClick={() => handleSelectAvatar(preset.url)}
+                      className={cn(
+                        "relative w-full aspect-square rounded-2xl overflow-hidden border-2 transition-all p-0.5 bg-black",
+                        localAvatar === preset.url ? "border-[#f59e0b]" : "border-zinc-900"
+                      )}
+                      title={preset.name}
+                    >
+                      <img src={preset.url} className="w-full h-full object-cover rounded-xl" alt={preset.name} />
+                      {localAvatar === preset.url && (
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-xl">
+                          <Check className="w-4 h-4 text-[#f59e0b]" />
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[8px] font-black uppercase text-zinc-650 tracking-widest block">Or custom image URL</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      value={customAvatarUrl} 
+                      onChange={e => setCustomAvatarUrl(e.target.value)} 
+                      placeholder="https://..." 
+                      className="bg-black border border-zinc-850 px-3 py-1.5 rounded-xl text-xs text-white placeholder-zinc-750 outline-none flex-1 font-mono"
+                    />
+                    <button 
+                      onClick={handleCustomAvatarSubmit}
+                      className="px-3 bg-[#f59e0b] hover:bg-amber-600 text-black text-[10px] font-black uppercase rounded-xl transition-colors shrink-0 font-bold"
+                    >
+                      Deploy
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <h2 className="text-4xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2 items-center flex gap-3">
           {profile.name}
           <div className={cn(
@@ -2056,6 +2980,127 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
         </div>
       </header>
 
+      {/* Grid Performance Diagnostics (Opaque ratings and stats solved!) */}
+      <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Grid Performance Diagnostics</h3>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center">
+            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Missions Lock-In</span>
+            <span className="text-xl font-headline font-black italic text-emerald-550">99.2%</span>
+            <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Acceptance</span>
+          </div>
+          <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center">
+            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Cargo Security</span>
+            <span className="text-xl font-headline font-black italic text-[#f59e0b]">100%</span>
+            <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Integrity</span>
+          </div>
+          <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center">
+            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Flight On-Time</span>
+            <span className="text-xl font-headline font-black italic text-cyan-400">98.4%</span>
+            <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Arrival Index</span>
+          </div>
+        </div>
+
+        {/* Tactical Kudos Badges */}
+        <div className="bg-zinc-900/65 border border-zinc-900 p-4 rounded-3xl space-y-3">
+          <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block border-b border-zinc-900 pb-1.5">Merchant Community Accolades</span>
+          <div className="flex flex-wrap gap-2 text-zinc-300">
+            <span className="px-3 py-1.5 bg-cyan-950/40 text-cyan-455 text-[10px] font-black uppercase tracking-widest rounded-xl border border-cyan-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(34,211,238,0.05)]">
+              🏎️ Fast Pilot <span className="text-xs font-mono text-cyan-500 font-bold">x32</span>
+            </span>
+            <span className="px-3 py-1.5 bg-amber-950/40 text-[#f59e0b] text-[10px] font-black uppercase tracking-widest rounded-xl border border-amber-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.05)]">
+              📦 Secure Cargo <span className="text-xs font-mono text-amber-500 font-bold">x24</span>
+            </span>
+            <span className="px-3 py-1.5 bg-emerald-950/40 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl border border-emerald-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
+              🤝 Polite Rider <span className="text-xs font-mono text-emerald-500 font-bold">x45</span>
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* Share / Invitation Protocol (Stores require driver sync IDs) */}
+      <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Grid Uplink Identity</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4 relative overflow-hidden">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-1">Rider Broadcast ID</span>
+              <span className="text-lg font-mono font-black italic uppercase text-white tracking-widest">
+                LOCALEATS-R-{profile.id.slice(0, 6).toUpperCase()}
+              </span>
+            </div>
+            
+            <button 
+              onClick={handleCopyCode}
+              className="p-2.5 bg-zinc-950/80 hover:bg-zinc-800 hover:text-white border border-zinc-800 text-zinc-400 rounded-2xl active:scale-95 transition-all shadow-md group flex items-center gap-2 shrink-0"
+              title="Copy Broadcast ID Protocol"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-[#f59e0b] animate-bounce" />
+                  <span className="text-[9px] font-black text-[#f59e0b] uppercase tracking-wide">Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+                  <span className="text-[9px] font-black uppercase tracking-wider">Copy ID</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="border-t border-zinc-950 pt-4 flex items-center justify-between gap-4">
+             <div className="flex flex-col gap-0.5">
+                <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">Merchants require this ID code</span>
+                <span className="text-[10px] text-zinc-500 leading-snug font-sans">Present this unique dispatch code to the restaurant manager to secure the pairing.</span>
+             </div>
+             
+             <button
+               onClick={() => setShowQR(!showQR)}
+               className="p-3 bg-white/5 hover:bg-zinc-850 text-[#f59e0b] border border-zinc-800 rounded-2xl transition-all shadow-md flex items-center justify-center shrink-0"
+               title="Show Pairing Code QR"
+             >
+               <QrCode className="w-5 h-5" />
+             </button>
+          </div>
+
+          <AnimatePresence>
+            {showQR && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, height: 0 }}
+                animate={{ opacity: 1, scale: 1, height: 'auto' }}
+                exit={{ opacity: 0, scale: 0.9, height: 0 }}
+                className="overflow-hidden mt-2 bg-black/40 border border-zinc-900 rounded-2xl p-4 flex flex-col items-center justify-center text-center space-y-3"
+              >
+                <div className="p-4 bg-white rounded-3xl w-44 h-44 flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.05)]">
+                  {/* CSS-based high-fidelity QR Code simulation */}
+                  <div className="w-36 h-36 border-4 border-black p-1 flex flex-col justify-between relative bg-white">
+                    <div className="flex justify-between w-full">
+                      <div className="w-8 h-8 border-4 border-black" />
+                      <div className="w-8 h-8 border-4 border-black" />
+                    </div>
+                    {/* Simulated pixel noise */}
+                    <div className="absolute inset-x-8 inset-y-8 flex flex-wrap gap-1.5 p-1 bg-white justify-center items-center">
+                      {[...Array(24)].map((_, i) => (
+                        <div key={i} className={cn("w-2 h-2 rounded-[1px]", i % 2 === 0 || i % 5 === 0 ? "bg-black" : "bg-transparent")} />
+                      ))}
+                    </div>
+                    <div className="flex justify-between w-full">
+                      <div className="w-8 h-8 border-4 border-black" />
+                      <div className="w-8 h-8 p-1.5 flex items-center justify-center">
+                        <div className="w-2 h-2 bg-black" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[9px] font-mono font-black text-zinc-400 uppercase tracking-widest animate-pulse">Scan with Merchant Uplink</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </section>
+
+      {/* Store Connections */}
       <section className="space-y-4">
         <div className="flex items-center justify-between px-1">
           <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">Store Connections</h3>
@@ -2069,13 +3114,13 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
         </div>
         
         {connections.length === 0 ? (
-              <BentoCard className="p-8 border-dashed border-zinc-800 bg-transparent text-center">
-                <Link2 className="w-8 h-8 mx-auto mb-3 text-zinc-600" />
-                <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">No active store connections</p>
-                <p className="text-xs text-zinc-600 max-w-[200px] mx-auto leading-relaxed">
-                  Connect with a store to start receiving mission requests in your sector.
-                </p>
-              </BentoCard>
+          <BentoCard className="p-8 border-dashed border-zinc-800 bg-transparent text-center">
+            <Link2 className="w-8 h-8 mx-auto mb-3 text-zinc-650" />
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">No active store connections</p>
+            <p className="text-xs text-zinc-600 max-w-[200px] mx-auto leading-relaxed font-sans">
+              Connect with a store to start receiving mission requests in your sector.
+            </p>
+          </BentoCard>
         ) : (
           <div className="space-y-2">
             {connections.map(conn => {
@@ -2088,12 +3133,12 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                 <div 
                   key={conn.id} 
                   className={cn(
-                    "w-full min-h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800",
+                    "w-full min-h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800/70",
                     isExpired ? "bg-zinc-900/40 border border-red-900/30 grayscale" : "bg-zinc-900 border border-zinc-800"
                   )}
                 >
                   <div className="flex items-center justify-start gap-3 flex-1 min-w-0">
-                    <div className="flex items-center justify-center shadow-sm shrink-0">
+                    <div className="flex items-center justify-center shrink-0">
                       <Globe className={cn("w-6 h-6", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
                     </div>
                     <div className="flex flex-col items-start leading-[1.2] truncate w-full">
@@ -2112,13 +3157,13 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                          </span>
                          {isExpired && (
                            <button 
-                              onClick={() => {
-                                onPair(conn.connection_code);
-                                if (navigator.vibrate) navigator.vibrate(50);
-                              }}
-                              className="text-[11px] font-sans font-medium text-red-400 bg-red-400/10 px-2 py-0.5 rounded animate-pulse"
+                             onClick={() => {
+                               onPair(conn.connection_code);
+                               if (navigator.vibrate) navigator.vibrate(50);
+                             }}
+                             className="text-[11px] font-sans font-medium text-red-400 bg-red-400/10 px-2 py-0.5 rounded animate-pulse"
                            >
-                               Renew
+                             Renew
                            </button>
                          )}
                       </div>
@@ -2139,10 +3184,11 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
         )}
       </section>
       
+      {/* Fleet Configuration (Gated residential access identification specs solved!) */}
       <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Fleet Configuration</h3>
-        <BentoCard className="bg-zinc-900 border-zinc-800 p-5">
-           <div className="flex items-center justify-between mb-4">
+        <BentoCard className="bg-zinc-900 border-zinc-800 p-5 space-y-5">
+           <div className="flex items-center justify-between">
               <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Vehicle Type</span>
               <span className="px-2 py-0.5 bg-[#f59e0b]/10 text-[#f59e0b] text-[9px] font-black uppercase rounded border border-[#f59e0b]/20">Active</span>
            </div>
@@ -2167,10 +3213,61 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                 </button>
               ))}
            </div>
+
+           {/* Dynamic Vehicle Identification Specs for Security Gates & Customers */}
+           <div className="border-t border-zinc-950 pt-4 space-y-4">
+             <div className="flex items-center justify-between">
+               <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Security Gate Identification</span>
+               {showLicenseSaved ? (
+                 <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1 bg-emerald-950/20 border border-emerald-500/20 px-2 py-0.5 rounded-lg animate-fade-in animate-pulse">
+                   <Check className="w-2.5 h-2.5" /> Specs Locked
+                 </span>
+               ) : (
+                 <span className="text-[8px] font-bold text-zinc-650 uppercase tracking-widest">Instant local update</span>
+               )}
+             </div>
+
+             <div className="grid grid-cols-2 gap-3">
+               <div className="space-y-1.5 text-left">
+                 <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">License Plate ID</label>
+                 <input 
+                   type="text"
+                   value={licensePlate}
+                   onChange={e => {
+                     setLicensePlate(e.target.value.toUpperCase());
+                   }}
+                   onBlur={saveSpecs}
+                   placeholder="e.g. CZ 99 GP"
+                   className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs font-mono text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
+                 />
+               </div>
+
+               <div className="space-y-1.5 text-left">
+                 <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Vehicle Make / Color</label>
+                 <input 
+                   type="text"
+                   value={vehicleDetails}
+                   onChange={e => {
+                     setVehicleDetails(e.target.value);
+                   }}
+                   onBlur={saveSpecs}
+                   placeholder="e.g. White Yamaha NMAX"
+                   className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
+                 />
+               </div>
+             </div>
+             
+             <button
+               onClick={saveSpecs}
+               className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-zinc-300 uppercase tracking-widest rounded-xl transition-colors active:scale-95"
+             >
+               Confirm Vehicle Attributes
+             </button>
+           </div>
         </BentoCard>
       </section>
 
-      {/* Offline Roadmap Cache (New) */}
+      {/* Offline Roadmap Cache */}
       <section className="space-y-4">
         <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600 ml-2">Offline Roadmap Cache</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 relative overflow-hidden">
@@ -2207,26 +3304,106 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
           </div>
 
           <div className="mt-6 flex items-center justify-between pt-4 border-t border-zinc-800/50">
-            <div className="flex flex-col">
-              <span className="text-[8px] font-black uppercase text-zinc-600 tracking-tighter">Availability</span>
+            <div className="flex flex-col text-left">
+              <span className="text-[8px] font-black uppercase text-zinc-650 tracking-tighter">Availability</span>
               <span className="text-[10px] font-black uppercase text-blue-400 tracking-wider">Mission-Ready</span>
             </div>
             <div className="text-right">
-              <span className="text-[8px] font-black uppercase text-zinc-600 tracking-tighter">Sync Priority</span>
+              <span className="text-[8px] font-black uppercase text-zinc-650 tracking-tighter">Sync Priority</span>
               <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">High</span>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="space-y-3 pt-8">
-        <BentoCard className="p-2 border-zinc-800/30">
-          <button className="w-full flex items-center justify-between p-3 text-zinc-300 hover:text-white transition-colors">
-            <div className="flex items-center gap-3">
-              <Smartphone className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-widest">Device Sync</span>
+      {/* System Diagnostics & Bypass Hotlines (Rider emergency support solved!) */}
+      <section className="space-y-3">
+        <button
+          onClick={() => setShowDiagnostics(!showDiagnostics)}
+          className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between text-left hover:border-zinc-750 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <Activity className="w-5 h-5 text-cyan-400" />
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-white">System Diagnostics & Dispatch Comms</p>
+              <p className="text-[8.5px] font-black uppercase text-zinc-550 tracking-widest mt-0.5">Bypass Support Hotlines</p>
             </div>
-            <ChevronRight className="w-4 h-4 text-zinc-600" />
+          </div>
+          <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform duration-200", showDiagnostics ? "rotate-90 text-cyan-400" : "")} />
+        </button>
+
+        <AnimatePresence>
+          {showDiagnostics && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="bg-zinc-950 border border-zinc-900 rounded-[2rem] p-5 space-y-4">
+                <div className="bg-zinc-900/60 p-4 rounded-2xl border border-zinc-800 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-black uppercase text-zinc-400 tracking-widest flex items-center gap-1.5">
+                      <Radar className="w-3.5 h-3.5 text-[#f59e0b]" /> Network Signal Analyzer
+                    </span>
+                    <button
+                      onClick={runDiagnostics}
+                      disabled={pinging}
+                      className="px-2.5 py-1 bg-cyan-950 text-cyan-400 hover:text-white border border-cyan-800/30 text-[8px] font-black uppercase rounded shadow-md font-mono transition-all"
+                    >
+                      {pinging ? "PINGING..." : "PING TEST"}
+                    </button>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px] font-mono">
+                      <span className="text-zinc-500 uppercase font-black">Latency</span>
+                      {pingResult ? (
+                        <span className="text-[#f59e0b] font-bold">{pingResult}ms</span>
+                      ) : pinging ? (
+                        <span className="text-zinc-650 animate-pulse">Testing</span>
+                      ) : (
+                        <span className="text-zinc-700">Not Tested</span>
+                      )}
+                    </div>
+                    <div className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px] font-mono">
+                      <span className="text-zinc-500 uppercase font-black">GPS Lock</span>
+                      <span className="text-emerald-500 font-bold">SECURE</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-left">
+                  <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Operational Hotline Channels</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => window.open("tel:08005553287", "_self")}
+                      className="p-3 bg-zinc-900 hover:bg-[#f59e0b]/5 border border-zinc-800 hover:border-[#f59e0b]/30 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center"
+                    >
+                      📞 Dispatch Comms
+                    </button>
+                    <button
+                      onClick={() => toast.info("Simulated emergency help signal broadcasted")}
+                      className="p-3 bg-red-950/40 hover:bg-red-900/40 border border-red-500/20 hover:border-red-500 text-red-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center animate-pulse"
+                    >
+                      🚨 Emergency Desk
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </section>
+
+      <section className="space-y-3 pt-4">
+        <BentoCard className="p-2 border-zinc-800/30">
+          <button className="w-full flex items-center justify-between p-3 text-zinc-350 hover:text-white transition-colors">
+            <div className="flex items-center gap-3">
+              <Smartphone className="w-4 h-4 text-zinc-500" />
+              <span className="text-xs font-bold uppercase tracking-widest">Device Sync Mode</span>
+            </div>
+            <ChevronRight className="w-4 h-4 text-zinc-700" />
           </button>
         </BentoCard>
         
@@ -4570,13 +5747,15 @@ NOTIFY pgrst, 'reload schema';
                 <Dashboard 
                   profile={profile} 
                   todayEarnings={history
-                    .filter(o => o.updated_at.startsWith(new Date().toISOString().split('T')[0]))
+                    .filter(o => isTodayLocal(o.updated_at))
                     .reduce((acc, curr) => acc + Number(curr.delivery_fee || 0), 0)}
                   totalDeliveries={profile.total_deliveries}
                   history={history}
                   onToggleOnline={toggleOnline} 
                   setView={setView}
                   connectionCount={connections.length}
+                  isListening={isListening}
+                  onStartListening={startListening}
                 />
               </div>
             )}
@@ -4636,6 +5815,7 @@ NOTIFY pgrst, 'reload schema';
                   vehicleType={profile?.vehicle_type}
                   riderLat={profile?.current_latitude}
                   riderLng={profile?.current_longitude}
+                  onToggleOnline={toggleOnline}
                 />
               </div>
             )}

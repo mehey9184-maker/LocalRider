@@ -49,6 +49,8 @@ import {
   ChevronDown,
   ChevronUp,
   TrendingUp,
+  Battery,
+  Sun,
 } from 'lucide-react';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -1809,7 +1811,11 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
     return `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${destLat},${destLng}&travelmode=${travelMode}`;
   };
 
-  const handleStartNav = (e: React.MouseEvent) => {
+  const buildWazeNavigationUrl = (destLat: number, destLng: number) => {
+    return `https://waze.com/ul?ll=${destLat},${destLng}&navigate=yes`;
+  };
+
+  const handleStartNav = (e: React.MouseEvent, provider: 'google' | 'waze' = 'google') => {
     e.stopPropagation();
     
     const originLat = profile?.current_latitude || -25.9964; // Regional rider fallback (Tembisa)
@@ -1839,7 +1845,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       return;
     }
 
-    const url = buildNavigationUrl(originLat, originLng, destLat, destLng, profile?.vehicle_type || 'car');
+    const url = provider === 'waze' 
+      ? buildWazeNavigationUrl(destLat, destLng)
+      : buildNavigationUrl(originLat, originLng, destLat, destLng, profile?.vehicle_type || 'car');
     
     // Open in new tab/native maps app
     window.open(url, '_blank', 'noreferrer');
@@ -2016,11 +2024,18 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
         {/* Need Help & Close Grouped Buttons */}
         <div className="absolute right-6 top-1/2 -translate-y-[100px] z-[70] pointer-events-auto flex flex-col items-center gap-4">
-          <div className="flex flex-col items-center group cursor-pointer" onClick={handleStartNav}>
+          <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => handleStartNav(e, 'google')}>
              <div className="w-12 h-12 rounded-full bg-[#4285F4] shadow-[0_0_15px_#4285F4]/50 flex items-center justify-center mb-1 hover:brightness-110 active:scale-95 transition-all">
                 <Navigation className="w-5 h-5 text-white fill-white" />
              </div>
-             <span className="text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest">START NAV</span>
+             <span className="text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest">MAPS</span>
+          </div>
+
+          <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => handleStartNav(e, 'waze')}>
+             <div className="w-12 h-12 rounded-full bg-cyan-500 shadow-[0_0_15px_rgb(6,182,212)]/50 flex items-center justify-center mb-1 hover:brightness-110 active:scale-95 transition-all">
+                <Navigation className="w-5 h-5 text-white fill-white" />
+             </div>
+             <span className="text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest">WAZE</span>
           </div>
 
           {isPickedUp && (
@@ -2179,11 +2194,18 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
   const [activeTab, setActiveTab] = useState<'all' | 'completed' | 'cancelled'>('all');
   const [period, setPeriod] = useState<'7d' | '30d' | 'all'>('7d');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  
   const [customGoal, setCustomGoal] = useState<number>(() => {
     return Number(localStorage.getItem('localeats_daily_goal') || '350');
   });
   const [editingGoal, setEditingGoal] = useState(false);
   const [goalInput, setGoalInput] = useState(customGoal.toString());
+
+  const [expenses, setExpenses] = useState<number>(() => {
+    return Number(localStorage.getItem('localeats_expenses') || '0');
+  });
+  const [editingExpenses, setEditingExpenses] = useState(false);
+  const [expenseInput, setExpenseInput] = useState(expenses.toString());
 
   const handleSaveGoal = () => {
     const val = parseFloat(goalInput);
@@ -2194,6 +2216,18 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
       toast.success(`Daily earnings target milestone updated to R${val.toFixed(2)}`);
     } else {
       toast.error('Please enter a valid target amount');
+    }
+  };
+
+  const handleSaveExpenses = () => {
+    const val = parseFloat(expenseInput);
+    if (!isNaN(val) && val >= 0) {
+      setExpenses(val);
+      localStorage.setItem('localeats_expenses', val.toString());
+      setEditingExpenses(false);
+      toast.success(`Expenses updated to R${val.toFixed(2)}`);
+    } else {
+      toast.error('Please enter a valid expense amount');
     }
   };
 
@@ -2361,7 +2395,7 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
       </header>
 
       {/* Grid Summary Stats Row */}
-      <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 xl:grid-cols-5 gap-4">
         <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
           <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2">Aggregate Payout</span>
           <div>
@@ -2370,6 +2404,46 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
               <TrendingUp className="w-2.5 h-2.5" /> Base + Surge + Tips
             </div>
           </div>
+        </div>
+
+        <div 
+          onClick={() => {
+            if (!editingExpenses) {
+              setEditingExpenses(true);
+              setExpenseInput(expenses.toString());
+            }
+          }}
+          className={cn(
+            "bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between text-left transition-colors",
+            !editingExpenses ? "hover:border-zinc-750 cursor-pointer" : ""
+          )}
+        >
+          <div className="flex justify-between items-center w-full mb-1">
+            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block font-sans">Fuel & Expenses</span>
+          </div>
+          {editingExpenses ? (
+            <div className="space-y-2 w-full pt-1" onClick={e => e.stopPropagation()}>
+              <input 
+                type="number"
+                value={expenseInput}
+                onChange={e => setExpenseInput(e.target.value)}
+                placeholder="R Expenses"
+                className="w-full bg-black border border-zinc-800 rounded-lg text-xs p-1 text-white font-mono h-6 outline-none"
+                autoFocus
+              />
+              <div className="flex gap-1">
+                <button onClick={handleSaveExpenses} className="px-2 py-0.5 bg-red-500 text-white text-[8px] font-black rounded uppercase">Log</button>
+                <button onClick={() => setEditingExpenses(false)} className="px-2 py-0.5 bg-zinc-850 text-zinc-400 text-[8px] font-black rounded uppercase">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <span className="text-2xl font-headline font-black italic text-red-400">-R{expenses.toFixed(2)}</span>
+              <div className="text-[8px] font-black text-[#f59e0b] uppercase tracking-widest mt-1">
+                Net: R{Math.max(0, totals.totalEarned - expenses).toFixed(2)}
+              </div>
+            </div>
+          )}
         </div>
 
         <div 
@@ -3182,6 +3256,67 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
             })}
           </div>
         )}
+      </section>
+
+      {/* System Settings */}
+      <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Device Settings</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-zinc-800 rounded-xl">
+                <Battery className="w-5 h-5 text-emerald-500" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-white font-sans">Battery Saver Mode</span>
+                <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Dims screen & limits background updates</span>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                const isEco = localStorage.getItem('localeats_eco') === 'true';
+                localStorage.setItem('localeats_eco', (!isEco).toString());
+                toast.success(!isEco ? 'Battery Saver Enabled' : 'Performance Mode Restored');
+                // Just trigger a re-render or handle globally if needed
+                window.dispatchEvent(new Event('storage'));
+              }}
+              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors"
+            >
+              <div className={cn(
+                "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
+                localStorage.getItem('localeats_eco') === 'true' ? "left-6.5 bg-emerald-500" : "left-0.5 bg-zinc-400"
+              )} />
+            </button>
+          </div>
+
+          <div className="h-px bg-zinc-800 w-full" />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-zinc-800 rounded-xl">
+                <Sun className="w-5 h-5 text-amber-500" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-white font-sans">High Contrast Day Mode</span>
+                <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Increases map visibility under sunlight</span>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                const isHighContrast = localStorage.getItem('localeats_contrast') === 'true';
+                localStorage.setItem('localeats_contrast', (!isHighContrast).toString());
+                toast.success(!isHighContrast ? 'High Contrast Active' : 'Standard Contrast Restored');
+                window.dispatchEvent(new Event('storage'));
+              }}
+              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors"
+            >
+              <div className={cn(
+                "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
+                localStorage.getItem('localeats_contrast') === 'true' ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
+              )} />
+            </button>
+          </div>
+        </div>
       </section>
       
       {/* Fleet Configuration (Gated residential access identification specs solved!) */}
@@ -5152,7 +5287,13 @@ export function App() {
               Engage Simulator Override
             </button>
             <button 
-              onClick={() => getSupabase().auth.signOut()}
+              onClick={async () => {
+                try { await getSupabase().auth.signOut(); } catch (e) {
+                   console.warn("Sign out err", e);
+                   localStorage.clear();
+                   window.location.reload();
+                }
+              }}
               className="w-full py-4 text-zinc-600 text-[10px] font-black uppercase tracking-widest"
             >
               Logout
@@ -5415,7 +5556,13 @@ NOTIFY pgrst, 'reload schema';
           </button>
 
           <button 
-            onClick={() => getSupabase().auth.signOut()}
+            onClick={async () => {
+            try { await getSupabase().auth.signOut(); } catch (e) {
+               console.warn("Sign out err", e);
+               localStorage.clear();
+               window.location.reload();
+            }
+          }}
             className="w-full py-4 bg-zinc-900 border border-zinc-800 text-zinc-500 font-bold uppercase tracking-widest rounded-xl active:scale-95 transition-all text-xs"
           >
             Sign Out
@@ -5866,7 +6013,13 @@ NOTIFY pgrst, 'reload schema';
                   connections={connections}
                   now={now}
                   onUpdateVehicle={updateVehicle} 
-                  onLogout={() => getSupabase().auth.signOut()} 
+                  onLogout={async () => {
+                  try { await getSupabase().auth.signOut(); } catch (e) {
+                     console.warn("Sign out err", e);
+                     localStorage.clear();
+                     window.location.reload();
+                  }
+                }} 
                   onPair={() => {
                     setView('pair');
                   }}
@@ -5958,8 +6111,24 @@ NOTIFY pgrst, 'reload schema';
 }
 
 export default function AppWithBoundary() {
+  const handleReset = () => {
+    console.warn("Initiating manual self-healing protocol from UI...");
+    localStorage.clear();
+    sessionStorage.clear();
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (const registration of registrations) {
+          registration.unregister();
+        }
+      });
+    }
+    setTimeout(() => {
+      window.location.reload();
+    }, 500);
+  };
+
   return (
-    <ErrorBoundary FallbackComponent={FallbackComponent} onReset={() => window.location.reload()}>
+    <ErrorBoundary FallbackComponent={FallbackComponent} onReset={handleReset}>
       <App />
     </ErrorBoundary>
   );

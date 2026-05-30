@@ -282,7 +282,9 @@ export const AppMapBackground = React.memo(function AppMapBackground({
             onMapClick();
           }
         }}
-        mapStyle="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        mapStyle={localStorage.getItem('localeats_contrast') === 'true' 
+          ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+          : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"}
         attributionControl={false}
         style={{ width: '100%', height: '100%' }}
       >

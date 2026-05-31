@@ -30,15 +30,28 @@ window.addEventListener('unhandledrejection', (event) => {
   if (!document.cookie.includes('fatal_reload=true')) {
     console.error("App crashed. Initiating self-healing protocol...", event.reason);
     document.cookie = "fatal_reload=true; max-age=10; path=/";
-    localStorage.clear();
-    sessionStorage.clear();
-    if ('serviceWorker' in navigator) {
+    
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          Promise.all(keys.map(key => caches.delete(key))).catch(() => {});
+        }).catch(() => {});
+      }
+      
+      if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then((registrations) => {
-            for (const registration of registrations) {
-                registration.unregister();
-            }
+          for (const registration of registrations) {
+            registration.unregister();
+          }
         });
+      }
+    } catch {
+      // safe fallback
     }
+    
     setTimeout(() => { window.location.reload(); }, 500); 
   }
 });
@@ -67,28 +80,39 @@ window.addEventListener('error', (event) => {
   }
 
   // Implementation of Automated Failsafe for general crashes
-  if (!document.cookie.includes('fatal_reload=true') && event.filename && event.filename.includes('localhost')) {
-    // Only attempt to self-heal on same-origin script errors to avoid third-party script noise
+  const isSameOrigin = !event.filename || event.filename.includes(window.location.origin) || event.filename.includes('run.app');
+  if (!document.cookie.includes('fatal_reload=true') && isSameOrigin) {
     console.error("App crashed. Initiating self-healing protocol...", event.error);
     
     document.cookie = "fatal_reload=true; max-age=10; path=/";
     
-    // 1. Clear LocalStorage and SessionStorage
-    localStorage.clear();
-    sessionStorage.clear();
-    
-    // 2. Unregister Service Workers
-    if ('serviceWorker' in navigator) {
+    try {
+      // 1. Clear LocalStorage and SessionStorage
+      localStorage.clear();
+      sessionStorage.clear();
+      
+      // 2. Kill and purge all Cache Storage instances (forces fresh map tiles/code)
+      if ('caches' in window) {
+        caches.keys().then((keys) => {
+          Promise.all(keys.map(key => caches.delete(key))).catch(() => {});
+        }).catch(() => {});
+      }
+      
+      // 3. Unregister Service Workers
+      if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then((registrations) => {
-            for (const registration of registrations) {
-                registration.unregister();
-            }
+          for (const registration of registrations) {
+            registration.unregister();
+          }
         });
+      }
+    } catch {
+      // safe fallback
     }
 
-    // 3. Force a hard reload
+    // 4. Force a hard reload
     setTimeout(() => {
-        window.location.reload();
+      window.location.reload();
     }, 500); 
   }
 });

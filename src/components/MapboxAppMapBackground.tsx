@@ -20,6 +20,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   riderProfileLng,
   riderLocation,
   highlightedOrderId,
+  highContrast,
 }: {
   isOnline?: boolean;
   activeOrder?: DeliveryOrder | null;
@@ -35,6 +36,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   riderLocation?: [number, number] | null;
   highlightedOrderId?: string | null;
   hideNavigationHUD?: boolean;
+  highContrast?: boolean;
 }) {
   const mapRef = useRef<MapRef | null>(null);
 
@@ -296,9 +298,11 @@ export const AppMapBackground = React.memo(function AppMapBackground({
             onMapClick();
           }
         }}
-        mapStyle={localStorage.getItem('localeats_contrast') === 'true' 
-          ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-          : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"}
+        mapStyle={highContrast !== undefined 
+          ? (highContrast ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json")
+          : (localStorage.getItem('localeats_contrast') === 'true' 
+            ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+            : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json")}
         attributionControl={false}
         style={{ width: '100%', height: '100%' }}
       >

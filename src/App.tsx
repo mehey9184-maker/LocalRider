@@ -1000,11 +1000,12 @@ const getDistanceBetween = (lat1?: number, lon1?: number, lat2?: number, lon2?: 
 };
 
 const RouteMiniMap = ({ 
-  shopLat, shopLng, customerLat, customerLng, riderLat, riderLng 
+  shopLat, shopLng, customerLat, customerLng, riderLat, riderLng, isHighContrastMode 
 }: { 
   shopLat?: number, shopLng?: number, 
   customerLat?: number, customerLng?: number, 
-  riderLat?: number, riderLng?: number 
+  riderLat?: number, riderLng?: number,
+  isHighContrastMode?: boolean
 }) => {
   const centerLat = shopLat || -25.9894;
   const centerLng = shopLng || 28.2148;
@@ -1017,7 +1018,9 @@ const RouteMiniMap = ({
           latitude: centerLat,
           zoom: 12
         }}
-        mapStyle="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        mapStyle={isHighContrastMode 
+          ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+          : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"}
         attributionControl={false}
         className="brightness-[1.1] contrast-[0.95] saturate-[0.85]"
         style={{ width: '100%', height: '100%' }}
@@ -1070,7 +1073,8 @@ const OrdersFeed = React.memo(({
   vehicleType,
   riderLat,
   riderLng,
-  onToggleOnline
+  onToggleOnline,
+  isHighContrastMode
 }: { 
   orders: DeliveryOrder[], 
   activeOrders?: DeliveryOrder[],
@@ -1084,7 +1088,8 @@ const OrdersFeed = React.memo(({
   vehicleType?: string,
   riderLat?: number,
   riderLng?: number,
-  onToggleOnline?: () => void
+  onToggleOnline?: () => void,
+  isHighContrastMode?: boolean
 }) => {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [instantAccept, setInstantAccept] = useState(() => localStorage.getItem('localeats_instant_accept') === 'true');
@@ -1367,6 +1372,7 @@ const OrdersFeed = React.memo(({
               allOrders={filteredAndSortedOrders}
               onOrderMarkerClick={handleMarkerClick}
               highlightedOrderId={highlightedOrderId}
+              highContrast={isHighContrastMode}
             />
             
             <div className="absolute bottom-6 left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
@@ -1743,6 +1749,7 @@ const OrdersFeed = React.memo(({
                                 customerLng={order.lng} 
                                 riderLat={riderLat} 
                                 riderLng={riderLng} 
+                                isHighContrastMode={isHighContrastMode}
                               />
                               <div className="flex justify-between items-center text-[9px] text-zinc-600 font-black uppercase tracking-widest mt-1">
                                 <span>Sectors Covered: Area Bravo</span>
@@ -1799,7 +1806,7 @@ const OrdersFeed = React.memo(({
   );
 });
 
-const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
+const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: number, isHighContrastMode?: boolean }) => {
   const center: [number, number] = lat && lng ? [lat, lng] : [-25.9894, 28.2148];
   return (
     <div className="w-full h-full bg-zinc-950 flex items-center justify-center overflow-hidden">
@@ -1809,7 +1816,9 @@ const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
           latitude: center[0],
           zoom: 16
         }}
-        mapStyle="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        mapStyle={isHighContrastMode 
+          ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+          : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"}
         attributionControl={false}
         className="brightness-[1.05] contrast-[0.95] saturate-[0.8]"
         style={{ width: '100%', height: '100%' }}
@@ -1822,13 +1831,14 @@ const SimpleMap = ({ lat, lng }: { lat?: number, lng?: number }) => {
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
   onShowTracking?: (id: string) => void;
   profile?: RiderProfile;
   isNavVisible?: boolean;
+  isHighContrastMode?: boolean;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -2106,12 +2116,14 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               riderProfileLat={profile?.current_latitude}
               riderProfileLng={profile?.current_longitude}
               hideNavigationHUD={isNavVisible}
+              highContrast={isHighContrastMode}
             />
           </>
         ) : (
           <SimpleMap 
             lat={currentOrder.lat || currentOrder.shop_lat} 
             lng={currentOrder.lng || currentOrder.shop_lng} 
+            isHighContrastMode={isHighContrastMode}
           />
         )}
       </div>
@@ -2211,6 +2223,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                                    isOnline={true}
                                    activeOrder={currentOrder}
                                    onProgressUpdate={setRouteProgress}
+                                   highContrast={isHighContrastMode}
                                  />
                               </motion.div>
                            )}
@@ -2444,7 +2457,7 @@ const StarRating = ({ rating }: { rating: number }) => (
   </div>
 );
 
-const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
+const HistoryView = React.memo(({ history, isHighContrastMode }: { history: DeliveryOrder[], isHighContrastMode?: boolean }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'completed' | 'cancelled'>('all');
   const [period, setPeriod] = useState<'7d' | '30d' | 'all'>('7d');
@@ -3024,7 +3037,7 @@ const HistoryView = React.memo(({ history }: { history: DeliveryOrder[] }) => {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               {/* Flight Map routing */}
                               <div className="h-44 rounded-[1.5rem] border border-zinc-850 overflow-hidden relative">
-                                <HistoryMap order={item} />
+                                <HistoryMap order={item} highContrast={isHighContrastMode} />
                               </div>
 
                               {/* Dropoff visual signature verification */}
@@ -3094,7 +3107,7 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
   </div>
 );
 
-const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline, onBack }: { 
+const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline, onBack, isEcoMode, onToggleEcoMode, isHighContrastMode, onToggleHighContrastMode }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
   now: number,
@@ -3102,7 +3115,11 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
   onLogout: () => void,
   onPair: (code?: string) => void,
   onToggleOnline: () => void,
-  onBack: () => void
+  onBack: () => void,
+  isEcoMode: boolean,
+  onToggleEcoMode: () => void,
+  isHighContrastMode: boolean,
+  onToggleHighContrastMode: () => void
 }) => {
   const [localAvatar, setLocalAvatar] = useState(() => localStorage.getItem(`localeats_avatar_${profile.id}`) || profile.photo_url || '');
   const [editingAvatar, setEditingAvatar] = useState(false);
@@ -3528,18 +3545,12 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
               </div>
             </div>
             <button 
-              onClick={() => {
-                const isEco = localStorage.getItem('localeats_eco') === 'true';
-                localStorage.setItem('localeats_eco', (!isEco).toString());
-                toast.success(!isEco ? 'Battery Saver Enabled' : 'Performance Mode Restored');
-                // Just trigger a re-render or handle globally if needed
-                window.dispatchEvent(new Event('storage'));
-              }}
+              onClick={onToggleEcoMode}
               className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors"
             >
               <div className={cn(
                 "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
-                localStorage.getItem('localeats_eco') === 'true' ? "left-6.5 bg-emerald-500" : "left-0.5 bg-zinc-400"
+                isEcoMode ? "left-6.5 bg-emerald-500" : "left-0.5 bg-zinc-400"
               )} />
             </button>
           </div>
@@ -3557,17 +3568,12 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
               </div>
             </div>
             <button 
-              onClick={() => {
-                const isHighContrast = localStorage.getItem('localeats_contrast') === 'true';
-                localStorage.setItem('localeats_contrast', (!isHighContrast).toString());
-                toast.success(!isHighContrast ? 'High Contrast Active' : 'Standard Contrast Restored');
-                window.dispatchEvent(new Event('storage'));
-              }}
+              onClick={onToggleHighContrastMode}
               className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors"
             >
               <div className={cn(
                 "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
-                localStorage.getItem('localeats_contrast') === 'true' ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
+                isHighContrastMode ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
               )} />
             </button>
           </div>
@@ -3818,7 +3824,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
   );
 });
 
-const OrderTrackingScreen = ({ orderId, onBack }: { orderId: string, onBack: () => void }) => {
+const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId: string, onBack: () => void, isHighContrastMode?: boolean }) => {
   const [order, setOrder] = useState<DeliveryOrder | null>(null);
   const [riderLocation, setRiderLocation] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -3893,6 +3899,7 @@ const OrderTrackingScreen = ({ orderId, onBack }: { orderId: string, onBack: () 
               activeOrder={order} 
               isVisible={true}
               riderLocation={riderLocation}
+              highContrast={isHighContrastMode}
            />
          </div>
          
@@ -4086,6 +4093,28 @@ export function App() {
   const [view, setView] = useState<AppView>(() => {
     return (localStorage.getItem('localeats_view') as AppView) || 'dash';
   });
+  const [isEcoMode, setIsEcoMode] = useState(() => localStorage.getItem('localeats_eco') === 'true');
+  const [isHighContrastMode, setIsHighContrastMode] = useState(() => localStorage.getItem('localeats_contrast') === 'true');
+
+  const toggleEcoMode = useCallback(() => {
+    setIsEcoMode(prev => {
+      const newVal = !prev;
+      localStorage.setItem('localeats_eco', newVal.toString());
+      toast.success(newVal ? 'Battery Saver Enabled (Screen Dimmed & Background Optimized)' : 'Performance Mode Restored');
+      window.dispatchEvent(new Event('storage'));
+      return newVal;
+    });
+  }, []);
+
+  const toggleHighContrastMode = useCallback(() => {
+    setIsHighContrastMode(prev => {
+      const newVal = !prev;
+      localStorage.setItem('localeats_contrast', newVal.toString());
+      toast.success(newVal ? 'High Contrast Day Mode Active' : 'Standard Contrast Restored');
+      window.dispatchEvent(new Event('storage'));
+      return newVal;
+    });
+  }, []);
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
   const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
     const saved = localStorage.getItem('localeats_active_orders');
@@ -4850,13 +4879,13 @@ export function App() {
                 timestamp: Date.now(), 
                 isFallback: true 
               }).catch(err => console.warn('Simulation vector update error:', err));
-            }, 6000); // Trigger a location tick every 6 seconds to update map UI beautifully
+            }, isEcoMode ? 15000 : 6000); // Trigger a location tick every 15s in battery saver mode (economizes computation & network) or 6s in performance mode
           }
         },
         { 
-          enableHighAccuracy: true, 
-          timeout: 45000, 
-          maximumAge: 10000 
+          enableHighAccuracy: !isEcoMode, 
+          timeout: isEcoMode ? 60000 : 45000, 
+          maximumAge: isEcoMode ? 30000 : 10000 
         }
       );
     }
@@ -4868,7 +4897,7 @@ export function App() {
       window.removeEventListener('online', handleOnline);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, profile?.is_online, activeOrders]);
+  }, [user, profile?.is_online, activeOrders, isEcoMode]);
 
   const loadingRef = useRef(loading);
   useEffect(() => {
@@ -5593,7 +5622,10 @@ export function App() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative">
+    <div className={cn(
+      "min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative transition-all duration-[600ms] ease-in-out",
+      isEcoMode ? "brightness-[0.82] saturate-[0.88] contrast-[0.95]" : ""
+    )}>
       <Toaster position="top-center" theme="dark" richColors />
       
       {/* IMPROVEMENT #9 — Offline Detection Banner */}
@@ -6017,6 +6049,7 @@ export function App() {
                   riderLat={profile?.current_latitude}
                   riderLng={profile?.current_longitude}
                   onToggleOnline={toggleOnline}
+                  isHighContrastMode={isHighContrastMode}
                 />
               </div>
             )}
@@ -6043,6 +6076,7 @@ export function App() {
                     }}
                     profile={profile || undefined}
                     isNavVisible={isGlobalNavVisible}
+                    isHighContrastMode={isHighContrastMode}
                   />
                 </div>
               ) : (
@@ -6053,11 +6087,12 @@ export function App() {
                 </div>
               )
             )}
-            {view === 'log' && <HistoryView history={history} />}
+            {view === 'log' && <HistoryView history={history} isHighContrastMode={isHighContrastMode} />}
             {view === 'tracking' && selectedTrackingOrderId && (
               <OrderTrackingScreen 
                 orderId={selectedTrackingOrderId} 
                 onBack={() => setView('move')} 
+                isHighContrastMode={isHighContrastMode}
               />
             )}
             {view === 'hub' && (
@@ -6079,6 +6114,10 @@ export function App() {
                   }}
                   onToggleOnline={toggleOnline}
                   onBack={() => setView('dash')}
+                  isEcoMode={isEcoMode}
+                  onToggleEcoMode={toggleEcoMode}
+                  isHighContrastMode={isHighContrastMode}
+                  onToggleHighContrastMode={toggleHighContrastMode}
                 />
                 <VoiceController 
                   isListening={isListening} 

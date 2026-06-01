@@ -3,7 +3,7 @@ import Map, { Source, Layer } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { DeliveryOrder } from '../types';
 
-export const HistoryMap = React.memo(({ order }: { order: DeliveryOrder }) => {
+export const HistoryMap = React.memo(({ order, highContrast }: { order: DeliveryOrder, highContrast?: boolean }) => {
   const shopLat = Number(order.shop_lat || -25.9864);
   const shopLng = Number(order.shop_lng || 28.2198);
   const dropLat = Number(order.lat || -25.9894);
@@ -57,7 +57,7 @@ export const HistoryMap = React.memo(({ order }: { order: DeliveryOrder }) => {
           latitude: (shopLat + dropLat) / 2,
           zoom: 12
         }}
-        mapStyle="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
+        mapStyle={highContrast !== undefined ? (highContrast ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json") : (localStorage.getItem('localeats_contrast') === 'true' ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json")}
         attributionControl={false}
         interactive={false}
         style={{ width: '100%', height: '100%' }}

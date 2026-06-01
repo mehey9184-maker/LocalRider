@@ -116,12 +116,21 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 }
 
 const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 5, delay = 1000, timeoutMs = 15000): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
+    const timeoutPromise = new Promise<T>((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('timeout')), timeoutMs);
+    });
+    
+    const result = await Promise.race([
       fn(),
-      new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
+      timeoutPromise
     ]);
+    
+    if (timeoutId) clearTimeout(timeoutId);
+    return result;
   } catch (error) {
+    if (timeoutId) clearTimeout(timeoutId);
     const isNetworkOrTimeoutErr = error instanceof TypeError || (error instanceof Error && (
       error.message === 'timeout' || 
       /fetch|network|offline|connection|failed|changed|cors|disconnected|abort/i.test(error.message)

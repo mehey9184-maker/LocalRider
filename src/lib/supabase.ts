@@ -8,12 +8,33 @@ export function getSupabase(): SupabaseClient {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
     const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-    if (!supabaseUrl || !supabaseAnonKey || supabaseUrl.includes('your-supabase-url')) {
+    // Check if variables are missing, undefined/null strings, default placeholders, or invalid
+    const isUrlPlaceholder = !supabaseUrl || 
+      supabaseUrl === 'undefined' || 
+      supabaseUrl === 'null' || 
+      supabaseUrl.trim() === '' ||
+      supabaseUrl.includes('your-supabase-url') ||
+      (!supabaseUrl.startsWith('https://') && !supabaseUrl.startsWith('http://localhost') && !supabaseUrl.startsWith('http://127.0.0.1'));
+
+    const isKeyPlaceholder = !supabaseAnonKey || 
+      supabaseAnonKey === 'undefined' || 
+      supabaseAnonKey === 'null' || 
+      supabaseAnonKey.trim() === '' ||
+      supabaseAnonKey.includes('your-supabase-anon-key') ||
+      supabaseAnonKey.length < 15;
+
+    if (isUrlPlaceholder || isKeyPlaceholder) {
       isMocked = true;
       // Return a dummy client that doesn't throw immediate errors but we'll check isMocked
       supabaseClient = createClient('https://placeholder.supabase.co', 'placeholder');
     } else {
-      supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+      try {
+        supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+      } catch (err) {
+        console.warn('Supabase client creation failed, defaulting to mock mode:', err);
+        isMocked = true;
+        supabaseClient = createClient('https://placeholder.supabase.co', 'placeholder');
+      }
     }
   }
   return supabaseClient;
@@ -22,4 +43,9 @@ export function getSupabase(): SupabaseClient {
 export function isSupabaseMocked(): boolean {
   getSupabase(); // Ensure init
   return isMocked;
+}
+
+export function markSupabaseAsMocked() {
+  isMocked = true;
+  console.warn("SYSTEM AUTONOMOUS FAILSAFE ENGAGED: Dynamic failover to local mocked operational mode triggered.");
 }

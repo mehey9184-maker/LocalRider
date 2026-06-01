@@ -64,8 +64,16 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       const [rLat, rLng] = riderPos;
       const [tLat, tLng] = targetPos;
       
-      fetch(`https://router.project-osrm.org/route/v1/driving/${rLng},${rLat};${tLng},${tLat}?geometries=geojson&overview=full`)
-        .then(res => res.json())
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+      
+      fetch(`https://router.project-osrm.org/route/v1/driving/${rLng},${rLat};${tLng},${tLat}?geometries=geojson&overview=full`, {
+        signal: controller.signal
+      })
+        .then(res => {
+          clearTimeout(timeoutId);
+          return res.json();
+        })
         .then(data => {
           if (data.routes?.[0]?.geometry?.coordinates) {
             setRouteCoordinates(data.routes[0].geometry.coordinates);
@@ -82,10 +90,16 @@ export const AppMapBackground = React.memo(function AppMapBackground({
           }
         })
         .catch(err => {
+          clearTimeout(timeoutId);
           console.warn("OSRM routing failed", err);
           // Fallback to straight line
           setRouteCoordinates([[rLng, rLat], [tLng, tLat]]);
         });
+
+      return () => {
+        controller.abort();
+        clearTimeout(timeoutId);
+      };
     } else {
       setRouteCoordinates([]);
     }

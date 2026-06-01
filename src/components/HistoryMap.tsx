@@ -12,16 +12,30 @@ export const HistoryMap = React.memo(({ order }: { order: DeliveryOrder }) => {
   const [routeCoordinates, setRouteCoordinates] = useState<number[][]>([[shopLng, shopLat], [dropLng, dropLat]]);
 
   useEffect(() => {
-    fetch(`https://router.project-osrm.org/route/v1/driving/${shopLng},${shopLat};${dropLng},${dropLat}?geometries=geojson&overview=full`)
-      .then(res => res.json())
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+
+    fetch(`https://router.project-osrm.org/route/v1/driving/${shopLng},${shopLat};${dropLng},${dropLat}?geometries=geojson&overview=full`, {
+      signal: controller.signal
+    })
+      .then(res => {
+        clearTimeout(timeoutId);
+        return res.json();
+      })
       .then(data => {
         if (data.routes?.[0]?.geometry?.coordinates) {
           setRouteCoordinates(data.routes[0].geometry.coordinates);
         }
       })
       .catch(err => {
+        clearTimeout(timeoutId);
         console.warn("History OSRM routing failed", err);
       });
+
+    return () => {
+      controller.abort();
+      clearTimeout(timeoutId);
+    };
   }, [shopLat, shopLng, dropLat, dropLng]);
 
   const routeGeoJSON = useMemo(() => {

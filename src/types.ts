@@ -61,6 +61,14 @@ export interface DeliveryOrder {
   items?: string[]; // Optional list of items in the order
   merchant_rating?: number;
   merchant_feedback?: string;
+  payment_method?: 'cash_on_arrival' | 'card_online';
+  payment_collected?: boolean;
+  rider_name?: string;
+  rider_phone?: string;
+  allow_external_riders?: boolean;
+  cash_trust_enabled?: boolean;
+  auto_look_for_rider?: boolean;
+  dispatch_to_marketplace?: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import Map, { Source, Layer } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { DeliveryOrder } from '../types';
+import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from '../lib/mapStyles';
 
 export const HistoryMap = React.memo(({ order, highContrast }: { order: DeliveryOrder, highContrast?: boolean }) => {
   const shopLat = Number(order.shop_lat || -25.9864);
@@ -29,7 +30,9 @@ export const HistoryMap = React.memo(({ order, highContrast }: { order: Delivery
       })
       .catch(err => {
         clearTimeout(timeoutId);
-        console.warn("History OSRM routing failed", err);
+        if (err.name !== 'AbortError' && err.message?.indexOf('abort') === -1) {
+          console.warn("History OSRM routing failed", err);
+        }
       });
 
     return () => {
@@ -57,7 +60,7 @@ export const HistoryMap = React.memo(({ order, highContrast }: { order: Delivery
           latitude: (shopLat + dropLat) / 2,
           zoom: 12
         }}
-        mapStyle={highContrast !== undefined ? (highContrast ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json") : (localStorage.getItem('localeats_contrast') === 'true' ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json")}
+        mapStyle={highContrast !== undefined ? (highContrast ? CARTO_LIGHT_RASTER : CARTO_DARK_RASTER) : (localStorage.getItem('localeats_contrast') === 'true' ? CARTO_LIGHT_RASTER : CARTO_DARK_RASTER)}
         attributionControl={false}
         interactive={false}
         style={{ width: '100%', height: '100%' }}

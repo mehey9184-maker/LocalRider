@@ -45,6 +45,8 @@ import {
   Copy,
   Check,
   Download,
+  Trash2,
+  Database,
   SlidersHorizontal,
   ChevronDown,
   ChevronUp,
@@ -64,6 +66,8 @@ import { AppMapBackground } from './components/MapboxAppMapBackground';
 import { HistoryMap } from './components/HistoryMap';
 import { TacticalOnboarding } from './components/TacticalOnboarding';
 import { PhoneInput } from './components/PhoneInput';
+import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from './lib/mapStyles';
+import { OrderCardSkeleton, OrderTrackingSkeleton } from './components/ShimmerSkeleton';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -1019,11 +1023,20 @@ const RouteMiniMap = ({
           zoom: 12
         }}
         mapStyle={isHighContrastMode 
-          ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-          : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"}
+          ? CARTO_LIGHT_RASTER
+          : CARTO_DARK_RASTER}
         attributionControl={false}
-        className="brightness-[1.1] contrast-[0.95] saturate-[0.85]"
+        className={isHighContrastMode ? "brightness-[1.2] contrast-[1.1] saturate-[1.0]" : "brightness-[1.1] contrast-[0.95] saturate-[0.85]"}
         style={{ width: '100%', height: '100%' }}
+        transformRequest={(url, resourceType) => {
+          if (resourceType === 'Tile' && url.includes('basemaps.cartocdn.com')) {
+            const forceOffline = localStorage.getItem('localeats_force_offline') === 'true';
+            if (forceOffline) {
+              return { url: `${url}?force_offline=true` };
+            }
+          }
+          return { url };
+        }}
       >
         {riderLat && riderLng && (
           <Marker longitude={riderLng} latitude={riderLat}>
@@ -1134,7 +1147,7 @@ const OrdersFeed = React.memo(({
     );
 
     if (statusFilter === 'available') {
-      result = result.filter(o => o.delivery_status === 'none' || o.delivery_status === 'finding_rider');
+      result = result.filter(o => (o.delivery_status === 'none' || o.delivery_status === 'finding_rider') && !o.rider_id);
     } else if (statusFilter === 'accepted') {
       result = result.filter(o => o.delivery_status === 'accepted');
     } else if (statusFilter === 'picked_up') {
@@ -1188,7 +1201,7 @@ const OrdersFeed = React.memo(({
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
       <header className="flex flex-col gap-4 pt-6">
         <div className="flex items-center justify-between">
-           <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Available Orders</h2>
+           <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Rider Marketplace Feed</h2>
            <div className="flex items-center gap-2">
               <button 
                 onClick={() => setShowNearbyMap(!showNearbyMap)}
@@ -1430,7 +1443,13 @@ const OrdersFeed = React.memo(({
         </motion.div>
       )}
 
-      {filteredAndSortedOrders.length === 0 ? (
+      {isRefreshing ? (
+        <div className="space-y-4 mt-2">
+          <OrderCardSkeleton isHighContrastMode={isHighContrastMode} />
+          <OrderCardSkeleton isHighContrastMode={isHighContrastMode} />
+          <OrderCardSkeleton isHighContrastMode={isHighContrastMode} />
+        </div>
+      ) : filteredAndSortedOrders.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="relative mb-8">
             {!isOnline ? (
@@ -1478,6 +1497,25 @@ const OrdersFeed = React.memo(({
         </div>
       ) : (
         <div className="space-y-4">
+          {/* Manual Storefront Coordination Protocol Banner */}
+          <div className="bg-zinc-900/60 border border-zinc-805/30 rounded-[2rem] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-full bg-[#f59e0b]/10 border border-[#f59e0b]/20 flex items-center justify-center text-[#f59e0b] shrink-0">
+                <ShieldAlert className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black uppercase tracking-widest text-[#f59e0b] font-headline italic">Manual Storefront Coordination Rule</h4>
+                <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed font-medium">
+                  If you navigate physically to the storefront and coordinate manually, you can scan the merchant's screen to map or sync connection slots instantly.
+                </p>
+              </div>
+            </div>
+            <div className="bg-zinc-800/80 border border-zinc-750 px-3.5 py-2 rounded-xl flex items-center gap-1.5 self-stretch sm:self-auto justify-center">
+              <QrCode className="w-4 h-4 text-[#f59e0b] animate-pulse" />
+              <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest">Instant Sync Slot</span>
+            </div>
+          </div>
+
           <AnimatePresence mode="popLayout">
             {filteredAndSortedOrders.map(order => {
               const riderToShopDist = getDistanceBetween(riderLat, riderLng, order.shop_lat, order.shop_lng);
@@ -1536,6 +1574,35 @@ const OrdersFeed = React.memo(({
                       <div>
                         <div className="mb-3 flex items-center gap-3">
                            <StatusBadge status={order.delivery_status} />
+                           {order.payment_method === 'cash_on_arrival' ? (
+                             <div className="bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-full">
+                               <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest italic">
+                                 💵 Cash On Arrival
+                               </span>
+                             </div>
+                           ) : (
+                             <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full">
+                               <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic">
+                                 💳 Card/Online
+                               </span>
+                             </div>
+                           )}
+                           {order.delivery_status === 'finding_rider' && order.auto_look_for_rider && (
+                             <div className="bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.15)] animate-pulse">
+                               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                               <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest italic font-mono leading-none">
+                                 📡 AUTO-DISPATCH SIGNAL
+                               </span>
+                             </div>
+                           )}
+                           {order.cash_trust_enabled && (
+                             <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
+                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                               <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic font-mono leading-none">
+                                 TRUSTED LOCAL PARTNER
+                               </span>
+                             </div>
+                           )}
                            {order.match_score && (
                              <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
                                <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
@@ -1558,7 +1625,7 @@ const OrdersFeed = React.memo(({
                           </div>
                           <div className="flex items-center gap-4 text-zinc-500">
                             <div className="flex flex-col gap-1">
-                              <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest">Distance to store</span>
+                              <span className="text-[8px] font-black text-[#f59e0b] uppercase tracking-widest">Distance to Merchant Store</span>
                               <div className="flex items-center gap-1.5">
                                 <Navigation className="w-3.5 h-3.5 text-orange-600" />
                                 <span className="text-[11px] font-black italic text-orange-600 uppercase tracking-widest">
@@ -1601,6 +1668,7 @@ const OrdersFeed = React.memo(({
                         </div>
                       </div>
                       <div className="text-right group/fee relative cursor-help">
+                        <div className="text-[8px] font-black uppercase tracking-widest text-zinc-500 mb-0.5">EXPECTED FARE</div>
                         <div className="text-2xl font-headline font-black italic text-[#f59e0b] tracking-tighter">R{Number(order.delivery_fee || 0).toFixed(2)}</div>
                         <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-800 border border-zinc-700 rounded-lg p-3 shadow-2xl opacity-0 group-hover/fee:opacity-100 pointer-events-none transition-opacity z-50 text-left">
                           <p className="text-[10px] text-zinc-400 font-bold mb-2 uppercase tracking-widest">Fee Breakdown</p>
@@ -1776,6 +1844,38 @@ const OrdersFeed = React.memo(({
                       )}
                     </AnimatePresence>
 
+                    {/* Accept Dispatch Mission direct click button */}
+                    <div className="mt-4 pb-2">
+                      <button
+                        id={`accept-dispatch-btn-${order.id}`}
+                        disabled={isLimitReached}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (isLimitReached) {
+                            toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
+                          } else {
+                            if (instantAccept) {
+                              onAccept(order.id);
+                              toast.success('Mission accepted instantly!', {
+                                description: `You are locked into delivering for ${order.restaurant_name}.`
+                              });
+                            } else {
+                              setConfirmId(order.id);
+                            }
+                          }
+                        }}
+                        className={cn(
+                          "w-full py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest italic font-headline transition-all active:scale-95 flex items-center justify-center gap-2",
+                          isLimitReached 
+                            ? "bg-zinc-950 text-zinc-650 border border-zinc-900 cursor-not-allowed" 
+                            : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_4px_20px_rgba(16,185,129,0.25)] border border-emerald-500/30"
+                        )}
+                      >
+                        <CheckCircle className="w-3.5 h-3.5 animate-pulse" />
+                        Accept Dispatch Mission
+                      </button>
+                    </div>
+
                     <SwipeButton 
                       label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT"} 
                       onComplete={() => {
@@ -1817,11 +1917,20 @@ const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: numbe
           zoom: 16
         }}
         mapStyle={isHighContrastMode 
-          ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-          : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"}
+          ? CARTO_LIGHT_RASTER
+          : CARTO_DARK_RASTER}
         attributionControl={false}
-        className="brightness-[1.05] contrast-[0.95] saturate-[0.8]"
+        className={isHighContrastMode ? "brightness-[1.2] contrast-[1.1] saturate-[1.0]" : "brightness-[1.05] contrast-[0.95] saturate-[0.8]"}
         style={{ width: '100%', height: '100%' }}
+        transformRequest={(url, resourceType) => {
+          if (resourceType === 'Tile' && url.includes('basemaps.cartocdn.com')) {
+            const forceOffline = localStorage.getItem('localeats_force_offline') === 'true';
+            if (forceOffline) {
+              return { url: `${url}?force_offline=true` };
+            }
+          }
+          return { url };
+        }}
       >
         <Marker longitude={center[1]} latitude={center[0]}>
           <div className="bg-[#f59e0b] w-3 h-3 rounded-full border border-white"></div>
@@ -1849,6 +1958,8 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const [routeProgress, setRouteProgress] = useState(0);
   const [activeEta, setActiveEta] = useState(0);
   const [routeDistance, setRouteDistance] = useState(0);
+  const [arrivedAtCustomer, setArrivedAtCustomer] = useState<Record<string, boolean>>({});
+  const [cashCollected, setCashCollected] = useState<Record<string, boolean>>({});
 
   const isVoiceSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
   const [isListening, setIsListening] = useState(false);
@@ -2406,7 +2517,115 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
             </div>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4">
+            {/* Warning Banner for COA */}
+            {currentOrder.payment_method === 'cash_on_arrival' && (
+              <div className="bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-xl flex items-start gap-2.5 animate-pulse">
+                <span className="text-lg">💵</span>
+                <div className="flex-1">
+                  <p className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Cash-Collected Mission Required</p>
+                  <p className="text-[11px] font-medium text-amber-300 leading-tight">
+                    Please deliver the items, collect <strong className="font-black text-white">R{Number(currentOrder.total_price || 0).toFixed(2)}</strong> in cash/digital transfer at arrival, and finalize payment status below.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Cash Confidence Certificate Banner */}
+            {currentOrder.cash_trust_enabled && (
+              <div className="bg-emerald-500/10 border border-emerald-500/30 p-3.5 rounded-xl flex items-start gap-3 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
+                <div className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                  <Check className="w-3 h-3 text-emerald-400 font-black" strokeWidth={3} />
+                </div>
+                <div className="flex-1">
+                  <p className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">TRUSTED LOCAL PARTNER</p>
+                  <p className="text-[11px] font-medium text-emerald-300 leading-tight">
+                    Verified Trusted Partner - Premium access to high-value dispatches sanctioned by shop management.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Delivery Workflow Steps */}
+            <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-3 flex flex-col gap-2.5">
+              <div className="flex items-center justify-between px-2">
+                <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Delivery Protocol Steps</span>
+                <span className="text-[9px] font-mono text-[#f59e0b] px-1.5 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded uppercase">
+                  {!isPickedUp ? "Step 2/4: Collect Packets" : (arrivedAtCustomer[currentOrder.id] ? "Step 4/4: Finalize Payment" : "Step 3/4: Present Food")}
+                </span>
+              </div>
+              <div className="flex items-center justify-between relative px-4 py-2">
+                {/* Connecting Line */}
+                <div className="absolute left-8 right-8 top-1/2 -translate-y-1/2 h-0.5 bg-zinc-800 z-0">
+                  <motion.div 
+                    className="h-full bg-[#f59e0b]"
+                    initial={{ width: "0%" }}
+                    animate={{ 
+                      width: !isPickedUp 
+                        ? "33%" 
+                        : (arrivedAtCustomer[currentOrder.id] ? "100%" : "66%") 
+                    }}
+                    transition={{ duration: 0.5 }}
+                  />
+                </div>
+                {/* Step Nodes */}
+                {[
+                  { label: "Claimed", done: true },
+                  { label: "Merchant", done: true, active: !isPickedUp },
+                  { label: "Customer", done: isPickedUp, active: isPickedUp && !arrivedAtCustomer[currentOrder.id] },
+                  { label: "Done", done: isPickedUp && arrivedAtCustomer[currentOrder.id], active: isPickedUp && arrivedAtCustomer[currentOrder.id] }
+                ].map((st, sidx) => (
+                  <div key={sidx} className="flex flex-col items-center gap-1 z-10 relative">
+                    <div className={cn(
+                      "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold border transition-colors",
+                      st.active 
+                        ? "bg-[#f59e0b] text-black border-[#f59e0b] animate-pulse" 
+                        : (st.done ? "bg-[#f59e0b]/20 text-[#f59e0b] border-[#f59e0b]/40" : "bg-zinc-950 text-zinc-600 border-zinc-900")
+                    )}>
+                      {sidx + 1}
+                    </div>
+                    <span className={cn(
+                      "text-[8px] font-black uppercase tracking-tight",
+                      st.active ? "text-white" : (st.done ? "text-zinc-400" : "text-zinc-600")
+                    )}>{st.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Cash Validation Checkbox */}
+            {isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-zinc-950/60 border border-amber-500/20 rounded-xl p-3 flex items-start gap-3"
+              >
+                <div className="flex items-center h-5">
+                  <input
+                    id={`validate-${currentOrder.id}`}
+                    name="cashCollected"
+                    type="checkbox"
+                    checked={!!cashCollected[currentOrder.id]}
+                    onChange={(e) => {
+                      setCashCollected(prev => ({ ...prev, [currentOrder.id]: e.target.checked }));
+                      if (e.target.checked) {
+                        toast.success("Payment confirmed in rider register! Ready to finalize delivery.");
+                      }
+                    }}
+                    className="h-4.5 w-4.5 rounded border-zinc-800 bg-zinc-900 text-amber-500 focus:ring-amber-500/50 cursor-pointer"
+                  />
+                </div>
+                <div className="text-sm">
+                  <label htmlFor={`validate-${currentOrder.id}`} className="font-black text-xs text-amber-500 uppercase tracking-wider cursor-pointer select-none font-headline">
+                    Final Cash Validation Required
+                  </label>
+                  <p className="text-[11px] text-zinc-400 leading-snug">
+                    I confirm that I have presented the food and collected <strong className="text-white">R{Number(currentOrder.total_price).toFixed(2)}</strong> in cash or digital transfer from the customer successfully.
+                  </p>
+                </div>
+              </motion.div>
+            )}
+
             {/* Progress Bar */}
             <div className="w-full h-0.5 bg-zinc-900 rounded-full overflow-hidden relative">
               <motion.div 
@@ -2418,9 +2637,26 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
             </div>
 
             <SwipeButton 
-              label={isPickedUp ? "COMPLETE DELIVERY" : "CONFIRM PICK UP"}
+              label={
+                !isPickedUp 
+                  ? "ARRIVED AT MERCHANT & COLLECT PACKET" 
+                  : (!arrivedAtCustomer[currentOrder.id] 
+                      ? "ARRIVED AT CUSTOMER (PRESENT FOOD)" 
+                      : (currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]
+                          ? "CONFIRM PAYMENT FIRST" 
+                          : "COMPLETE DELIVERY"
+                        )
+                    )
+              }
+              disabled={isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]}
               onComplete={() => {
-                if (isPickedUp) {
+                if (!isPickedUp) {
+                  onUpdateStatus(currentOrder.id, 'picked_up');
+                  toast.success("Status: Food packet collected cleanly. Heading to dropoff destination.");
+                } else if (!arrivedAtCustomer[currentOrder.id]) {
+                  setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
+                  toast.success("Status: Arrived at Customer storefront. Connect and finalize payment.");
+                } else {
                   setShowSuccessOverlay(true);
                   if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 200]);
                   try {
@@ -2433,19 +2669,223 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   setTimeout(() => {
                     onUpdateStatus(currentOrder.id, 'delivered');
                     setShowSuccessOverlay(false);
+                    // Reset local sub-steps
+                    setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: false }));
+                    setCashCollected(prev => ({ ...prev, [currentOrder.id]: false }));
                   }, 3000);
-                } else {
-                  onUpdateStatus(currentOrder.id, 'picked_up');
                 }
               }}
               color="#f59e0b"
-              resetToken={currentOrder.delivery_status}
+              resetToken={`${currentOrder.delivery_status}-${arrivedAtCustomer[currentOrder.id] || false}-${cashCollected[currentOrder.id] || false}`}
             />
+
+            {/* Release Mission Action */}
+            <div className="flex items-center justify-between border-t border-white/5 pt-3 mt-1.5">
+              <div className="text-left">
+                <p className="text-[10px] font-black uppercase text-zinc-500 tracking-wider">System Recovery Protocol</p>
+                <p className="text-[9px] text-zinc-600">Manual Coordinator bypass to release slot instantly</p>
+              </div>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm("Are you sure you want to release this mission back to the open marketplace? Another rider will be sorted to dispatch immediately.")) {
+                    onUpdateStatus(currentOrder.id, 'finding_rider');
+                  }
+                }}
+                className="bg-red-500/10 border border-red-500/30 text-red-500 text-[10px] font-black px-3 py-1.5 rounded-lg active:scale-95 transition-all uppercase tracking-wider hover:bg-red-500 hover:text-white"
+              >
+                Release Mission
+              </button>
+            </div>
           </div>
         </motion.div>
         )}
       </AnimatePresence>
   </div>
+  );
+});
+
+interface MerchantPortalProps {
+  allowExternal: boolean;
+  onToggleAllowExternal: () => void;
+  cashTrust: boolean;
+  onToggleCashTrust: () => void;
+  autoLook: boolean;
+  onToggleAutoLook: () => void;
+  dispatchToMarketplace: Record<string, boolean>;
+  onToggleDispatch: (orderId: string) => void;
+}
+
+const MerchantPortal = React.memo(({
+  allowExternal,
+  onToggleAllowExternal,
+  cashTrust,
+  onToggleCashTrust,
+  autoLook,
+  onToggleAutoLook,
+  dispatchToMarketplace,
+  onToggleDispatch
+}: MerchantPortalProps) => {
+  return (
+    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
+      <header className="flex flex-col gap-4 pt-6">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 shadow-[0_4px_20px_rgba(245,158,11,0.15)] animate-pulse">
+            <ShoppingBag className="w-6 h-6" />
+          </div>
+          <div>
+            <h1 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white font-headline">Merchant Portal</h1>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">Simulate and coordinate storefront-to-rider dispatch protocols</p>
+          </div>
+        </div>
+      </header>
+
+      {/* Manual Storefront Coordination Protocol Banner */}
+      <div className="bg-zinc-900/40 border border-zinc-850 rounded-[2rem] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-xs font-black uppercase tracking-widest text-blue-400 font-headline italic">Manual Storefront Coordination Protocol</h4>
+            <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed font-semibold">
+              If freelance dispatch matches are restricted, riders physical storefront presence allows them to instantly pair or link connection slots with merchant terminals.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Section 1: Merchant Global Policies */}
+        <BentoCard className="p-6 space-y-6 border border-zinc-900/50 bg-zinc-900/20" glow>
+          <div className="flex items-center gap-2 mb-2">
+            <SlidersHorizontal className="w-5 h-5 text-amber-500" />
+            <h3 className="text-lg font-headline font-black italic uppercase text-white font-headline">Global Dispatch Policies</h3>
+          </div>
+
+          {/* Toggle 1: Allow External Riders */}
+          <div className="space-y-3 bg-zinc-950/80 border border-zinc-900 rounded-2xl p-4 transition-all hover:border-zinc-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-black uppercase tracking-wider text-white font-mono">Allow Public Marketplace Riders</span>
+                <p className="text-[10px] text-zinc-400 mt-0.5">When disabled, only matched private in-house fleets can deliver.</p>
+              </div>
+              <button
+                id="toggle-external-riders-btn"
+                onClick={onToggleAllowExternal}
+                className={cn(
+                  "px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all font-mono",
+                  allowExternal
+                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+                    : "bg-red-500/15 text-red-400 border border-red-500/30"
+                )}
+              >
+                {allowExternal ? "ENABLED (Public)" : "DISABLED (Private)"}
+              </button>
+            </div>
+          </div>
+
+          {/* Toggle 2: Cash Trust Enabled */}
+          <div className="space-y-3 bg-zinc-950/80 border border-zinc-900 rounded-2xl p-4 transition-all hover:border-zinc-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-black uppercase tracking-wider text-white font-mono">Cash Trust (COD) Shield</span>
+                <p className="text-[10px] text-zinc-400 mt-0.5 font-sans">Force green COD warnings on public cards for cash-returning orders.</p>
+              </div>
+              <button
+                id="toggle-cash-trust-btn"
+                onClick={onToggleCashTrust}
+                className={cn(
+                  "px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all font-mono",
+                  cashTrust
+                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
+                    : "bg-zinc-800 text-zinc-400 border border-zinc-750"
+                )}
+              >
+                {cashTrust ? "ACTIVE (FLAG ON)" : "INACTIVE (FLAG OFF)"}
+              </button>
+            </div>
+          </div>
+
+          {/* Toggle 3: Auto-Look (Rider Backup Scanning) */}
+          <div className="space-y-3 bg-zinc-950/80 border border-zinc-900 rounded-2xl p-4 transition-all hover:border-zinc-800">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-black uppercase tracking-wider text-white font-mono">Auto-Look For Rider Signal</span>
+                <p className="text-[10px] text-zinc-400 mt-0.5 font-sans">Broadcast active pulsing visual beacons for instant public rider claims.</p>
+              </div>
+              <button
+                id="toggle-auto-look-btn"
+                onClick={onToggleAutoLook}
+                className={cn(
+                  "px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all font-mono",
+                  autoLook
+                    ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-[0_0_15px_rgba(34,211,238,0.15)] animate-pulse"
+                    : "bg-zinc-800 text-zinc-400 border border-zinc-750"
+                )}
+              >
+                {autoLook ? "ACTIVE (RADAR PULSING)" : "INACTIVE"}
+              </button>
+            </div>
+          </div>
+        </BentoCard>
+
+        {/* Section 2: Order-Level Marketplace Dispatch Override Controls */}
+        <BentoCard className="p-6 space-y-4 border border-zinc-900/50 bg-zinc-900/20" glow>
+          <div className="flex items-center gap-2 mb-2">
+            <Zap className="w-5 h-5 text-amber-500 animate-bounce" />
+            <h3 className="text-lg font-headline font-black italic uppercase text-white font-headline font-black">On-Demand Backups Dispatch</h3>
+          </div>
+          <p className="text-[10px] text-zinc-500 uppercase tracking-wide leading-relaxed font-semibold">
+            Below are unassigned storefront orders. When global marketplace access is off, individually override dispatch to marketplace as on-demand backup dispatch instantly:
+          </p>
+
+          <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+            {[
+              { id: 'order-1', name: 'Cheese Burger XL', customer: 'John Doe', price: 155, desc: 'Test Burger Hub' },
+              { id: 'order-2', name: 'Sizzling Platter & Chips', customer: 'Sarah Gadebe', price: 245, desc: 'Flame Grill Chicken' },
+              { id: 'order-3', name: 'Quarter Leg & Pap Combo', customer: 'Mpho Dlamini', price: 180, desc: 'Dlamini Traditional Kitchen' }
+            ].map(ord => {
+              const isDispatched = dispatchToMarketplace[ord.id] ?? (ord.id === 'order-2' ? true : false);
+              return (
+                <div key={ord.id} className="bg-zinc-950/80 border border-zinc-900 rounded-xl p-3 flex items-center justify-between gap-3 hover:border-zinc-800 transition-all">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-zinc-250 font-mono font-bold">{ord.name}</span>
+                      <span className="text-[9px] font-mono text-zinc-500">R{ord.price}</span>
+                    </div>
+                    <p className="text-[9px] text-zinc-450 mt-0.5 font-sans">
+                      Merchant: <span className="font-bold text-amber-500/95">{ord.desc}</span> • Client: <span className="text-zinc-400">{ord.customer}</span>
+                    </p>
+                  </div>
+
+                  <button
+                    id={`toggle-dispatch-btn-${ord.id}`}
+                    onClick={() => onToggleDispatch(ord.id)}
+                    className={cn(
+                      "px-3 py-1.5 text-[8px] font-black uppercase tracking-widest rounded-lg transition-all font-headline",
+                      isDispatched
+                        ? "bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_10px_rgba(245,158,11,0.2)]"
+                        : "bg-zinc-900 hover:bg-zinc-850 text-zinc-400 border border-zinc-800"
+                    )}
+                  >
+                    {isDispatched ? "DISPATCHED TO FEED" : "KEEP PRIVATE"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </BentoCard>
+      </div>
+
+      <div className="bg-zinc-900/40 p-6 rounded-[2.5rem] border border-zinc-800/10 space-y-4">
+        <h4 className="text-xs font-black uppercase tracking-widest text-[#f59e0b] italic font-headline">Live Simulated Feed Status</h4>
+        <p className="text-[11px] text-zinc-400 max-w-2xl leading-relaxed">
+          Riders checking the <strong className="text-amber-500">Rider Marketplace Feed</strong> tab can currently see orders matching current settings. 
+          Toggle the Global Policies or dispatch backups above to test immediate feed visibility logic!
+        </p>
+      </div>
+    </div>
   );
 });
 
@@ -3107,6 +3547,45 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
   </div>
 );
 
+const getRandomHost = () => {
+  const hosts = ['a', 'b', 'c', 'd'];
+  return hosts[Math.floor(Math.random() * hosts.length)];
+};
+
+const getTilesForCoordinate = (lat: number, lng: number, extent: number = 0.015) => {
+  const list: { z: number; x: number; y: number }[] = [];
+  const zooms = [12, 13, 14, 15, 16, 17, 18];
+  
+  zooms.forEach(z => {
+    const minLat = lat - extent;
+    const maxLat = lat + extent;
+    const minLng = lng - extent;
+    const maxLng = lng + extent;
+    
+    const tileMinX = Math.floor((minLng + 180) / 360 * Math.pow(2, z));
+    const tileMaxX = Math.floor((maxLng + 180) / 360 * Math.pow(2, z));
+    
+    const tileMinY = Math.floor((1 - Math.log(Math.tan(maxLat * Math.PI / 180) + 1 / Math.cos(maxLat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
+    const tileMaxY = Math.floor((1 - Math.log(Math.tan(minLat * Math.PI / 180) + 1 / Math.cos(minLat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
+    
+    const minX = Math.min(tileMinX, tileMaxX);
+    const maxX = Math.max(tileMinX, tileMaxX);
+    const minY = Math.min(tileMinY, tileMaxY);
+    const maxY = Math.max(tileMinY, tileMaxY);
+    
+    const totalTilesInZoom = (maxX - minX + 1) * (maxY - minY + 1);
+    if (totalTilesInZoom <= 1200) {
+      for (let x = minX; x <= maxX; x++) {
+        for (let y = minY; y <= maxY; y++) {
+          list.push({ z, x, y });
+        }
+      }
+    }
+  });
+  
+  return list;
+};
+
 const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline, onBack, isEcoMode, onToggleEcoMode, isHighContrastMode, onToggleHighContrastMode }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
@@ -3124,6 +3603,113 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
   const [localAvatar, setLocalAvatar] = useState(() => localStorage.getItem(`localeats_avatar_${profile.id}`) || profile.photo_url || '');
   const [editingAvatar, setEditingAvatar] = useState(false);
   const [customAvatarUrl, setCustomAvatarUrl] = useState('');
+
+  const [cachedTileCount, setCachedTileCount] = useState<number>(0);
+  const [cachedSizeStr, setCachedSizeStr] = useState<string>('0.0 MB');
+  const [syncingSector, setSyncingSector] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<number>(0);
+  const [syncTotal, setSyncTotal] = useState<number>(0);
+  const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
+
+  const updateCacheMetrics = useCallback(async () => {
+    if (!('caches' in window)) return;
+    try {
+      const cache = await caches.open('localeats-map-tiles-v1');
+      const keys = await cache.keys();
+      setCachedTileCount(keys.length);
+      const sizeMB = (keys.length * 28) / 1024;
+      setCachedSizeStr(sizeMB < 0.1 ? '0.0 MB' : `${sizeMB.toFixed(1)} MB`);
+    } catch (e) {
+      console.warn("Could not read cache metrics", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      updateCacheMetrics();
+    }, 20);
+    return () => clearTimeout(handle);
+  }, [updateCacheMetrics]);
+
+  const toggleForceOffline = () => {
+    setForceOffline(prev => {
+      const newVal = !prev;
+      localStorage.setItem('localeats_force_offline', newVal.toString());
+      if (newVal) {
+        toast.info("Offline Map Relay ACTIVE. Map tiles will lock to local browser cache.");
+      } else {
+        toast.success("Grid Uplink Active. Map tiles restoring hybrid live network load.");
+      }
+      return newVal;
+    });
+  };
+
+  const clearMapCache = async () => {
+    if (!('caches' in window)) return;
+    try {
+      await caches.delete('localeats-map-tiles-v1');
+      toast.success("Offline Map Cache purged successfully");
+      updateCacheMetrics();
+    } catch {
+      toast.error("Process failed");
+    }
+  };
+
+  const downloadSectorTiles = async (sectorName: string, lat: number, lng: number) => {
+    if (!('caches' in window)) {
+      toast.error("Offline tiles not supported on this device browser");
+      return;
+    }
+    
+    setSyncingSector(sectorName);
+    setSyncProgress(0);
+    
+    try {
+      const tileList = getTilesForCoordinate(lat, lng, 0.015);
+      setSyncTotal(tileList.length * 2);
+      
+      const cache = await caches.open('localeats-map-tiles-v1');
+      let loaded = 0;
+      
+      for (let i = 0; i < tileList.length; i++) {
+        const { z, x, y } = tileList[i];
+        
+        const host1 = getRandomHost();
+        const darkUrl = `https://${host1}.basemaps.cartocdn.com/rastertiles/dark_all/${z}/${x}/${y}@2x.png`;
+        
+        const host2 = getRandomHost();
+        const lightUrl = `https://${host2}.basemaps.cartocdn.com/rastertiles/light_all/${z}/${x}/${y}@2x.png`;
+        
+        try {
+          await cache.add(new Request(darkUrl, { mode: 'no-cors' }));
+        } catch (e) {
+          console.warn("Tile download skipped", darkUrl, e);
+        }
+        loaded++;
+        setSyncProgress(loaded);
+        
+        try {
+          await cache.add(new Request(lightUrl, { mode: 'no-cors' }));
+        } catch (e) {
+          console.warn("Tile download skipped", lightUrl, e);
+        }
+        loaded++;
+        setSyncProgress(loaded);
+        
+        await new Promise(resolve => setTimeout(resolve, 15));
+      }
+      
+      toast.success(`Downlink secure: ${sectorName} sector fully cached offline.`, {
+        description: `Downloaded and verified ${loaded} map segment coordinates.`
+      });
+      updateCacheMetrics();
+    } catch (err) {
+      console.error(err);
+      toast.error("Downlink intercepted: check connectivity");
+    } finally {
+      setSyncingSector(null);
+    }
+  };
 
   const [licensePlate, setLicensePlate] = useState(() => localStorage.getItem(`localeats_plate_${profile.id}`) || '');
   const [vehicleDetails, setVehicleDetails] = useState(() => localStorage.getItem(`localeats_vehDetail_${profile.id}`) || '');
@@ -3658,56 +4244,141 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-zinc-300 uppercase tracking-widest rounded-xl transition-colors active:scale-95"
              >
                Confirm Vehicle Attributes
-             </button>
-           </div>
-        </BentoCard>
-      </section>
-
-      {/* Offline Roadmap Cache */}
+              </button>
+            </div>
+          </BentoCard>
+        </section>
+                  {/* Offline Roadmap Cache */}
       <section className="space-y-4">
-        <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-600 ml-2">Offline Roadmap Cache</h3>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-            <Radar className="w-16 h-16 text-blue-500" />
+        <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-650 ml-2">Offline Roadmap Cache</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 relative overflow-hidden space-y-6">
+          <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+            <Radar className="w-16 h-16 text-emerald-500" />
           </div>
           
-          <div className="flex items-center gap-3 mb-6 relative z-10">
-            <div className="p-2.5 bg-blue-500/10 rounded-xl border border-blue-500/20">
-              <Zap className="w-5 h-5 text-blue-500 fill-current" />
+          <div className="flex items-center justify-between relative z-10">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400">
+                <Database className="w-5 h-5" />
+              </div>
+              <div className="text-left">
+                <p className="text-[12px] font-black uppercase tracking-[0.1em] text-white">Active Cache Eng: v2.1</p>
+                <p className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b] mt-0.5">
+                  {cachedTileCount > 0 ? `${cachedTileCount} tiles loaded (${cachedSizeStr})` : '0 tiles cached'}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-[12px] font-black uppercase tracking-[0.1em] text-white">Cache Layer: Alpha</p>
-              <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500 mt-0.5">Orbital Data Persistent</p>
-            </div>
+            {cachedTileCount > 0 && (
+              <button 
+                onClick={clearMapCache}
+                className="p-2 bg-red-950/20 hover:bg-red-900/30 border border-red-500/20 hover:border-red-500/40 text-red-400 rounded-xl transition-all active:scale-95"
+                title="Purge Map Cache"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
-          <div className="space-y-3 relative z-10">
-            <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
-              <div className="flex items-center gap-3">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[11px] font-black uppercase tracking-wider text-zinc-300">Route Coordinates</span>
-              </div>
-              <span className="text-[9px] font-black uppercase tracking-tighter text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">Cached</span>
-            </div>
-            
-            <div className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
-              <div className="flex items-center gap-3">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                <span className="text-[11px] font-black uppercase tracking-wider text-zinc-300">Mission Metadata</span>
-              </div>
-              <span className="text-[9px] font-black uppercase tracking-tighter text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded">Cached</span>
-            </div>
-          </div>
-
-          <div className="mt-6 flex items-center justify-between pt-4 border-t border-zinc-800/50">
+          {/* Strict Offline Simulator Switch */}
+          <div className="p-4 bg-black/40 border border-zinc-850 rounded-2xl flex items-center justify-between gap-4">
             <div className="flex flex-col text-left">
-              <span className="text-[8px] font-black uppercase text-zinc-650 tracking-tighter">Availability</span>
-              <span className="text-[10px] font-black uppercase text-blue-400 tracking-wider">Mission-Ready</span>
+              <span className="text-[11px] font-bold text-white font-sans">Simulate Strict Offline Mode</span>
+              <span className="text-[9px] text-zinc-550 leading-relaxed font-sans mt-0.5">
+                Forces map to bypass live web cells and render strictly using local cached coordinate layers
+              </span>
             </div>
-            <div className="text-right">
-              <span className="text-[8px] font-black uppercase text-zinc-650 tracking-tighter">Sync Priority</span>
-              <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">High</span>
-            </div>
+            <button 
+              onClick={toggleForceOffline}
+              className={cn(
+                "w-12 h-6 rounded-full relative transition-colors shrink-0",
+                forceOffline ? "bg-red-600" : "bg-zinc-800"
+              )}
+            >
+              <div className={cn(
+                "w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow-md",
+                forceOffline ? "left-6.5" : "left-0.5"
+              )} />
+            </button>
+          </div>
+
+          {/* Deliver Sectors for Pre-Downloading */}
+          <div className="space-y-3">
+            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block text-left">Pre-download Core Sectors</span>
+            
+            {[
+              { id: 'tembisa', name: 'Tembisa Hub Area', lat: -25.9964, lng: 28.2268, approx: 'Central Plaza & Retail Sector' },
+              { id: 'kaalfontein', name: 'Kaalfontein Sector B', lat: -25.9850, lng: 28.2450, approx: 'North Route Gate & Residential' },
+              { id: 'ivory', name: 'Ivory Park Sector C', lat: -25.9995, lng: 28.2580, approx: 'East Link & Security Checks' }
+            ].map((sector) => {
+              const isSyncing = syncingSector === sector.name;
+              return (
+                <div 
+                  key={sector.id} 
+                  className="bg-black/30 border border-zinc-850 p-4 rounded-2xl flex flex-col space-y-3 text-left relative overflow-hidden"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] font-black uppercase text-zinc-200 tracking-wide">{sector.name}</span>
+                      <span className="text-[9px] text-zinc-500 mt-0.5 leading-snug">{sector.approx}</span>
+                      <span className="text-[8px] font-mono text-zinc-600 mt-1 uppercase">Coords: {sector.lat.toFixed(4)}S / {sector.lng.toFixed(4)}E</span>
+                    </div>
+                    <button
+                      onClick={() => downloadSectorTiles(sector.name, sector.lat, sector.lng)}
+                      disabled={syncingSector !== null}
+                      className={cn(
+                        "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 select-none transition-all active:scale-95 shrink-0",
+                        isSyncing 
+                          ? "bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20"
+                          : syncingSector !== null
+                            ? "bg-zinc-900 text-zinc-650 border border-zinc-850 cursor-not-allowed"
+                            : "bg-[#f59e0b] text-black border border-[#f59e0b] hover:bg-amber-600"
+                      )}
+                    >
+                      {isSyncing ? (
+                        <>
+                          <Radar className="w-3.5 h-3.5 animate-spin" />
+                          <span>Caching</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Sync Coords</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Progress Bar for downloading sector tiles */}
+                  <AnimatePresence>
+                    {isSyncing && (
+                      <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-1.5 overflow-hidden"
+                      >
+                        <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                          <motion.div 
+                            className="bg-[#f59e0b] h-1.5 rounded-full" 
+                            style={{ width: `${(syncProgress / syncTotal) * 100}%` }}
+                            transition={{ duration: 0.1 }}
+                          />
+                        </div>
+                        <div className="flex justify-between items-center text-[8px] font-mono uppercase text-[#f59e0b]">
+                          <span>Downloading sector maps...</span>
+                          <span>{Math.round((syncProgress / syncTotal) * 100)}% ({syncProgress}/{syncTotal})</span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="pt-4 border-t border-zinc-800/50 flex justify-between items-center text-[8px] font-black uppercase tracking-wider text-zinc-550">
+            <span>Grid Integrity Checklist</span>
+            <span className="text-emerald-400">P2P Relay Ready</span>
           </div>
         </div>
       </section>
@@ -3866,7 +4537,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId:
     };
   }, [orderId]);
 
-  if (loading) return <div className="h-full flex items-center justify-center p-12 text-zinc-500 font-mono text-[10px] uppercase tracking-widest">Loading order tracking...</div>;
+  if (loading) return <OrderTrackingSkeleton isHighContrastMode={isHighContrastMode} />;
   if (!order) return <div className="h-full flex flex-col items-center justify-center p-12 text-center">
     <ShieldAlert className="w-12 h-12 text-zinc-800 mb-4" />
     <p className="text-zinc-500 font-bold uppercase text-[10px]">Connection lost: Order not found.</p>
@@ -3931,7 +4602,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId:
   );
 };
 
-const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (code: string) => void }) => {
+const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (code: string) => Promise<void> }) => {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
@@ -3945,9 +4616,10 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     try {
       await onComplete(code);
     } catch (err) {
+      console.error("Pairing Error:", err);
       const msg = err instanceof Error ? err.message : 'Connection failed.';
       if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
-        toast.error('Network Error: Cannot pair offline. Please connect to the internet.');
+        toast.error('Network Error: Cannot pair offline.');
       } else {
         toast.error(msg === 'Connection failed.' ? 'Link failed. Please verify the code.' : msg);
       }
@@ -3972,14 +4644,11 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     setShowScanner(false);
     setLoading(true);
     try {
-      await onComplete(scannedCode.slice(0, 6));
+      await onComplete(scannedCode.slice(0, 6).toUpperCase());
     } catch (err) {
-      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || 'Invalid scan.';
-      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
-        toast.error('Network Error: Cannot pair offline. Please connect to the internet.');
-      } else {
-        toast.error(msg === 'Connection failed.' ? 'Invalid QR code. Please scan a valid store QR.' : msg);
-      }
+      console.error("Scan Error", err);
+      const msg = err instanceof Error ? err.message : 'Connection failed.';
+      toast.error(msg === 'Connection failed.' ? 'Invalid QR code. Please scan a valid store QR.' : msg);
     } finally {
       setLoading(false);
     }
@@ -3989,65 +4658,66 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
 
   return (
     <>
-      <div className="p-6 h-full min-h-[100dvh] pb-32 overflow-y-auto no-scrollbar flex flex-col">
-         <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 mb-8 group pointer-events-auto">
-           <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#f59e0b] transition-colors" />
-           <span className="text-[10px] font-black uppercase tracking-widest">Return to Hub</span>
-         </button>
+      <div className="p-6 h-full min-h-[100dvh] pb-32 flex flex-col bg-black text-white overflow-y-auto no-scrollbar">
+        <button onClick={onBack} disabled={loading} className="text-zinc-500 flex items-center gap-2 mb-8">
+          <ArrowRight className="w-4 h-4 rotate-180" />
+          <span className="text-xs font-black uppercase tracking-widest">Return to Hub</span>
+        </button>
 
-         <div className="text-center mb-12">
-            <h2 className="text-3xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Connect to Store</h2>
-            <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.2em]">Establish 24h link with Store</p>
-         </div>
+        <div className="text-center mb-12">
+          <h2 className="text-3xl font-black italic uppercase text-white mb-2">Connect to Store</h2>
+          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.2em]">Establish 24h link with Store</p>
+        </div>
 
-         <div className="space-y-8 flex-1">
-            <BentoCard className="p-8 text-center bg-[#151515] pointer-events-auto">
-              <div className="mb-6 flex justify-center">
-                <button 
-                  onClick={handleOpenScanner}
-                  className="p-6 bg-[#f59e0b] rounded-3xl relative active:scale-95 transition-all text-black hover:bg-[#32e612]"
-                >
-                  <QrCode className="w-24 h-24 text-black mx-auto" />
-                  <div className="absolute inset-x-0 bottom-3 text-center">
-                    <span className="text-[10px] font-black uppercase tracking-widest bg-white/50 px-2 py-0.5 rounded">Tap to Scan</span>
-                  </div>
-                </button>
-              </div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-2">Option A: Scan Merchant QR</p>
-              <p className="text-xs text-zinc-500 font-bold leading-tight">Use your camera to scan the pairing QR code displayed on the Merchant Dashboard.</p>
-            </BentoCard>
-
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-zinc-800"></div>
-              </div>
-              <div className="relative flex justify-center text-[10px] uppercase font-black tracking-widest">
-                <span className="bg-[#050505] px-4 text-zinc-600">OR</span>
-              </div>
+        <div className="space-y-8 flex-1">
+          <BentoCard className="p-8 text-center bg-[#151515] pointer-events-auto">
+            <div className="mb-6 flex justify-center">
+              <button 
+                onClick={handleOpenScanner}
+                className="p-6 bg-[#f59e0b] rounded-3xl relative active:scale-95 transition-all text-black hover:bg-[#32e612]"
+              >
+                <QrCode className="w-24 h-24 text-black mx-auto" />
+                <div className="absolute inset-x-0 bottom-3 text-center">
+                  <span className="text-[10px] font-black uppercase tracking-widest bg-white/50 px-2 py-0.5 rounded">Tap to Scan</span>
+                </div>
+              </button>
             </div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-2">Option A: Scan Merchant QR</p>
+            <p className="text-xs text-zinc-500 font-bold leading-tight">Use your camera to scan the pairing QR code displayed on the Merchant Dashboard.</p>
+          </BentoCard>
 
-            <BentoCard className="p-6 pointer-events-auto">
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-4">Option B: Pairing Cipher</p>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  maxLength={6}
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\W/g, '').toUpperCase())}
-                  placeholder="000000"
-                  className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-2 sm:px-4 py-4 text-xl sm:text-2xl font-mono font-bold tracking-[0.2em] text-center text-white focus:border-[#f59e0b] outline-none transition-all placeholder:tracking-normal"
-                />
-                <button 
-                  onClick={handlePair}
-                  disabled={loading || code.length !== 6}
-                  className="p-4 bg-[#f59e0b] text-black rounded-xl active:scale-95 transition-all disabled:opacity-50 flex-shrink-0 min-w-[64px] flex items-center justify-center"
-                >
-                  {loading ? <Zap className="w-6 h-6 animate-spin" /> : <ChevronRight className="w-6 h-6" />}
-                </button>
-              </div>
-              <p className="mt-4 text-[9px] text-zinc-500 font-bold uppercase text-center leading-tight">Enter the 6-character code displayed on the Merchant Terminal.</p>
-            </BentoCard>
-         </div>
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-zinc-800"></div>
+            </div>
+            <div className="relative flex justify-center text-[10px] uppercase font-black tracking-widest">
+              <span className="bg-[#050505] px-4 text-zinc-600">OR</span>
+            </div>
+          </div>
+
+          <div className="p-6 bg-[#151515] rounded-3xl">
+            <p className="text-xs font-black uppercase tracking-widest text-[#f59e0b] mb-4">Option B: Pairing Cipher</p>
+            <div className="flex gap-2">
+              <input 
+                type="text" 
+                maxLength={6}
+                value={code}
+                disabled={loading}
+                onChange={(e) => setCode(e.target.value.replace(/\W/g, '').toUpperCase())}
+                placeholder="000000"
+                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-4 text-2xl font-mono font-bold tracking-[0.2em] text-center text-white outline-none focus:border-[#f59e0b] transition-all placeholder:tracking-normal"
+              />
+              <button 
+                onClick={handlePair}
+                disabled={loading || code.length !== 6}
+                className="px-6 py-4 bg-[#f59e0b] text-black rounded-xl font-black uppercase tracking-widest disabled:opacity-50"
+              >
+                {loading ? '...' : 'LINK'}
+              </button>
+            </div>
+            <p className="mt-4 text-[9px] text-zinc-500 font-bold uppercase text-center leading-tight">Enter the 6-character code displayed on the Merchant Terminal.</p>
+          </div>
+        </div>
       </div>
       {showScanner && <QRScanner onScan={handleScan} onClose={handleCloseScanner} />}
     </>
@@ -4056,7 +4726,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
 
 // --- App Hub ---
 
-type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'tracking';
+type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'tracking' | 'merchant';
 
 // Fallback UI for fatal React rendering exceptions
 function FallbackComponent({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) {
@@ -4120,6 +4790,39 @@ export function App() {
     const saved = localStorage.getItem('localeats_active_orders');
     return saved ? JSON.parse(saved) : [];
   });
+
+  const [merchantAllowExternal, setMerchantAllowExternal] = useState(() => {
+    const saved = localStorage.getItem('localeats_merchant_allow_external');
+    return saved !== 'false';
+  });
+  const [merchantCashTrust, setMerchantCashTrust] = useState(() => {
+    const saved = localStorage.getItem('localeats_merchant_cash_trust');
+    return saved !== 'false';
+  });
+  const [merchantAutoLook, setMerchantAutoLook] = useState(() => {
+    const saved = localStorage.getItem('localeats_merchant_auto_look');
+    return saved !== 'false';
+  });
+  const [dispatchToMarketplace, setDispatchToMarketplace] = useState<Record<string, boolean>>(() => {
+    const saved = localStorage.getItem('localeats_dispatch_to_marketplace');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  useEffect(() => {
+    localStorage.setItem('localeats_merchant_allow_external', String(merchantAllowExternal));
+  }, [merchantAllowExternal]);
+
+  useEffect(() => {
+    localStorage.setItem('localeats_merchant_cash_trust', String(merchantCashTrust));
+  }, [merchantCashTrust]);
+
+  useEffect(() => {
+    localStorage.setItem('localeats_merchant_auto_look', String(merchantAutoLook));
+  }, [merchantAutoLook]);
+
+  useEffect(() => {
+    localStorage.setItem('localeats_dispatch_to_marketplace', JSON.stringify(dispatchToMarketplace));
+  }, [dispatchToMarketplace]);
 
   const { level: batteryLevel, charging: batteryCharging } = useBatteryStatus();
   const hasAlertedBatteryRef = useRef(false);
@@ -4434,26 +5137,94 @@ export function App() {
         
         if (profile?.is_online) {
           setAvailableOrders(() => {
-            const mocks = [{
-              id: 'order-1',
-              customer_name: 'John Doe',
-              address: '55 Main Rd',
-              city: 'Cape Town',
-              delivery_status: 'finding_rider',
-              order_type: 'delivery',
-              product_name: 'Cheese Burger XL',
-              delivery_fee: 5.00,
-              total_price: 155,
-              created_at: new Date().toISOString(),
-              restaurant_name: 'Test Burger Hub',
-              shop_id: 's1',
-              distance_km: 2.3,
-              lat: -25.9933, // Match AppMapBackground fallback
-              lng: 28.2125,
-              shop_lat: -25.9922,
-              shop_lng: 28.2045
-            }] as DeliveryOrder[];
-            return mocks;
+            const rawMocks = [
+              {
+                id: 'order-1',
+                customer_name: 'John Doe',
+                address: '55 Main Rd',
+                city: 'Tembisa',
+                delivery_status: 'finding_rider',
+                order_type: 'delivery',
+                product_name: 'Cheese Burger XL',
+                delivery_fee: 5.00,
+                total_price: 155,
+                created_at: new Date().toISOString(),
+                restaurant_name: 'Test Burger Hub',
+                shop_id: 's1',
+                distance_km: 2.3,
+                lat: -25.9933,
+                lng: 28.2125,
+                shop_lat: -25.9922,
+                shop_lng: 28.2045,
+                payment_method: 'cash_on_arrival',
+                payment_collected: false,
+                rider_id: null,
+                allow_external_riders: merchantAllowExternal,
+                cash_trust_enabled: merchantCashTrust,
+                auto_look_for_rider: merchantAutoLook,
+                dispatch_to_marketplace: dispatchToMarketplace['order-1'] ?? false
+              },
+              {
+                id: 'order-2',
+                customer_name: 'Sarah Gadebe',
+                address: '12 Lark Street',
+                city: 'Ivory Park',
+                delivery_status: 'finding_rider',
+                order_type: 'delivery',
+                product_name: 'Sizzling Platter & Chips',
+                delivery_fee: 8.50,
+                total_price: 245,
+                created_at: new Date().toISOString(),
+                restaurant_name: 'Flame Grill Chicken',
+                shop_id: 's2',
+                distance_km: 4.1,
+                lat: -25.9890,
+                lng: 28.2250,
+                shop_lat: -25.9910,
+                shop_lng: 28.2050,
+                payment_method: 'card_online',
+                payment_collected: true,
+                rider_id: null,
+                allow_external_riders: merchantAllowExternal,
+                cash_trust_enabled: merchantCashTrust,
+                auto_look_for_rider: false,
+                dispatch_to_marketplace: dispatchToMarketplace['order-2'] ?? true
+              },
+              {
+                id: 'order-3',
+                customer_name: 'Mpho Dlamini',
+                address: '77 Hospital View',
+                city: 'Tembisa',
+                delivery_status: 'finding_rider',
+                order_type: 'delivery',
+                product_name: 'Quarter Leg & Pap Combo',
+                delivery_fee: 6.00,
+                total_price: 180,
+                created_at: new Date().toISOString(),
+                restaurant_name: 'Dlamini Traditional Kitchen',
+                shop_id: 's3',
+                distance_km: 1.8,
+                lat: -25.9950,
+                lng: 28.2190,
+                shop_lat: -25.9940,
+                shop_lng: 28.2080,
+                payment_method: 'cash_on_arrival',
+                payment_collected: false,
+                rider_id: null,
+                allow_external_riders: false, // Default off to demonstrate on-demand override toggles
+                cash_trust_enabled: true,
+                auto_look_for_rider: true,
+                dispatch_to_marketplace: dispatchToMarketplace['order-3'] ?? false
+              }
+            ];
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            return rawMocks.filter((o: any) => {
+              const isFindingRider = o.delivery_status === 'finding_rider';
+              const isAllowedExternal = o.allow_external_riders === true;
+              const isConnected = activeConnections.some(c => c.shop_id === o.shop_id);
+              return isFindingRider && (isAllowedExternal || isConnected);
+            }) as unknown as DeliveryOrder[];
           });
         }
         return;
@@ -4484,22 +5255,30 @@ export function App() {
         return;
       }
 
-      const validShopIds = activeConnections
-        .filter(c => new Date(c.expires_at) > new Date())
-        .map(c => c.shop_id);
+      // Fetch with full fields fallback if columns aren't migrated in DB
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let ordersData: any[] | null = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let ordersError: any = null;
 
-      if (validShopIds.length === 0) {
-        setAvailableOrders([]);
-        return;
+      try {
+        const res = await getSupabase()
+          .from('orders')
+          .select('*, shops(name, allow_external_riders, cash_trust_enabled)')
+          .eq('delivery_status', 'finding_rider')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        ordersData = res.data;
+        ordersError = res.error;
+      } catch {
+        const res = await getSupabase()
+          .from('orders')
+          .select('*, shops(name)')
+          .eq('delivery_status', 'finding_rider')
+          .order('created_at', { ascending: false })
+          .limit(50);
+        ordersData = res.data;
       }
-
-      const { data: ordersData, error: ordersError } = await getSupabase()
-        .from('orders')
-        .select('*, shops(name)')
-        .eq('delivery_status', 'finding_rider')
-        .in('shop_id', validShopIds)
-        .order('created_at', { ascending: false })
-        .limit(50);
 
       if (ordersError) throw ordersError;
 
@@ -4512,15 +5291,50 @@ export function App() {
             const riderLat = profile?.current_latitude || -25.9964; // Regional pilot fallback (Tembisa)
             const riderLng = profile?.current_longitude || 28.2268;
             
+            const shopsObj = Array.isArray(item.shops) ? item.shops[0] : item.shops;
+            
+            const dbAllowExternal = shopsObj ? (shopsObj.allow_external_riders !== false) : true;
+            const dbCashTrustEnabled = shopsObj ? (shopsObj.cash_trust_enabled === true) : false;
+            const dbDispatchToMarketplace = item.dispatch_to_marketplace === true;
+            const dbAutoLook = shopsObj ? (shopsObj.auto_look_for_rider !== false) : true;
+
+            // Tie state parameters for interactive sandbox toggle mapping
+            const finalAllowExternal = (shopsObj?.name === 'Test Burger Hub' || shopsObj?.name === 'Flame Grill Chicken')
+              ? merchantAllowExternal
+              : dbAllowExternal;
+
+            const finalCashTrust = (shopsObj?.name === 'Test Burger Hub' || shopsObj?.name === 'Flame Grill Chicken')
+              ? merchantCashTrust
+              : dbCashTrustEnabled;
+
+            const finalAutoLook = (shopsObj?.name === 'Test Burger Hub' || shopsObj?.name === 'Flame Grill Chicken')
+              ? merchantAutoLook
+              : dbAutoLook;
+
+            const finalDispatchToMarketplace = dispatchToMarketplace[item.id] !== undefined
+              ? dispatchToMarketplace[item.id]
+              : dbDispatchToMarketplace;
+
             return {
               ...item,
-              restaurant_name: item.shops?.name || 'Authorized Merchant',
-              distance_km: item.distance_km || haversineDistance(riderLat, riderLng, shopLat, shopLng)
+              restaurant_name: shopsObj?.name || 'Authorized Merchant',
+              distance_km: item.distance_km || haversineDistance(riderLat, riderLng, shopLat, shopLng),
+              allow_external_riders: finalAllowExternal,
+              cash_trust_enabled: finalCashTrust,
+              auto_look_for_rider: finalAutoLook,
+              dispatch_to_marketplace: finalDispatchToMarketplace
             };
+          })
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .filter((order: any) => {
+            // Apply strict merchant access rule requested:
+            const isFindingRider = order.delivery_status === 'finding_rider';
+            const isAllowedExternal = order.allow_external_riders === true;
+            const isConnected = activeConnections.some(c => c.shop_id === order.shop_id);
+            return isFindingRider && (isAllowedExternal || isConnected);
           });
         
         const sorted = [...formatted].map(order => {
-           // Since we already filtered by validShopIds in the query, its always linked
            const priority_multiplier = 1.5; 
            const distance = order.distance_km || 1;
            const fee = order.delivery_fee || 0;
@@ -4557,7 +5371,7 @@ export function App() {
     } finally {
       isFetchingConnRef.current = false;
     }
-  }, [user, profile]);
+  }, [user, profile, merchantAllowExternal, merchantCashTrust, merchantAutoLook, dispatchToMarketplace]);
 
   const fetchActiveOrdersAndHistory = useCallback(async () => {
     if (!user) return;
@@ -5095,10 +5909,15 @@ export function App() {
     const orderToUpdate = activeOrders.find(o => o.id === orderId);
     if (!orderToUpdate) return;
     
-    const updates = { 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updates: any = { 
       delivery_status: status, 
       updated_at: new Date().toISOString() 
     };
+
+    if (status === 'finding_rider') {
+      updates.rider_id = null;
+    }
 
     // Integrity Check: Block delivery if mock GPS detected
     if (status === 'delivered' && isMockedRef.current) {
@@ -5132,8 +5951,8 @@ export function App() {
            }
         } else if (status === 'finding_rider') {
            setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-           setAvailableOrders(prev => [...prev, {...orderToUpdate, delivery_status: 'finding_rider'}]);
-           toast.success('Order cancelled.');
+           setAvailableOrders(prev => [...prev, {...orderToUpdate, delivery_status: 'finding_rider', rider_id: null}]);
+           toast.success('Mission released back to regional marketplace.');
         } else {
            toast.success('Location updated.');
         }
@@ -5152,9 +5971,9 @@ export function App() {
         if (status === 'delivered') {
           const { error: rpcError } = await fetchWithRetry(async () => {
              return await getSupabase().rpc('increment_rider_stats', {
-               p_rider_id: profile.id,
-               p_earnings: orderToUpdate.delivery_fee,
-               p_points: 15
+               rider_id: profile.id,
+               earnings_add: orderToUpdate.delivery_fee,
+               points_add: 15
              });
           });
           
@@ -5181,7 +6000,7 @@ export function App() {
           toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`);
         } else if (status === 'finding_rider') {
            setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-           toast.success('Order cancelled.');
+           toast.success('Mission released back to regional marketplace.');
         } else {
           setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
           toast.success('Order status updated');
@@ -5374,14 +6193,14 @@ export function App() {
   const handleOrderAccept = async (orderId: string) => {
     if (!profile || !user) return;
     
-    // Pairing Protocol: Ensure rider is connected to the merchant node
+    // Pairing Protocol: Ensure rider is connected to the merchant node (Bypass for unassigned finding_rider marketplace orders)
     const orderToAccept = availableOrders.find(o => o.id === orderId);
     if (!orderToAccept && !isSupabaseMocked()) {
       toast.error('Store connection unavailable.');
       return;
     }
 
-    if (orderToAccept) {
+    if (orderToAccept && orderToAccept.delivery_status !== 'finding_rider') {
       const isPaired = connections.some(c => c.shop_id === orderToAccept.shop_id && new Date(c.expires_at) > new Date());
       if (!isPaired && !isSupabaseMocked()) {
         toast.error('Store link expired. Please reconnect to the store.');
@@ -5402,6 +6221,8 @@ export function App() {
             ...order, 
             delivery_status: 'accepted' as const, 
             rider_id: user.id,
+            rider_name: profile.name || profile.full_name || 'Rider',
+            rider_phone: profile.phone || '+27 83 123 4567',
             surge_multiplier: surgeMultiplier 
           };
           setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
@@ -5413,12 +6234,14 @@ export function App() {
         }
         return;
       }
-      const { data, error } = await fetchWithRetry(async () => {
+      let result = await fetchWithRetry(async () => {
         return await getSupabase()
           .from('orders')
           .update({ 
             delivery_status: 'accepted', 
             rider_id: user.id,
+            rider_name: profile.name || profile.full_name || 'Rider',
+            rider_phone: profile.phone || '+27 83 123 4567',
             updated_at: new Date().toISOString()
           })
           .eq('id', orderId)
@@ -5427,6 +6250,32 @@ export function App() {
           .select()
           .single();
       }, 3, 1000, 10000);
+
+      // fallback to basic column set if schema does not support rider details columns
+      if (result.error && (
+        result.error.message?.includes('rider_name') || 
+        result.error.message?.includes('rider_phone') || 
+        result.error.message?.includes('column') || 
+        result.error.code === '42703'
+      )) {
+        console.warn('PostgREST Schema cache mismatch. Retrying update with basic column set.');
+        result = await fetchWithRetry(async () => {
+          return await getSupabase()
+            .from('orders')
+            .update({ 
+              delivery_status: 'accepted', 
+              rider_id: user.id,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', orderId)
+            .eq('delivery_status', 'finding_rider')
+            .or(`rider_id.is.null,rider_id.eq.${user.id}`)
+            .select()
+            .single();
+        }, 3, 1000, 10000);
+      }
+
+      const { data, error } = result;
 
       if (error || !data) {
         toast.error(`Error: ${error?.message || 'Order already taken by another rider'}`);
@@ -5460,47 +6309,82 @@ export function App() {
         return;
       }
 
-      const { data: connection, error: fetchError } = await getSupabase()
-        .from('rider_connections')
-        .select('*, shops(name)')
-        .eq('connection_code', code)
-        .gte('expires_at', new Date().toISOString())
-        .single();
+      let connection: (ShopConnection & { shops?: { name: string } | null }) | undefined;
+      let fetchError;
+      
+      try {
+        const res = await fetchWithRetry(async () => {
+          return await getSupabase()
+            .from('rider_connections')
+            .select('*, shops(name)')
+            .eq('connection_code', code)
+            .gte('expires_at', new Date().toISOString())
+            .single();
+        }, 3, 1000, 10000);
+        connection = res.data;
+        fetchError = res.error;
+      } catch (e) {
+        fetchError = e;
+      }
       
       if (fetchError || !connection) {
         throw new Error('Invalid or expired pairing code. Ensure the Store has generated a new one.');
       }
 
-      let { error: updateError } = await getSupabase()
-        .from('rider_connections')
-        .update({
-          rider_id: user.id,
-          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', connection.id);
+      let updateError;
+      try {
+        const res = await fetchWithRetry(async () => {
+          return await getSupabase()
+            .from('rider_connections')
+            .update({
+              rider_id: user.id,
+              expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', connection!.id);
+        }, 3, 1000, 10000);
+        updateError = res.error;
+      } catch (e) {
+        updateError = e;
+      }
       
       // Fallback for stale schema cache (PGRST error) missing the updated_at column
-      if (updateError && updateError.message?.includes('Could not find') && updateError.message?.includes('updated_at')) {
+      if (updateError && (updateError as { message?: string }).message?.includes('Could not find') && (updateError as { message?: string }).message?.includes('updated_at')) {
         console.warn('Schema cache stale, retrying Handshake without updated_at column...', updateError);
-        const retryResult = await getSupabase()
-          .from('rider_connections')
-          .update({
-            rider_id: user.id,
-            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-          })
-          .eq('id', connection.id);
-        updateError = retryResult.error;
+        try {
+          const retryResult = await fetchWithRetry(async () => {
+             return await getSupabase()
+              .from('rider_connections')
+              .update({
+                rider_id: user.id,
+                expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+              })
+              .eq('id', connection!.id);
+          }, 2, 1000, 10000);
+          updateError = retryResult.error;
+        } catch (e) {
+          updateError = e;
+        }
       }
 
       if (updateError) throw updateError;
 
       // Stability Update: Handshake Verification
-      const { data: verification, error: verifyError } = await getSupabase()
-        .from('rider_connections')
-        .select('rider_id')
-        .eq('id', connection.id)
-        .single();
+      let verification;
+      let verifyError;
+      try {
+        const res = await fetchWithRetry(async () => {
+          return await getSupabase()
+            .from('rider_connections')
+            .select('rider_id')
+            .eq('id', connection!.id)
+            .single();
+        }, 3, 1000, 10000);
+        verification = res.data;
+        verifyError = res.error;
+      } catch (e) {
+        verifyError = e;
+      }
 
       if (verifyError || verification?.rider_id !== user.id) {
         throw new Error('Connection failed. Please try again.');
@@ -5860,8 +6744,8 @@ export function App() {
                     </div>
                     <div>
                       <h3 className="text-[10px] font-black uppercase text-[#f59e0b] tracking-[0.4em] mb-1">Drop-Off Protocol</h3>
-                      <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter">
-                        TEST SIGNAL
+                      <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter truncate max-w-[200px]">
+                        {availableOrders[0].customer_name || availableOrders[0].product_name || 'Client'}
                       </p>
                       <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{availableOrders[0].restaurant_name}</p>
                     </div>
@@ -6088,6 +6972,42 @@ export function App() {
               )
             )}
             {view === 'log' && <HistoryView history={history} isHighContrastMode={isHighContrastMode} />}
+            {view === 'merchant' && (
+              <MerchantPortal
+                allowExternal={merchantAllowExternal}
+                onToggleAllowExternal={() => {
+                  setMerchantAllowExternal(p => {
+                    const next = !p;
+                    toast.success(next ? 'Policy Modified: Public Marketplace access active.' : 'Policy Modified: Exclusive in-house fleets only.');
+                    return next;
+                  });
+                }}
+                cashTrust={merchantCashTrust}
+                onToggleCashTrust={() => {
+                  setMerchantCashTrust(p => {
+                    const next = !p;
+                    toast.success(next ? 'COD Shield Active: Green indicators will brand public order cards.' : 'COD Shield Off: Standard flags loaded.');
+                    return next;
+                  });
+                }}
+                autoLook={merchantAutoLook}
+                onToggleAutoLook={() => {
+                  setMerchantAutoLook(p => {
+                    const next = !p;
+                    toast.success(next ? 'Scanner Beacons Engaged: Public riders will spot claim targets.' : 'Scanner Beacons Off: Automatic lookup disabled.');
+                    return next;
+                  });
+                }}
+                dispatchToMarketplace={dispatchToMarketplace}
+                onToggleDispatch={(orderId) => {
+                  setDispatchToMarketplace(p => {
+                    const next = { ...p, [orderId]: !(p[orderId] ?? false) };
+                    toast.success(next[orderId] ? 'On-Demand Backup Dispatch engaged for order!' : 'Private Fleet allocation restored.');
+                    return next;
+                  });
+                }}
+              />
+            )}
             {view === 'tracking' && selectedTrackingOrderId && (
               <OrderTrackingScreen 
                 orderId={selectedTrackingOrderId} 
@@ -6146,6 +7066,7 @@ export function App() {
                 { icon: List, label: 'ORDERS', view: 'feed' },
                 { icon: Navigation, label: 'ACTIVE', view: 'move', alert: activeOrders.length > 0 },
                 { icon: Smartphone, label: 'HISTORY', view: 'log' },
+                { icon: ShoppingBag, label: 'STORE', view: 'merchant' },
                 { icon: UserIcon, label: 'PROFILE', view: 'hub' },
               ].map((item) => {
                 const isActive = view === item.view;

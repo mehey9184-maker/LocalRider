@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
+import React, { useState } from 'react';
+import { Scanner } from '@yudiel/react-qr-scanner';
 import { Camera, X } from 'lucide-react';
 
 interface QRScannerProps {
@@ -9,61 +9,6 @@ interface QRScannerProps {
 
 export const QRScanner = React.memo(function QRScanner({ onScan, onClose }: QRScannerProps) {
   const [hasCamera, setHasCamera] = useState(true);
-
-  const onScanRef = React.useRef(onScan);
-
-  useEffect(() => {
-    onScanRef.current = onScan;
-  }, [onScan]);
-
-  useEffect(() => {
-    let scanner: Html5Qrcode | null = null;
-    let isMounted = true;
-
-    const startScanning = async () => {
-      try {
-        const cameras = await Html5Qrcode.getCameras();
-        if (cameras && cameras.length > 0 && isMounted) {
-          scanner = new Html5Qrcode('qr-reader-container');
-          await scanner.start(
-            { facingMode: 'environment' },
-            {
-              fps: 10,
-              qrbox: { width: 250, height: 250 }
-            },
-            (decodedText) => {
-              // Successfully decoded
-              onScanRef.current(decodedText);
-              if (scanner) {
-                  scanner.stop().then(() => scanner?.clear()).catch(console.error);
-              }
-            },
-            () => {
-              // Ignore typical parse errors while scanning
-            }
-          );
-        } else if (isMounted) {
-          setHasCamera(false);
-        }
-      } catch (err: unknown) {
-        if (isMounted) {
-            setHasCamera(false);
-            console.error('Camera access failed:', err);
-        }
-      }
-    };
-
-    startScanning();
-
-    return () => {
-      isMounted = false;
-      if (scanner) {
-        scanner.stop().then(() => {
-          scanner?.clear();
-        }).catch(err => console.error("Error stopping scanner", err));
-      }
-    };
-  }, []);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4">
@@ -86,7 +31,13 @@ export const QRScanner = React.memo(function QRScanner({ onScan, onClose }: QRSc
           </div>
         ) : (
           <div className="rounded-3xl overflow-hidden border-2 border-[#39FF14] shadow-[0_0_40px_rgba(57,255,20,0.2)]">
-            <div id="qr-reader-container" className="w-full bg-black"></div>
+            <Scanner 
+              onScan={(result) => onScan(result[0].rawValue)}
+              onError={(error) => {
+                console.error("Scanner Error:", error);
+                setHasCamera(false);
+              }}
+            />
           </div>
         )}
         

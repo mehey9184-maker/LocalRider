@@ -122,3 +122,15 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 );
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then((reg) => {
+        console.log('LocalEats Map Cache SW registered scope:', reg.scope);
+      })
+      .catch((err) => {
+        console.warn('LocalEats Cache SW registration skipped or failed:', err);
+      });
+  });
+}

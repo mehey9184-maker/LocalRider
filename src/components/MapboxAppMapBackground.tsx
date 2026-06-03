@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { MapPin, Navigation, Compass, Map as MapIcon } from 'lucide-react';
 import useSupercluster from 'use-supercluster';
 import { DeliveryOrder } from '../types';
+import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from '../lib/mapStyles';
 
 const EMPTY_ORDERS_ARRAY: DeliveryOrder[] = [];
 
@@ -93,7 +94,9 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         })
         .catch(err => {
           clearTimeout(timeoutId);
-          console.warn("OSRM routing failed", err);
+          if (err.name !== 'AbortError' && err.message?.indexOf('abort') === -1) {
+            console.warn("OSRM routing failed", err);
+          }
           // Fallback to straight line
           setRouteCoordinates([[rLng, rLat], [tLng, tLat]]);
         });
@@ -299,12 +302,22 @@ export const AppMapBackground = React.memo(function AppMapBackground({
           }
         }}
         mapStyle={highContrast !== undefined 
-          ? (highContrast ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json" : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json")
+          ? (highContrast ? CARTO_LIGHT_RASTER : CARTO_DARK_RASTER)
           : (localStorage.getItem('localeats_contrast') === 'true' 
-            ? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-            : "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json")}
+            ? CARTO_LIGHT_RASTER
+            : CARTO_DARK_RASTER)}
         attributionControl={false}
+        className={(highContrast !== undefined ? highContrast : localStorage.getItem('localeats_contrast') === 'true') ? "brightness-[1.2] contrast-[1.1] saturate-[1.0]" : "brightness-[1.1] contrast-[0.95] saturate-[0.85]"}
         style={{ width: '100%', height: '100%' }}
+        transformRequest={(url, resourceType) => {
+          if (resourceType === 'Tile' && url.includes('basemaps.cartocdn.com')) {
+            const forceOffline = localStorage.getItem('localeats_force_offline') === 'true';
+            if (forceOffline) {
+              return { url: `${url}?force_offline=true` };
+            }
+          }
+          return { url };
+        }}
       >
         <div 
           onClick={(e) => {

@@ -18,7 +18,7 @@ export function ShimmerBlock({ className, isHighContrastMode }: SkeletonProps) {
   );
 }
 
-export function OrderCardSkeleton({ isHighContrastMode }: { isHighContrastMode?: boolean }) {
+export function OrderCardSkeleton({ isHighContrastMode }: { isHighContrastMode?: boolean; key?: React.Key }) {
   const bgClass = isHighContrastMode 
     ? "bg-zinc-100 border-zinc-300" 
     : "bg-zinc-950 border-zinc-900";
@@ -148,6 +148,48 @@ export function OrderTrackingSkeleton({ isHighContrastMode }: { isHighContrastMo
             <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-2 w-full rounded-full" />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function MainBootstrapSkeleton({ isHighContrastMode }: { isHighContrastMode?: boolean }) {
+  const bgClass = isHighContrastMode 
+    ? "bg-zinc-100 border-zinc-300 text-zinc-900" 
+    : "bg-black text-white";
+
+  return (
+    <div className={cn("min-h-screen flex flex-col p-4", bgClass)}>
+      {/* Top Navigation Bar / Overview Header */}
+      <div className="flex items-center justify-between mb-8 px-2 space-y-0">
+        <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-4 w-32 rounded" />
+        <ShimmerBlock isHighContrastMode={isHighContrastMode} className="w-10 h-10 rounded-full" />
+      </div>
+
+      {/* Structural Bento-Item Frames */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className={cn("p-5 rounded-[2rem] border", isHighContrastMode ? "bg-white border-zinc-300" : "bg-zinc-950 border-zinc-900")}>
+          <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-8 w-12 rounded mb-3" />
+          <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-3 w-20 rounded" />
+        </div>
+        <div className={cn("p-5 rounded-[2rem] border", isHighContrastMode ? "bg-white border-zinc-300" : "bg-zinc-950 border-zinc-900")}>
+          <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-8 w-12 rounded mb-3" />
+          <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-3 w-24 rounded" />
+        </div>
+      </div>
+
+      <div className="flex-1 space-y-4">
+        {[1, 2, 3].map(i => (
+          <OrderCardSkeleton key={i} isHighContrastMode={isHighContrastMode} />
+        ))}
+      </div>
+
+      {/* Bottom Navigation Mock */}
+      <div className="mt-auto pt-6 pb-2 pb-safe px-4 flex justify-between">
+        <ShimmerBlock isHighContrastMode={isHighContrastMode} className="w-14 h-12 rounded-xl" />
+        <ShimmerBlock isHighContrastMode={isHighContrastMode} className="w-14 h-12 rounded-xl" />
+        <ShimmerBlock isHighContrastMode={isHighContrastMode} className="w-16 h-12 rounded-xl" />
+        <ShimmerBlock isHighContrastMode={isHighContrastMode} className="w-14 h-12 rounded-xl" />
       </div>
     </div>
   );

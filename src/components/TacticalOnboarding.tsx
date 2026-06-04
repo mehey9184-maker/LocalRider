@@ -18,6 +18,7 @@ import { cn } from '../lib/utils';
 interface TacticalOnboardingProps {
   onComplete: () => void;
   mode?: 'onboarding' | 'helphub';
+  onStartInteractiveTour?: () => void;
 }
 
 interface StepItem {
@@ -80,7 +81,7 @@ const STEPS: StepItem[] = [
   }
 ];
 
-export function TacticalOnboarding({ onComplete, mode: initialMode = 'onboarding' }: TacticalOnboardingProps) {
+export function TacticalOnboarding({ onComplete, mode: initialMode = 'onboarding', onStartInteractiveTour }: TacticalOnboardingProps) {
   const [currentMode, setCurrentMode] = useState<'onboarding' | 'helphub'>(initialMode);
   const [step, setStep] = useState(0);
   const [openSection, setOpenSection] = useState<string | null>(null);
@@ -106,8 +107,12 @@ export function TacticalOnboarding({ onComplete, mode: initialMode = 'onboarding
   const currentStep = STEPS[step];
 
   const handleLaunchTour = () => {
-    setStep(0);
-    setCurrentMode('onboarding');
+    if (onStartInteractiveTour) {
+      onStartInteractiveTour();
+    } else {
+      setStep(0);
+      setCurrentMode('onboarding');
+    }
   };
 
   return (

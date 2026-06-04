@@ -53,6 +53,8 @@ import {
   TrendingUp,
   Battery,
   Sun,
+  MessageSquare,
+  BellRing
 } from 'lucide-react';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -65,9 +67,13 @@ import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/MapboxAppMapBackground';
 import { HistoryMap } from './components/HistoryMap';
 import { TacticalOnboarding } from './components/TacticalOnboarding';
+import { RiderInteractiveTour } from './components/RiderInteractiveTour';
+import { FlightDeckSimulator } from './components/FlightDeckSimulator';
+import { audioSynth } from './lib/audioSynth';
 import { PhoneInput } from './components/PhoneInput';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from './lib/mapStyles';
-import { OrderCardSkeleton, OrderTrackingSkeleton } from './components/ShimmerSkeleton';
+import { OrderCardSkeleton, OrderTrackingSkeleton, MainBootstrapSkeleton } from './components/ShimmerSkeleton';
+import { GlobalLegalModal } from './components/GlobalLegalModal';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -780,6 +786,7 @@ const Dashboard = React.memo(({
       {/* Power Toggle */}
       <div className="flex flex-col gap-2">
         <button 
+          id="dash-online-btn"
           onClick={() => {
             onToggleOnline();
             if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
@@ -844,7 +851,7 @@ const Dashboard = React.memo(({
       {/* Stats Bento */}
       <div className="space-y-4">
         {/* Stat Cards Responsive Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div id="dash-stats-panel" className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {/* Earnings Stat Card */}
           <BentoCard className="bg-gradient-to-br from-zinc-950 to-zinc-900 border-zinc-800/80 p-5 flex flex-col justify-between" glow>
             <div className="flex items-center justify-between mb-4">
@@ -1940,7 +1947,7 @@ const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: numbe
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode, onRestartTour }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
@@ -1948,6 +1955,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   profile?: RiderProfile;
   isNavVisible?: boolean;
   isHighContrastMode?: boolean;
+  onRestartTour?: () => void;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -1960,6 +1968,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const [routeDistance, setRouteDistance] = useState(0);
   const [arrivedAtCustomer, setArrivedAtCustomer] = useState<Record<string, boolean>>({});
   const [cashCollected, setCashCollected] = useState<Record<string, boolean>>({});
+  const [isForceDeviated, setIsForceDeviated] = useState(false);
 
   const isVoiceSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
   const [isListening, setIsListening] = useState(false);
@@ -1994,14 +2003,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
         });
       } else if (transcript.includes('delivered') || transcript.includes('complete') || transcript.includes('delivery') || transcript.includes('dropped off')) {
         setShowSuccessOverlay(true);
-        if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 200]);
-        try {
-          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
-          audio.volume = 0.5;
-          audio.play().catch(() => {});
-        } catch {
-          // Playback ignored
-        }
+        audioSynth.playOrderDelivered();
         setTimeout(() => {
           onUpdateStatus(currentOrder.id, 'delivered');
           setShowSuccessOverlay(false);
@@ -2105,6 +2107,62 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
   return (
     <div className="h-screen flex flex-col pointer-events-none max-w-5xl mx-auto w-full relative">
+      {/* Route deviation alert banner */}
+      <AnimatePresence>
+        {isForceDeviated && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            whileDrag={{ scale: 0.96 }}
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            dragElastic={0.7}
+            onDragEnd={(event, info) => {
+              if (Math.abs(info.offset.x) > 120) {
+                setIsForceDeviated(false);
+                toast.info("Deviation warning swiped away. Rely on navigational vectors.");
+              }
+            }}
+            className="absolute top-24 left-4 right-4 z-[55] bg-zinc-950/95 border border-red-500/30 p-3.5 rounded-xl flex items-start gap-2.5 animate-pulse backdrop-blur-md pointer-events-auto shadow-lg cursor-grab active:cursor-grabbing select-none"
+          >
+            <span className="text-lg shrink-0">⚠️</span>
+            <div className="flex-1">
+              <p className="text-[10px] font-black uppercase text-red-500 tracking-wider">⚠️ DETECTED ROUTE DEVIATION</p>
+              <p className="text-[11.5px] font-medium text-red-300 leading-tight">
+                Wrong Road routing detected! Return to the Tembisa Pilot sector path immediately. Recurrent correction alerts engaged.
+              </p>
+              <p className="text-[8px] text-zinc-500 font-sans mt-1.5 font-medium">Swipe left/right to dismiss</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <FlightDeckSimulator
+        onForceDeviationChange={setIsForceDeviated}
+        onRestartTour={onRestartTour}
+        onArriveAtMerchantSimulation={() => {
+          if (!isPickedUp) {
+            onUpdateStatus(currentOrder.id, 'picked_up');
+            audioSynth.playArrivedDestination();
+            toast.success("SIMULATOR: Arrived at Merchant. Packet collected successfully!");
+          } else {
+            toast.info("SIMULATOR: Already picked up from merchant.");
+          }
+        }}
+        onArriveAtCustomerSimulation={() => {
+          if (isPickedUp && !arrivedAtCustomer[currentOrder.id]) {
+            setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
+            audioSynth.playArrivedDestination();
+            toast.success("SIMULATOR: Arrived at Customer. Collected proof verification.");
+          } else if (!isPickedUp) {
+            toast.info("SIMULATOR: Collect from Merchant first.");
+          } else {
+            toast.info("SIMULATOR: Already arrived at customer.");
+          }
+        }}
+      />
+
       <AnimatePresence>
         {showSuccessOverlay && (
           <motion.div 
@@ -2593,6 +2651,45 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               </div>
             </div>
 
+            {/* Client Retention Comm-Link */}
+            {isPickedUp && (
+              <div className="bg-zinc-900/50 border border-emerald-500/10 rounded-xl p-3 flex flex-col gap-3 backdrop-blur-sm">
+                <div className="flex items-center gap-2 px-1">
+                  <MessageSquare className="w-4 h-4 text-emerald-400" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Client Retention Comm-Link</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button 
+                    onClick={() => {
+                      const msg = `Hi ${currentOrder.customer_name}, I'm your LocalEats rider. I've picked up your order and I'm heading your way! You can track my live location here: https://localeats.co.za/track/${currentOrder.id}`;
+                      window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      toast.success("Retention Protocol: Tracking Link generated!");
+                    }}
+                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
+                  >
+                    <Radar className="w-3 h-3" />
+                    Share Live ETA
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const msg = `Hi ${currentOrder.customer_name}, your LocalEats order has arrived! I am outside.`;
+                      window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      toast.success("Retention Protocol: Arrival Warning sent!");
+                    }}
+                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-zinc-800/80 hover:bg-zinc-700/80 text-white border border-zinc-700 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
+                  >
+                    <BellRing className="w-3 h-3" />
+                    I'm Outside
+                  </button>
+                </div>
+                <div className="px-1 mt-0.5">
+                  <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider leading-relaxed">
+                    Consistent communication increases client trust and retention by 42%. Use the Comm-Link to keep customers informed.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Cash Validation Checkbox */}
             {isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && (
               <motion.div 
@@ -2652,20 +2749,15 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               onComplete={() => {
                 if (!isPickedUp) {
                   onUpdateStatus(currentOrder.id, 'picked_up');
+                  audioSynth.playArrivedDestination();
                   toast.success("Status: Food packet collected cleanly. Heading to dropoff destination.");
                 } else if (!arrivedAtCustomer[currentOrder.id]) {
                   setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
+                  audioSynth.playArrivedDestination();
                   toast.success("Status: Arrived at Customer storefront. Connect and finalize payment.");
                 } else {
                   setShowSuccessOverlay(true);
-                  if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 200]);
-                  try {
-                    const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2019/2019-preview.mp3');
-                    audio.volume = 0.5;
-                    audio.play().catch(() => {});
-                  } catch {
-                    // Playback ignored
-                  }
+                  audioSynth.playOrderDelivered();
                   setTimeout(() => {
                     onUpdateStatus(currentOrder.id, 'delivered');
                     setShowSuccessOverlay(false);
@@ -4757,6 +4849,8 @@ export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<RiderProfile | null>(null);
   const [showOfflineWarning, setShowOfflineWarning] = useState(false);
+  const [showRiderTour, setShowRiderTour] = useState(false);
+  const [showLegalModal, setShowLegalModal] = useState(false);
   const [connections, setConnections] = useState<ShopConnection[]>([]);
   const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
@@ -4855,9 +4949,8 @@ export function App() {
       if (currentStatus === 'ready_for_pickup' && prevStatus !== 'ready_for_pickup') {
         const triggerAlert = async () => {
           try {
-            // 1. Audio Alert (Mixkit preview URL for notification)
-            const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-            await audio.play();
+            // 1. Audio Alert (Psychological sound synthesis)
+            await audioSynth.playOrderAssigned();
 
             // 2. Haptic Feedback
             if ('vibrate' in navigator) {
@@ -4900,6 +4993,7 @@ export function App() {
   const [history, setHistory] = useState<DeliveryOrder[]>([]);
   const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [dismissedOfflineBanner, setDismissedOfflineBanner] = useState(false);
   const [isGlobalNavVisible, setIsGlobalNavVisible] = useState(true);
   const [selectedTrackingOrderId, setSelectedTrackingOrderId] = useState<string | null>(null);
 
@@ -4907,10 +5001,12 @@ export function App() {
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
+      setDismissedOfflineBanner(false);
       toast.success('Connection restored.');
     };
     const handleOffline = () => {
       setIsOffline(true);
+      setDismissedOfflineBanner(false);
       toast.error('Connection lost.');
     };
     window.addEventListener('online', handleOnline);
@@ -4932,12 +5028,12 @@ export function App() {
   const [onboardingMode, setOnboardingMode] = useState<'onboarding' | 'helphub'>(() => {
     return localStorage.getItem('localeats_onboarding_seen') !== 'true' ? 'onboarding' : 'helphub';
   });
-  const [bootLogs, setBootLogs] = useState<string[]>([]);
   const [showRatingPrompt, setShowRatingPrompt] = useState<{orderId: string, entity: "merchant"|"customer"} | null>(null);
   const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
 
-  const addBootLog = (msg: string) => {
-    setBootLogs(prev => [...prev.slice(-3), `> ${msg}`]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const addBootLog = (_msg: string) => {
+    // legacy
   };
 
   const isFetchingProfileRef = useRef(false);
@@ -5901,6 +5997,18 @@ export function App() {
     init();
   }, [fetchActiveOrdersAndHistory]);
 
+  // Alert assignment sensing hook
+  const prevActiveOrdersLengthRef = useRef(0);
+  useEffect(() => {
+    if (activeOrders.length > prevActiveOrdersLengthRef.current && prevActiveOrdersLengthRef.current === 0) {
+      audioSynth.playOrderAssigned();
+      toast.success("🚨 DISPATCH DETECTED: New Operational Mission Assigned!", {
+        description: "Coupled directly to your Flight Deck HUD."
+      });
+    }
+    prevActiveOrdersLengthRef.current = activeOrders.length;
+  }, [activeOrders.length]);
+
   // Actions
   const handleUpdateStatus = useCallback(async (orderId: string, status: DeliveryStatus) => {
     if (!profile) return;
@@ -6186,6 +6294,7 @@ export function App() {
           console.error(e);
         }
       }
+      setShowRiderTour(true);
     }
     setShowOnboarding(false);
   };
@@ -6409,59 +6518,7 @@ export function App() {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center font-mono">
-        <div className="text-center w-full max-w-xs px-6">
-          <motion.div 
-            animate={{ opacity: [0.3, 1, 0.3] }} 
-            transition={{ duration: 1.5, repeat: Infinity }}
-            className="text-[#f59e0b] text-[10px] font-black uppercase tracking-[0.6em] mb-8"
-          >
-            LOADING_SYSTEM...
-          </motion.div>
-          
-          <div className="space-y-1 mb-10 min-h-[60px] text-left">
-            {bootLogs.map((log, i) => (
-              <motion.div 
-                key={i}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="text-zinc-600 text-[9px] font-bold uppercase tracking-wider overflow-hidden whitespace-nowrap"
-              >
-                {log}
-              </motion.div>
-            ))}
-            <motion.div 
-              animate={{ opacity: [0, 1] }} 
-              transition={{ repeat: Infinity, duration: 0.8 }}
-              className="w-1.5 h-3 bg-[#f59e0b] inline-block align-middle ml-1"
-            />
-          </div>
-
-          <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden mb-12 relative">
-            <motion.div 
-              initial={{ width: 0 }}
-              animate={{ width: '100%' }}
-              transition={{ duration: 2.5, ease: "linear" }}
-              className="h-full bg-[#f59e0b] shadow-[0_0_15px_rgba(57,255,20,0.5)]"
-            />
-          </div>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 3 }}
-          >
-            <button 
-              onClick={() => setLoading(false)}
-              className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-600 border border-zinc-900 px-6 py-3 rounded-xl hover:border-[#f59e0b]/30 hover:text-[#f59e0b] transition-all bg-zinc-950/50"
-            >
-              Skip Loading
-            </button>
-          </motion.div>
-        </div>
-      </div>
-    );
+    return <MainBootstrapSkeleton isHighContrastMode={isHighContrastMode} />;
   }
 
   if (!user) return <AuthView onMockLogin={() => setUser({ id: 'mock-user-123', email: 'mock@simulator.local' } as unknown as User)} />;
@@ -6514,19 +6571,49 @@ export function App() {
       
       {/* IMPROVEMENT #9 — Offline Detection Banner */}
       <AnimatePresence>
-        {isOffline && (
+        {isOffline && !dismissedOfflineBanner && (
           <motion.div 
             initial={{ y: -100 }}
             animate={{ y: 0 }}
             exit={{ y: -100 }}
-            className="fixed top-0 left-0 right-0 z-[1100] bg-red-600 text-white py-3 px-6 flex items-center justify-center gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl"
+            whileDrag={{ scale: 0.96 }}
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            dragElastic={0.7}
+            onDragEnd={(event, info) => {
+              if (Math.abs(info.offset.x) > 120) {
+                setDismissedOfflineBanner(true);
+                toast.info("Offline warning dismissed. Standing by...");
+              }
+            }}
+            className="fixed top-0 left-0 right-0 z-[1100] bg-red-600/95 text-white py-3.5 px-6 flex items-center justify-between gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl cursor-grab active:cursor-grabbing select-none"
           >
-            <WifiOff className="w-4 h-4 animate-pulse" />
-            Lost connection. Trying to reconnect...
+            <div className="flex items-center gap-3">
+              <WifiOff className="w-4 h-4 animate-pulse" />
+              <span>Lost connection. Trying to reconnect...</span>
+            </div>
+            <span className="text-[8px] font-sans text-white/50 lowercase tracking-normal">Swipe left/right to dismiss</span>
           </motion.div>
         )}
       </AnimatePresence>
-      {showOnboarding && <TacticalOnboarding onComplete={handleOnboardingComplete} mode={onboardingMode} />}
+      {showOnboarding && (
+        <TacticalOnboarding 
+          onComplete={handleOnboardingComplete} 
+          mode={onboardingMode} 
+          onStartInteractiveTour={() => {
+            setShowOnboarding(false);
+            setShowRiderTour(true);
+          }}
+        />
+      )}
+
+      {showRiderTour && (
+        <RiderInteractiveTour 
+          onComplete={() => setShowRiderTour(false)} 
+          setView={setView} 
+          currentView={view} 
+        />
+      )}
       
       {/* Offline Warning Modal */}
       <AnimatePresence>
@@ -6961,6 +7048,7 @@ export function App() {
                     profile={profile || undefined}
                     isNavVisible={isGlobalNavVisible}
                     isHighContrastMode={isHighContrastMode}
+                    onRestartTour={() => setShowRiderTour(true)}
                   />
                 </div>
               ) : (
@@ -7073,6 +7161,7 @@ export function App() {
                 return (
                   <button
                     key={item.view}
+                    id={`nav-${item.view}`}
                     onClick={() => setView(item.view as AppView)}
                     className={cn(
                       "relative flex-1 flex flex-col items-center py-4 rounded-[2rem] transition-smooth", 
@@ -7120,6 +7209,29 @@ export function App() {
           </span>
         </button>
       </div>
+
+      {/* Floating Legal/POPIA Compliance Trigger */}
+      <div 
+        className={cn(
+          "fixed left-6 z-[80] transition-all duration-300 md:left-8",
+          (view !== 'move' ? true : isGlobalNavVisible) ? "bottom-28" : "bottom-6"
+        )}
+      >
+        <button
+          onClick={() => setShowLegalModal(true)}
+          className="relative px-3 py-1.5 rounded-full bg-zinc-950/80 border border-zinc-800 text-zinc-400 hover:text-[#f59e0b] hover:border-[#f59e0b]/50 transition-all flex items-center gap-1.5 backdrop-blur-md shadow-lg"
+          title="Privacy & Legal"
+        >
+          <ShieldAlert className="w-3 h-3" />
+          <span className="text-[9px] font-black uppercase tracking-widest leading-none pt-px">POPIA</span>
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {showLegalModal && (
+          <GlobalLegalModal onClose={() => setShowLegalModal(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

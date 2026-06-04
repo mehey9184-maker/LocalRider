@@ -70,6 +70,7 @@ import { TacticalOnboarding } from './components/TacticalOnboarding';
 import { RiderInteractiveTour } from './components/RiderInteractiveTour';
 import { FlightDeckSimulator } from './components/FlightDeckSimulator';
 import { audioSynth } from './lib/audioSynth';
+import { detectRegion } from './lib/geoContext';
 import { PhoneInput } from './components/PhoneInput';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from './lib/mapStyles';
 import { OrderCardSkeleton, OrderTrackingSkeleton, MainBootstrapSkeleton } from './components/ShimmerSkeleton';
@@ -729,6 +730,8 @@ const Dashboard = React.memo(({
     return parseInt(localStorage.getItem('shiftCount') || '0', 10);
   });
 
+  const region = detectRegion(profile.current_latitude, profile.current_longitude);
+
   useEffect(() => {
     if (profile.is_online && shiftCount < 3) {
       const newCount = shiftCount + 1;
@@ -747,6 +750,13 @@ const Dashboard = React.memo(({
 
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
+      <header className="flex flex-col gap-1 pt-2 opacity-90 transition-all">
+        <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-1">{region.heroText}</span>
+        <h1 className="text-3xl font-headline font-black tracking-tight text-white leading-none whitespace-normal">
+          {region.greetingTitle}
+        </h1>
+      </header>
+
       {connectionCount === 0 && (
          <motion.div 
             initial={{ opacity: 0, scale: 0.95 }}
@@ -1602,11 +1612,11 @@ const OrdersFeed = React.memo(({
                                </span>
                              </div>
                            )}
-                           {order.cash_trust_enabled && (
+                            {order.cash_trust_enabled && (
                              <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic font-mono leading-none">
-                                 TRUSTED LOCAL PARTNER
+                                 {detectRegion(riderLat, riderLng).name.toUpperCase() + " TRUSTED PARTNER"}
                                </span>
                              </div>
                            )}
@@ -2596,7 +2606,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   <Check className="w-3 h-3 text-emerald-400 font-black" strokeWidth={3} />
                 </div>
                 <div className="flex-1">
-                  <p className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">TRUSTED LOCAL PARTNER</p>
+                  <p className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">
+                    {profile ? detectRegion(profile.current_latitude, profile.current_longitude).name.toUpperCase() + " TRUSTED PARTNER" : "TRUSTED LOCAL PARTNER"}
+                  </p>
                   <p className="text-[11px] font-medium text-emerald-300 leading-tight">
                     Verified Trusted Partner - Premium access to high-value dispatches sanctioned by shop management.
                   </p>
@@ -2806,6 +2818,7 @@ interface MerchantPortalProps {
   onToggleAutoLook: () => void;
   dispatchToMarketplace: Record<string, boolean>;
   onToggleDispatch: (orderId: string) => void;
+  regionGreeting: string;
 }
 
 const MerchantPortal = React.memo(({
@@ -2816,7 +2829,8 @@ const MerchantPortal = React.memo(({
   autoLook,
   onToggleAutoLook,
   dispatchToMarketplace,
-  onToggleDispatch
+  onToggleDispatch,
+  regionGreeting
 }: MerchantPortalProps) => {
   return (
     <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
@@ -2826,7 +2840,8 @@ const MerchantPortal = React.memo(({
             <ShoppingBag className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white font-headline">Merchant Portal</h1>
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b] mb-1">{regionGreeting}</span>
+            <h1 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white font-headline -mt-1">Merchant Portal</h1>
             <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">Simulate and coordinate storefront-to-rider dispatch protocols</p>
           </div>
         </div>
@@ -6562,6 +6577,8 @@ export function App() {
     );
   }
 
+  const globalRegion = detectRegion(profile.current_latitude, profile.current_longitude);
+
   return (
     <div className={cn(
       "min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative transition-all duration-[600ms] ease-in-out",
@@ -7094,6 +7111,7 @@ export function App() {
                     return next;
                   });
                 }}
+                regionGreeting={globalRegion.greetingTitle}
               />
             )}
             {view === 'tracking' && selectedTrackingOrderId && (

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%" aria-label="Local Eats SA Rider App Logo" role="img">
+  <title>Local Eats SA Rider</title>
+  <defs>
+    <!-- High-performance linear gradient mapping downward momentum -->
+    <linearGradient id="riderSpeedGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF5722"/>
+      <stop offset="100%" stop-color="#D84315"/>
+    </linearGradient>
+    
+    <!-- Hardware-accelerated drop shadow for depth buffering -->
+    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#FF5722" flood-opacity="0.25" />
+    </filter>
+  </defs>
+
+  <!-- Application Icon Safe Area / Base Container -->
+  <rect width="512" height="512" rx="112" fill="#121212"/>
+
+  <!-- Core Iconography Sub-Tree: Translated for exact center alignment -->
+  <g transform="translate(128, 80)" filter="url(#dropShadow)">
+    <!-- Main Location Pin Matrix -->
+    <path d="M128 0C70.6 0 24 46.6 24 104c0 78.4 104 208 104 208s104-129.6 104-208c0-57.4-46.6-104-104-104zm0 156c-28.7 0-52-23.3-52-52s23.3-52 52-52 52 23.3 52 52-23.3 52-52 52z" fill="url(#riderSpeedGradient)"/>
+    
+    <!-- Negative Space Slices simulating velocity (Polygon Subtraction Illusion) -->
+    <path d="M0 50 L256 50 L240 68 L-16 68 Z" fill="#121212"/>
+    <path d="M-20 100 L256 100 L240 118 L-36 118 Z" fill="#121212"/>
+    <path d="M-10 150 L256 150 L240 168 L-26 168 Z" fill="#121212"/>
+    
+    <!-- Inner Wheel / Steering Core Element -->
+    <circle cx="128" cy="104" r="28" fill="#121212"/>
+    <circle cx="128" cy="104" r="12" fill="#FF5722"/>
+  </g>
+
+  <!-- Typography Engine: Utilizing system-native font stacks for zero-latency loading -->
+  <text x="256" y="420" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="34" font-weight="900" fill="#FFFFFF" text-anchor="middle" letter-spacing="3">
+    LOCAL EATS
+  </text>
+  <text x="256" y="460" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="20" font-weight="700" fill="#FF5722" text-anchor="middle" letter-spacing="8">
+    RIDER SA
+  </text>
+</svg>

@@ -125,12 +125,19 @@ createRoot(document.getElementById('root')!).render(
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((reg) => {
-        console.log('LocalEats Map Cache SW registered scope:', reg.scope);
-      })
-      .catch((err) => {
-        console.warn('LocalEats Cache SW registration skipped or failed:', err);
+    // @ts-expect-error PWA types not globally loaded
+    import('virtual:pwa-register').then(({ registerSW }) => {
+      registerSW({
+        immediate: true,
+        onRegisteredSW(swUrl: string, r: ServiceWorkerRegistration) {
+          console.log('LocalEats Cache SW registered scope:', r?.scope);
+        },
+        onRegisterError(err: Error) {
+          console.warn('LocalEats Cache SW registration skipped or failed:', err);
+        }
       });
+    }).catch(() => {
+      console.warn("Failed to load virtual:pwa-register");
+    });
   });
 }

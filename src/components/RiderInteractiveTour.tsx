@@ -26,13 +26,13 @@ interface RiderInteractiveTourProps {
 const TOUR_STEPS: TourStep[] = [
   {
     targetId: null,
-    title: "Rider Flight Deck Initialized",
-    desc: "Greetings, Operating Unit! Welcome to your LocalEats Flight-Deck. Let's execute a quick interactive tour to show you exactly where to tap and how to navigate.",
+    title: "Driver Dashboard Initialized",
+    desc: "Greetings, Driver! Welcome to your LocalEats Dashboard. Let's execute a quick interactive tour to show you exactly where to tap and how to navigate.",
     view: 'dash'
   },
   {
     targetId: "dash-online-btn",
-    title: "1. COUPLING TO CENTRAL GRID",
+    title: "1. COUPLING TO Local Network",
     desc: "This is your ONLINE PROTOCOL switch. Tap here to start looking for food-dispatch orders. Toggling this signal lets nearby merchants trace your availability.",
     view: 'dash',
     arrowDir: 'bottom',
@@ -56,7 +56,7 @@ const TOUR_STEPS: TourStep[] = [
   },
   {
     targetId: "nav-move",
-    title: "4. MISSION TRACKING HUD",
+    title: "4. Order Tracking HUD",
     desc: "Your active route control screen. Tap here to pull up current client coordinates, active delivery progress, maps, and direct customer Comm-Links.",
     view: 'move',
     arrowDir: 'top',
@@ -65,7 +65,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     targetId: "nav-merchant",
     title: "5. STORE TERMINAL INTEGRATION",
-    desc: "The Store tab handles direct Merchant bindings. Scan QR codes at restaurant registers to fetch order packets, or trigger simulation mechanics.",
+    desc: "The Store tab handles direct Merchant bindings. Scan QR codes at restaurant registers to fetch order orders, or trigger simulation mechanics.",
     view: 'merchant',
     arrowDir: 'top',
     tapTargetLabel: "Store Tab"
@@ -81,7 +81,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     targetId: null,
     title: "Unit Tour Completed",
-    desc: "Uplink certified! Your interfaces are calibrated. You have complete mastery of the LocalEats flight modules. Drive safe, and let's capture some orders!",
+    desc: "Connection verified! Your interfaces are calibrated. You have complete mastery of the LocalEats flight modules. Drive safe, and let's capture some orders!",
     view: 'dash'
   }
 ];

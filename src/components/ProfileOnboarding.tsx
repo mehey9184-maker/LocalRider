@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-interface TacticalOnboardingProps {
+interface ProfileOnboardingProps {
   onComplete: () => void;
   mode?: 'onboarding' | 'helphub';
   onStartInteractiveTour?: () => void;
@@ -35,14 +35,14 @@ const STEPS: StepItem[] = [
     icon: Radar,
     color: 'text-orange-500 border-orange-500/30',
     bgGlow: 'bg-orange-500/10 shadow-[0_0_25px_rgba(249,115,22,0.15)]',
-    desc: 'The central hub for local food-dispatch detection. When online, the system monitors sectors to triangulate available contracts for delivery within your operational grid.'
+    desc: 'The central hub for local food-dispatch detection. When online, the system monitors sectors to triangulate available contracts for delivery within your active network.'
   },
   {
     title: 'DISPATCH_ACCEPTANCE',
     icon: Crosshair,
     color: 'text-amber-500 border-amber-500/30',
     bgGlow: 'bg-amber-500/10 shadow-[0_0_25px_rgba(245,158,11,0.15)]',
-    desc: 'Each order is a critical Mission. Acceptance binds your profile signature to the client contract. Track coordinates and timers tightly to preserve delivery yield multipliers.'
+    desc: 'Each order is a critical order. Acceptance binds your profile signature to the client contract. Track coordinates and timers tightly to preserve delivery yield multipliers.'
   },
   {
     title: 'OPTIMIZATION_ENGINE',
@@ -56,7 +56,7 @@ const STEPS: StepItem[] = [
     icon: Mic,
     color: 'text-pink-500 border-pink-500/30',
     bgGlow: 'bg-pink-500/10 shadow-[0_0_25px_rgba(236,72,153,0.15)]',
-    desc: 'Deploy hands-free commands when driving. Trigger voice control to say "picked up" or "delivered" to adjust the telemetry phase without taking your hands off the vehicle bars.'
+    desc: 'Deploy hands-free commands when driving. Trigger voice control to say "picked up" or "delivered" to adjust the order status without taking your hands off the vehicle bars.'
   },
   {
     title: 'CRYPTOGRAPHIC_QR_PAIR',
@@ -73,7 +73,7 @@ const STEPS: StepItem[] = [
     desc: 'Running in a sandbox or nested preview? Integrated high-fidelity automated GPS simulation keeps coordinates updating so you can trial runs, route transitions, and geo-unlocks without leaving home.'
   },
   {
-    title: 'TELEMETRY_SYNC_SHIELD',
+    title: 'LOCATION_SYNC',
     icon: ShieldCheck,
     color: 'text-emerald-500 border-emerald-500/30',
     bgGlow: 'bg-emerald-500/10 shadow-[0_0_25px_rgba(16,185,129,0.15)]',
@@ -81,7 +81,7 @@ const STEPS: StepItem[] = [
   }
 ];
 
-export function TacticalOnboarding({ onComplete, mode: initialMode = 'onboarding', onStartInteractiveTour }: TacticalOnboardingProps) {
+export function ProfileOnboarding({ onComplete, mode: initialMode = 'onboarding', onStartInteractiveTour }: ProfileOnboardingProps) {
   const [currentMode, setCurrentMode] = useState<'onboarding' | 'helphub'>(initialMode);
   const [step, setStep] = useState(0);
   const [openSection, setOpenSection] = useState<string | null>(null);
@@ -123,7 +123,7 @@ export function TacticalOnboarding({ onComplete, mode: initialMode = 'onboarding
         exit={{ opacity: 0, scale: 0.95 }}
         className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-[2.5rem] p-6 sm:p-8 relative overflow-hidden shadow-[0_10px_50px_rgba(0,0,0,0.8)]"
       >
-        {/* Neon HUD Background Grid and Accents */}
+        {/* Neon HUD Background network and Accents */}
         <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px),linear-gradient(to_bottom,#ffffff03_1px,transparent_1px)] bg-[size:14px_14px] pointer-events-none -z-10" />
         <div className="absolute -top-12 -left-12 w-24 h-24 bg-[#f59e0b]/5 blur-3xl rounded-full pointer-events-none" />
         <div className="absolute -bottom-12 -right-12 w-24 h-24 bg-[#f59e0b]/5 blur-3xl rounded-full pointer-events-none" />
@@ -230,7 +230,7 @@ export function TacticalOnboarding({ onComplete, mode: initialMode = 'onboarding
           <div className="space-y-6">
             <div className="text-center">
               <h2 className="text-2xl font-black tracking-widest text-[#f59e0b] uppercase font-mono">SYSTEM HANDBOOK</h2>
-              <p className="text-[10px] text-zinc-500 uppercase font-mono mt-1 tracking-wider">Operational Core & Telemetry Directives</p>
+              <p className="text-[10px] text-zinc-500 uppercase font-mono mt-1 tracking-wider">active Core & location tracking Directives</p>
             </div>
 
             {/* Interactive list of app features */}
@@ -291,7 +291,7 @@ export function TacticalOnboarding({ onComplete, mode: initialMode = 'onboarding
 
             <div className="pt-2 border-t border-zinc-800 flex justify-between items-center text-[10px] text-zinc-600 font-mono">
               <span className="uppercase text-[8px] tracking-widest text-[#f59e0b]">CORE_V1.4.3</span>
-              <span>UPLINK_STATUS: LOGGED</span>
+              <span>Connection_STATUS: LOGGED</span>
             </div>
 
             <button

@@ -30,8 +30,8 @@ class PsychologicalAudioEngine {
   }
 
   /**
-   * 1. LOW-FREQUENCY BINAURAL UPLINK (Order Assigned / Accepted)
-   * High-focus, reassuring rising vector. Stimulates dopamine production and tactical focus.
+   * 1. LOW-FREQUENCY BINAURAL Connection (Order Assigned / Accepted)
+   * High-focus, reassuring rising vector. Stimulates dopamine production and driver focus.
    * Sine wave starting at 220Hz sweeping smoothly to 440Hz over 0.6 seconds.
    */
   public async playOrderAssigned(): Promise<void> {
@@ -151,7 +151,7 @@ class PsychologicalAudioEngine {
   }
 
   /**
-   * 4. CELEBRATORY EXALTATION SWEET CHORD (Mission Delivered & Cash Logged)
+   * 4. CELEBRATORY EXALTATION SWEET CHORD (order Delivered & Cash Logged)
    * High frequency shimmer + rising victory sweep to validate rewarding efforts.
    */
   public async playOrderDelivered(): Promise<void> {

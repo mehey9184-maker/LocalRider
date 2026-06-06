@@ -53,7 +53,7 @@ export const GlobalLegalModal = ({ onClose }: PopiaModalProps) => {
               </li>
               <li>
                 You are responsible for your own transport setup, valid
-                licensing, and operational expenses.
+                licensing, and active expenses.
               </li>
               <li>
                 Local Eats SA acts exclusively as a technology bridge (software
@@ -70,19 +70,19 @@ export const GlobalLegalModal = ({ onClose }: PopiaModalProps) => {
             <p>
               In accordance with the South African Protection of Personal
               Information Act (POPIA), rigorous restrictions apply to Customer
-              tracking telemetry and dataset exposure:
+              tracking location tracking and dataset exposure:
             </p>
             <ul className="list-disc pl-5 space-y-2 text-zinc-500">
               <li>
-                <strong>Temporary Payload Delivery:</strong> Customer contact
-                nodes (names, phone numbers) and exact GPS coordinate payloads
+                <strong>Temporary delivery items Delivery:</strong> Customer contact
+                nodes (names, phone numbers) and exact GPS coordinate delivery itemss
                 are encrypted during delivery.
               </li>
               <li>
                 <strong>Zero-Retention Policy:</strong> Riders are strictly
                 prohibited from copying, screen-recording, or retaining client
                 information outside the active navigation loop of the mobile web
-                app. All customer coordinates and telemetry are wiped from
+                app. All customer coordinates and location tracking are wiped from
                 independent interfaces upon order completion.
               </li>
               <li>

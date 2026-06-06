@@ -66,7 +66,7 @@ import { cn } from './lib/utils';
 import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/MapboxAppMapBackground';
 import { HistoryMap } from './components/HistoryMap';
-import { TacticalOnboarding } from './components/TacticalOnboarding';
+import { ProfileOnboarding } from './components/ProfileOnboarding';
 import { RiderInteractiveTour } from './components/RiderInteractiveTour';
 import { FlightDeckSimulator } from './components/FlightDeckSimulator';
 import { audioSynth } from './lib/audioSynth';
@@ -75,6 +75,7 @@ import { PhoneInput } from './components/PhoneInput';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from './lib/mapStyles';
 import { OrderCardSkeleton, OrderTrackingSkeleton, MainBootstrapSkeleton } from './components/ShimmerSkeleton';
 import { GlobalLegalModal } from './components/GlobalLegalModal';
+import { MerchantPortal } from './components/MerchantPortal';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -125,6 +126,66 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
             Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
+
+const subscribeToPushNotifications = async (userId: string) => {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    console.warn('Push notifications not supported by browser.');
+    return;
+  }
+  
+  // High-reliability non-blocking wrapper to prevent test-suite or network handshakes from hanging
+  const withTimeout = <T,>(promise: Promise<T>, timeoutMs = 2000): Promise<T> => {
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), timeoutMs))
+    ]);
+  };
+
+  try {
+    const permission = await withTimeout(Notification.requestPermission());
+    if (permission !== 'granted') {
+      console.warn('Notification permission denied.');
+      return;
+    }
+    
+    const registration = await withTimeout(navigator.serviceWorker.ready);
+    const publicVapidKey = 'BD1XkIROdUwh10mz-IoWXYIy3awy5SN37JRExUeG0eIkgcyvSt7HzrXmRhERIDigFylQOP9GgglaWmVStB2Cx1c';
+    
+    // Convert VAPID key to Uint8Array
+    const padding = '='.repeat((4 - publicVapidKey.length % 4) % 4);
+    const base64 = (publicVapidKey + padding)
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    
+    let subscription = await withTimeout(registration.pushManager.getSubscription());
+    if (!subscription) {
+      subscription = await withTimeout(registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: outputArray
+      }));
+    }
+
+    const subJson = subscription.toJSON();
+    const supabase = getSupabase();
+    if (!isSupabaseMocked()) {
+      await supabase.from('push_subscriptions').upsert({
+        user_id: userId,
+        endpoint: subJson.endpoint,
+        p256dh: subJson.keys?.p256dh,
+        auth: subJson.keys?.auth,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'endpoint' });
+    }
+    console.log("Push notification capability subscribed successfully.");
+  } catch (error) {
+    console.warn("Skipping push registration (timed out, blocked, or not active):", error);
+  }
+};
 
 const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 5, delay = 1000, timeoutMs = 15000): Promise<T> => {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -427,7 +488,7 @@ const AuthView = ({ onMockLogin }: { onMockLogin?: () => void }) => {
           </div>
           <h1 className="text-3xl font-headline font-black tracking-tighter italic uppercase leading-none">
             Local<span className="text-[#f59e0b]">Eats</span><br/>
-            <span className="text-lg opacity-50">{isSignUp ? 'Registry Uplink' : 'Rider Hub'}</span>
+            <span className="text-lg opacity-50">{isSignUp ? 'Registry Connection' : 'Rider Hub'}</span>
           </h1>
         </div>
 
@@ -437,7 +498,7 @@ const AuthView = ({ onMockLogin }: { onMockLogin?: () => void }) => {
               <motion.div 
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
-                className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4"
+                className="map grid-cols-1 md:grid-cols-2 gap-4 mb-4"
               >
                 <div className="md:col-span-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Full Legal Name</label>
@@ -451,7 +512,7 @@ const AuthView = ({ onMockLogin }: { onMockLogin?: () => void }) => {
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Mobile Uplink</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-1">Phone Number</label>
                   <PhoneInput 
                     value={phone}
                     onChange={(val) => setPhone(val)}
@@ -852,7 +913,7 @@ const Dashboard = React.memo(({
           >
             <div className="w-2 h-2 mt-1.5 rounded-full bg-green-500 animate-ping shrink-0" />
             <p className="text-[12px] font-sans text-green-400 font-medium leading-relaxed">
-              You're active! New missions will appear here when your linked shops broadcast them.
+              You're active! New orders will appear here when your linked shops broadcast them.
             </p>
           </motion.div>
         )}
@@ -953,7 +1014,7 @@ const Dashboard = React.memo(({
             <div className="flex items-center justify-between">
                 <div>
                    <p className="text-sm font-bold text-zinc-200">Sector Specialist</p>
-                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Complete 3 missions for +50 Pts</p>
+                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Complete 3 orders for +50 Pts</p>
                 </div>
                 <div className="text-right">
                    <p className="text-sm font-black text-amber-500">{Math.min(totalDeliveries, 3)}/3</p>
@@ -1713,7 +1774,7 @@ const OrdersFeed = React.memo(({
                         <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest leading-none">Flightpath Spec</span>
                       </div>
                       <div className="flex items-center justify-between text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-4 italic">
-                        <span>Tactical Leg Routing</span>
+                        <span>Map Routing</span>
                         <span className="text-[#f59e0b] font-mono">Total: {(totalTripDist > 0 ? totalTripDist : shopToCustomerDist).toFixed(1)} KM</span>
                       </div>
                       <div className="relative flex items-center justify-between px-3 pt-2">
@@ -1726,7 +1787,7 @@ const OrdersFeed = React.memo(({
                             <Bike className="w-4 h-4" />
                           </div>
                           <span className="text-[8px] font-black uppercase text-zinc-400">Rider Position</span>
-                          <span className="text-[10px] font-mono text-cyan-400 font-bold mt-0.5">Uplinked</span>
+                          <span className="text-[10px] font-mono text-cyan-400 font-bold mt-0.5">Connected</span>
                         </div>
 
                         {/* Connection Leg 1 info */}
@@ -1790,7 +1851,7 @@ const OrdersFeed = React.memo(({
                       onClick={() => setExpandedOrderId(expandedOrderId === order.id ? null : order.id)}
                     >
                       <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] group-hover:text-white transition-colors">
-                        {expandedOrderId === order.id ? "Minimize Mission Intel" : "Expand Mission Intel"}
+                        {expandedOrderId === order.id ? "Minimize Order Intel" : "Expand Mission Intel"}
                       </span>
                     </div>
 
@@ -2030,7 +2091,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       } else if (transcript.includes('next') || transcript.includes('skip') || transcript.includes('forward')) {
         setActiveIndex((prev) => (prev + 1) % displayOrders.length);
         toast.info(`Voice: Next order`);
-      } else if (transcript.includes('map') || transcript.includes('view') || transcript.includes('tactical')) {
+      } else if (transcript.includes('map') || transcript.includes('view') || transcript.includes('driver')) {
         setIsSwapped(!isSwapped);
         toast.info(`Voice: Switching view`);
       }
@@ -2591,7 +2652,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               <div className="bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-xl flex items-start gap-2.5 animate-pulse">
                 <span className="text-lg">💵</span>
                 <div className="flex-1">
-                  <p className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Cash-Collected Mission Required</p>
+                  <p className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Cash-Collected Order Required</p>
                   <p className="text-[11px] font-medium text-amber-300 leading-tight">
                     Please deliver the items, collect <strong className="font-black text-white">R{Number(currentOrder.total_price || 0).toFixed(2)}</strong> in cash/digital transfer at arrival, and finalize payment status below.
                   </p>
@@ -2809,192 +2870,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   );
 });
 
-interface MerchantPortalProps {
-  allowExternal: boolean;
-  onToggleAllowExternal: () => void;
-  cashTrust: boolean;
-  onToggleCashTrust: () => void;
-  autoLook: boolean;
-  onToggleAutoLook: () => void;
-  dispatchToMarketplace: Record<string, boolean>;
-  onToggleDispatch: (orderId: string) => void;
-  regionGreeting: string;
-}
 
-const MerchantPortal = React.memo(({
-  allowExternal,
-  onToggleAllowExternal,
-  cashTrust,
-  onToggleCashTrust,
-  autoLook,
-  onToggleAutoLook,
-  dispatchToMarketplace,
-  onToggleDispatch,
-  regionGreeting
-}: MerchantPortalProps) => {
-  return (
-    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
-      <header className="flex flex-col gap-4 pt-6">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 shadow-[0_4px_20px_rgba(245,158,11,0.15)] animate-pulse">
-            <ShoppingBag className="w-6 h-6" />
-          </div>
-          <div>
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b] mb-1">{regionGreeting}</span>
-            <h1 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white font-headline -mt-1">Merchant Portal</h1>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">Simulate and coordinate storefront-to-rider dispatch protocols</p>
-          </div>
-        </div>
-      </header>
-
-      {/* Manual Storefront Coordination Protocol Banner */}
-      <div className="bg-zinc-900/40 border border-zinc-850 rounded-[2rem] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="flex items-start gap-4">
-          <div className="w-10 h-10 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 shrink-0">
-            <ShieldCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className="text-xs font-black uppercase tracking-widest text-blue-400 font-headline italic">Manual Storefront Coordination Protocol</h4>
-            <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed font-semibold">
-              If freelance dispatch matches are restricted, riders physical storefront presence allows them to instantly pair or link connection slots with merchant terminals.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Section 1: Merchant Global Policies */}
-        <BentoCard className="p-6 space-y-6 border border-zinc-900/50 bg-zinc-900/20" glow>
-          <div className="flex items-center gap-2 mb-2">
-            <SlidersHorizontal className="w-5 h-5 text-amber-500" />
-            <h3 className="text-lg font-headline font-black italic uppercase text-white font-headline">Global Dispatch Policies</h3>
-          </div>
-
-          {/* Toggle 1: Allow External Riders */}
-          <div className="space-y-3 bg-zinc-950/80 border border-zinc-900 rounded-2xl p-4 transition-all hover:border-zinc-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-black uppercase tracking-wider text-white font-mono">Allow Public Marketplace Riders</span>
-                <p className="text-[10px] text-zinc-400 mt-0.5">When disabled, only matched private in-house fleets can deliver.</p>
-              </div>
-              <button
-                id="toggle-external-riders-btn"
-                onClick={onToggleAllowExternal}
-                className={cn(
-                  "px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all font-mono",
-                  allowExternal
-                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
-                    : "bg-red-500/15 text-red-400 border border-red-500/30"
-                )}
-              >
-                {allowExternal ? "ENABLED (Public)" : "DISABLED (Private)"}
-              </button>
-            </div>
-          </div>
-
-          {/* Toggle 2: Cash Trust Enabled */}
-          <div className="space-y-3 bg-zinc-950/80 border border-zinc-900 rounded-2xl p-4 transition-all hover:border-zinc-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-black uppercase tracking-wider text-white font-mono">Cash Trust (COD) Shield</span>
-                <p className="text-[10px] text-zinc-400 mt-0.5 font-sans">Force green COD warnings on public cards for cash-returning orders.</p>
-              </div>
-              <button
-                id="toggle-cash-trust-btn"
-                onClick={onToggleCashTrust}
-                className={cn(
-                  "px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all font-mono",
-                  cashTrust
-                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.15)]"
-                    : "bg-zinc-800 text-zinc-400 border border-zinc-750"
-                )}
-              >
-                {cashTrust ? "ACTIVE (FLAG ON)" : "INACTIVE (FLAG OFF)"}
-              </button>
-            </div>
-          </div>
-
-          {/* Toggle 3: Auto-Look (Rider Backup Scanning) */}
-          <div className="space-y-3 bg-zinc-950/80 border border-zinc-900 rounded-2xl p-4 transition-all hover:border-zinc-800">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-black uppercase tracking-wider text-white font-mono">Auto-Look For Rider Signal</span>
-                <p className="text-[10px] text-zinc-400 mt-0.5 font-sans">Broadcast active pulsing visual beacons for instant public rider claims.</p>
-              </div>
-              <button
-                id="toggle-auto-look-btn"
-                onClick={onToggleAutoLook}
-                className={cn(
-                  "px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all font-mono",
-                  autoLook
-                    ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-[0_0_15px_rgba(34,211,238,0.15)] animate-pulse"
-                    : "bg-zinc-800 text-zinc-400 border border-zinc-750"
-                )}
-              >
-                {autoLook ? "ACTIVE (RADAR PULSING)" : "INACTIVE"}
-              </button>
-            </div>
-          </div>
-        </BentoCard>
-
-        {/* Section 2: Order-Level Marketplace Dispatch Override Controls */}
-        <BentoCard className="p-6 space-y-4 border border-zinc-900/50 bg-zinc-900/20" glow>
-          <div className="flex items-center gap-2 mb-2">
-            <Zap className="w-5 h-5 text-amber-500 animate-bounce" />
-            <h3 className="text-lg font-headline font-black italic uppercase text-white font-headline font-black">On-Demand Backups Dispatch</h3>
-          </div>
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wide leading-relaxed font-semibold">
-            Below are unassigned storefront orders. When global marketplace access is off, individually override dispatch to marketplace as on-demand backup dispatch instantly:
-          </p>
-
-          <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
-            {[
-              { id: 'order-1', name: 'Cheese Burger XL', customer: 'John Doe', price: 155, desc: 'Test Burger Hub' },
-              { id: 'order-2', name: 'Sizzling Platter & Chips', customer: 'Sarah Gadebe', price: 245, desc: 'Flame Grill Chicken' },
-              { id: 'order-3', name: 'Quarter Leg & Pap Combo', customer: 'Mpho Dlamini', price: 180, desc: 'Dlamini Traditional Kitchen' }
-            ].map(ord => {
-              const isDispatched = dispatchToMarketplace[ord.id] ?? (ord.id === 'order-2' ? true : false);
-              return (
-                <div key={ord.id} className="bg-zinc-950/80 border border-zinc-900 rounded-xl p-3 flex items-center justify-between gap-3 hover:border-zinc-800 transition-all">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-black uppercase tracking-wider text-zinc-250 font-mono font-bold">{ord.name}</span>
-                      <span className="text-[9px] font-mono text-zinc-500">R{ord.price}</span>
-                    </div>
-                    <p className="text-[9px] text-zinc-450 mt-0.5 font-sans">
-                      Merchant: <span className="font-bold text-amber-500/95">{ord.desc}</span> • Client: <span className="text-zinc-400">{ord.customer}</span>
-                    </p>
-                  </div>
-
-                  <button
-                    id={`toggle-dispatch-btn-${ord.id}`}
-                    onClick={() => onToggleDispatch(ord.id)}
-                    className={cn(
-                      "px-3 py-1.5 text-[8px] font-black uppercase tracking-widest rounded-lg transition-all font-headline",
-                      isDispatched
-                        ? "bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_10px_rgba(245,158,11,0.2)]"
-                        : "bg-zinc-900 hover:bg-zinc-850 text-zinc-400 border border-zinc-800"
-                    )}
-                  >
-                    {isDispatched ? "DISPATCHED TO FEED" : "KEEP PRIVATE"}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </BentoCard>
-      </div>
-
-      <div className="bg-zinc-900/40 p-6 rounded-[2.5rem] border border-zinc-800/10 space-y-4">
-        <h4 className="text-xs font-black uppercase tracking-widest text-[#f59e0b] italic font-headline">Live Simulated Feed Status</h4>
-        <p className="text-[11px] text-zinc-400 max-w-2xl leading-relaxed">
-          Riders checking the <strong className="text-amber-500">Rider Marketplace Feed</strong> tab can currently see orders matching current settings. 
-          Toggle the Global Policies or dispatch backups above to test immediate feed visibility logic!
-        </p>
-      </div>
-    </div>
-  );
-});
 
 const StarRating = ({ rating }: { rating: number }) => (
   <div className="flex gap-0.5">
@@ -3332,7 +3208,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
         <div className="flex items-center justify-between mb-6">
            <div className="flex flex-col text-left">
              <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Yield Performance Chart</span>
-             <span className="text-[8.5px] font-black uppercase text-[#f59e0b] tracking-widest mt-0.5">Tactical Earnings over active slots</span>
+             <span className="text-[8.5px] font-black uppercase text-[#f59e0b] tracking-widest mt-0.5">Earnings over active slots</span>
            </div>
            <Activity className="w-4 h-4 text-[#f59e0b] opacity-60" />
         </div>
@@ -3543,7 +3419,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
                             <div className="space-y-1 text-[10px] text-zinc-400 font-sans border-l border-zinc-900 pl-4 flex flex-col justify-between">
                               <div className="space-y-1">
                                 <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Recipient Profile</span>
-                                <p className="font-bold text-white truncate">{item.customer_name || 'Tactical Operator'}</p>
+                                <p className="font-bold text-white truncate">{item.customer_name || 'Customer'}</p>
                                 <p className="text-[9px] text-zinc-500 font-mono truncate">{item.phone || '+27 800-PILOT'}</p>
                               </div>
                               
@@ -3580,7 +3456,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
 
                           {/* Proof of Delivery Validation and Location Maps */}
                           <div className="space-y-2 text-left">
-                            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans border-b border-zinc-900 pb-1 w-full">Tactical GPS Track Logs</span>
+                            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans border-b border-zinc-900 pb-1 w-full">GPS Track Logs</span>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               {/* Flight Map routing */}
                               <div className="h-44 rounded-[1.5rem] border border-zinc-850 overflow-hidden relative">
@@ -3589,7 +3465,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
 
                               {/* Dropoff visual signature verification */}
                               <div className="h-44 rounded-[1.5rem] border border-zinc-850 bg-black/60 relative overflow-hidden flex flex-col justify-between p-3.5 select-none">
-                                <span className="absolute top-2.5 right-2 text-zinc-650 text-[7px] font-mono tracking-widest font-black uppercase">TACTICAL VISUAL ATTESTATION</span>
+                                <span className="absolute top-2.5 right-2 text-zinc-650 text-[7px] font-mono tracking-widest font-black uppercase">VISUAL ATTESTATION</span>
                                 <div className="w-full flex-1 flex items-center justify-center p-2">
                                   {item.dropoff_photo_ref ? (
                                     <img 
@@ -3693,7 +3569,24 @@ const getTilesForCoordinate = (lat: number, lng: number, extent: number = 0.015)
   return list;
 };
 
-const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, onLogout, onPair, onToggleOnline, onBack, isEcoMode, onToggleEcoMode, isHighContrastMode, onToggleHighContrastMode }: { 
+const ProfileView = React.memo(({ 
+  profile, 
+  connections, 
+  now, 
+  onUpdateVehicle, 
+  onLogout, 
+  onPair, 
+  onToggleOnline, 
+  onBack, 
+  isEcoMode, 
+  onToggleEcoMode, 
+  isHighContrastMode, 
+  onToggleHighContrastMode,
+  notificationTitle,
+  onUpdateNotificationTitle,
+  notificationBody,
+  onUpdateNotificationBody
+}: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
   now: number,
@@ -3705,7 +3598,11 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
   isEcoMode: boolean,
   onToggleEcoMode: () => void,
   isHighContrastMode: boolean,
-  onToggleHighContrastMode: () => void
+  onToggleHighContrastMode: boolean,
+  notificationTitle: string,
+  onUpdateNotificationTitle: (title: string) => void,
+  notificationBody: string,
+  onUpdateNotificationBody: (body: string) => void
 }) => {
   const [localAvatar, setLocalAvatar] = useState(() => localStorage.getItem(`localeats_avatar_${profile.id}`) || profile.photo_url || '');
   const [editingAvatar, setEditingAvatar] = useState(false);
@@ -3954,7 +3851,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
             >
               <div className="bg-zinc-950 border border-zinc-800 p-5 rounded-3xl space-y-4 text-left shadow-2xl">
                 <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
-                  <span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Select Tactical Spec Avatar</span>
+                  <span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Select Profile picture</span>
                   <button onClick={() => setEditingAvatar(false)} className="text-zinc-500 hover:text-white">
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -4024,7 +3921,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Grid Performance Diagnostics</h3>
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Missions Lock-In</span>
+            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Orders Accepted</span>
             <span className="text-xl font-headline font-black italic text-emerald-550">99.2%</span>
             <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Acceptance</span>
           </div>
@@ -4059,7 +3956,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
 
       {/* Share / Invitation Protocol (Stores require driver sync IDs) */}
       <section className="space-y-4">
-        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Grid Uplink Identity</h3>
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Network Identity</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4 relative overflow-hidden">
           <div className="flex items-center justify-between">
             <div className="flex flex-col">
@@ -4132,7 +4029,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                     </div>
                   </div>
                 </div>
-                <span className="text-[9px] font-mono font-black text-zinc-400 uppercase tracking-widest animate-pulse">Scan with Merchant Uplink</span>
+                <span className="text-[9px] font-mono font-black text-zinc-400 uppercase tracking-widest animate-pulse">Scan with Merchant Setup</span>
               </motion.div>
             )}
           </AnimatePresence>
@@ -4268,6 +4165,78 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                 "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
                 isHighContrastMode ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
               )} />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Dynamic Customizable Notifications (Swiss-Modern style) */}
+      <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Order Alert Customization</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-5">
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-[#f59e0b] shrink-0">
+              <BellRing className="w-5 h-5 shrink-0" />
+            </div>
+            <div>
+              <h4 className="text-xs font-black uppercase tracking-widest text-[#f59e0b] font-headline italic">Dynamic Notification Swapper</h4>
+              <p className="text-[10px] text-zinc-400 mt-0.5 leading-relaxed font-sans font-semibold">
+                Swap the system's dispatch announcements dynamically. Changes are preserved and integrated directly with local browser alerts and paired storefront broadcasts.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5 text-left">
+              <label htmlFor="custom-noti-title" className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Notification Title</label>
+              <input 
+                id="custom-noti-title"
+                type="text" 
+                value={notificationTitle}
+                onChange={e => onUpdateNotificationTitle(e.target.value)}
+                placeholder="e.g. New Order"
+                className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors font-sans font-bold"
+              />
+            </div>
+            <div className="space-y-1.5 text-left">
+              <label htmlFor="custom-noti-desc" className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Notification Body / Desc</label>
+              <input 
+                id="custom-noti-desc"
+                type="text" 
+                value={notificationBody}
+                onChange={e => onUpdateNotificationBody(e.target.value)}
+                placeholder="e.g. A new order is available in your area."
+                className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors font-sans"
+              />
+            </div>
+          </div>
+
+          <div className="pt-2 flex flex-col sm:flex-row gap-2">
+            <button
+              onClick={() => {
+                if ('vibrate' in navigator) {
+                  navigator.vibrate(100);
+                }
+                toast(notificationTitle, { 
+                  description: notificationBody,
+                  duration: 5000,
+                  icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
+                  style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
+                });
+              }}
+              className="flex-1 py-2.5 bg-[#f59e0b] hover:bg-amber-600 text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 text-center flex items-center justify-center gap-1.5"
+            >
+              <Zap className="w-3.5 h-3.5" /> Test Custom Notification
+            </button>
+            <button
+              onClick={() => {
+                onUpdateNotificationTitle('New Order');
+                onUpdateNotificationBody('A new order is available in your area.');
+                toast.success('Reset notifications to default templates');
+              }}
+              className="px-4 py-2.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-zinc-400 uppercase tracking-widest rounded-xl transition-colors active:scale-[0.97]"
+            >
+              Reset Default
             </button>
           </div>
         </div>
@@ -4548,7 +4517,7 @@ const ProfileView = React.memo(({ profile, connections, now, onUpdateVehicle, on
                 </div>
 
                 <div className="space-y-2 text-left">
-                  <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Operational Hotline Channels</span>
+                  <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Active Hotline Channels</span>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => window.open("tel:08005553287", "_self")}
@@ -4843,7 +4812,7 @@ function FallbackComponent({ error, resetErrorBoundary }: { error: Error; resetE
         <ShieldAlert size={32} className="animate-pulse" />
       </div>
       <h2 className="text-[#f59e0b] text-sm font-black uppercase tracking-[0.2em] mb-2">SYSTEM DE-LINKAGE DETECTED</h2>
-      <p className="text-zinc-600 text-[10px] uppercase max-w-xs mb-6">A fatal exception disrupted the navigation uplink. Manual system reboot recommended.</p>
+      <p className="text-zinc-600 text-[10px] uppercase max-w-xs mb-6">A fatal exception disrupted the navigation connection. Manual system reboot recommended.</p>
       
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 max-w-sm w-full mb-6 overflow-x-auto text-[9px] text-left">
         <div className="text-zinc-500 font-bold mb-1 uppercase text-[8px] tracking-wider">Exception Vector:</div>
@@ -4874,6 +4843,8 @@ export function App() {
   });
   const [isEcoMode, setIsEcoMode] = useState(() => localStorage.getItem('localeats_eco') === 'true');
   const [isHighContrastMode, setIsHighContrastMode] = useState(() => localStorage.getItem('localeats_contrast') === 'true');
+  const [notificationTitle, setNotificationTitle] = useState(() => localStorage.getItem('localeats_noti_title') || 'New Order');
+  const [notificationBody, setNotificationBody] = useState(() => localStorage.getItem('localeats_noti_body') || 'A new order is available in your area.');
 
   const toggleEcoMode = useCallback(() => {
     setIsEcoMode(prev => {
@@ -5459,8 +5430,8 @@ export function App() {
 
         setAvailableOrders(prev => {
            if (sorted.length > prev.length) {
-              toast('New Order', { 
-                description: 'A new order is available in your area.',
+              toast(notificationTitle, { 
+                description: notificationBody,
                 duration: 5000,
                 icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
                 style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
@@ -5482,7 +5453,7 @@ export function App() {
     } finally {
       isFetchingConnRef.current = false;
     }
-  }, [user, profile, merchantAllowExternal, merchantCashTrust, merchantAutoLook, dispatchToMarketplace]);
+  }, [user, profile, merchantAllowExternal, merchantCashTrust, merchantAutoLook, dispatchToMarketplace, notificationTitle, notificationBody]);
 
   const fetchActiveOrdersAndHistory = useCallback(async () => {
     if (!user) return;
@@ -5607,7 +5578,7 @@ export function App() {
       const captured_at = 'timestamp' in pos ? new Date(pos.timestamp).toISOString() : new Date().toISOString();
       let is_mocked = ('isFallback' in pos) ? !!pos.isFallback : false;
       
-      // Instantly propagate telemetry details to local Profile state for lag-free real-time rendering on map
+      // Instantly propagate location tracking details to local Profile state for lag-free real-time rendering on map
       setProfile(prev => prev ? {
         ...prev,
         current_latitude: lat,
@@ -6216,6 +6187,9 @@ export function App() {
     setProfile(updatedProfile);
 
     try {
+      if (newStatus && user?.id) {
+        subscribeToPushNotifications(user.id).catch(console.warn);
+      }
       if (isSupabaseMocked()) {
         if (newStatus) {
           toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
@@ -6253,7 +6227,7 @@ export function App() {
         description: "Your session state has been initialized successfully."
       });
     }
-  }, [profile]);
+  }, [profile, user]);
 
   const toggleOnline = useCallback(async () => {
     if (!profile) return;
@@ -6614,7 +6588,7 @@ export function App() {
         )}
       </AnimatePresence>
       {showOnboarding && (
-        <TacticalOnboarding 
+        <ProfileOnboarding 
           onComplete={handleOnboardingComplete} 
           mode={onboardingMode} 
           onStartInteractiveTour={() => {
@@ -6697,7 +6671,7 @@ export function App() {
               >
                 <X className="w-5 h-5" />
               </button>
-              <h3 className="text-xl font-black uppercase text-white mb-2 mt-4">How was the mission?</h3>
+              <h3 className="text-xl font-black uppercase text-white mb-2 mt-4">How was the order?</h3>
               <p className="text-zinc-400 text-xs mb-6">Rate your experience with the {showRatingPrompt.entity} to help us maintain grid integrity.</p>
               
               <div className="flex justify-center mb-8">
@@ -6942,7 +6916,7 @@ export function App() {
                       <div>
                         <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-500 uppercase">System Integrity</h4>
                         <div className="flex items-center gap-2">
-                           <span className="text-xs font-bold text-white uppercase italic">Telemetry Uplink</span>
+                           <span className="text-xs font-bold text-white uppercase italic">Active Order Connection</span>
                            <div className="flex items-center gap-0.5">
                               {[1,2,3,4].map(b => (
                                 <div key={b} className={cn("w-1 h-3 rounded-full bg-zinc-800", b <= 3 && "bg-orange-500")} />
@@ -7071,8 +7045,8 @@ export function App() {
               ) : (
                 <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center opacity-40">
                   <Navigation className="w-16 h-16 mb-4 text-zinc-600" />
-                  <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">No active operational mission</p>
-                  <button onClick={() => setView('feed')} className="mt-6 text-[10px] font-black uppercase text-[#f59e0b] underline">Open Mission Feed</button>
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">No active orders</p>
+                  <button onClick={() => setView('feed')} className="mt-6 text-[10px] font-black uppercase text-[#f59e0b] underline">Open Delivery Feed</button>
                 </div>
               )
             )}
@@ -7144,6 +7118,16 @@ export function App() {
                   onToggleEcoMode={toggleEcoMode}
                   isHighContrastMode={isHighContrastMode}
                   onToggleHighContrastMode={toggleHighContrastMode}
+                  notificationTitle={notificationTitle}
+                  onUpdateNotificationTitle={(title) => {
+                    setNotificationTitle(title);
+                    localStorage.setItem('localeats_noti_title', title);
+                  }}
+                  notificationBody={notificationBody}
+                  onUpdateNotificationBody={(body) => {
+                    setNotificationBody(body);
+                    localStorage.setItem('localeats_noti_body', body);
+                  }}
                 />
                 <VoiceController 
                   isListening={isListening} 

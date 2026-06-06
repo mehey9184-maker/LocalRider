@@ -47,5 +47,5 @@ export function isSupabaseMocked(): boolean {
 
 export function markSupabaseAsMocked() {
   isMocked = true;
-  console.warn("SYSTEM AUTONOMOUS FAILSAFE ENGAGED: Dynamic failover to local mocked operational mode triggered.");
+  console.warn("SYSTEM AUTONOMOUS FAILSAFE ENGAGED: Dynamic failover to local mocked active mode triggered.");
 }

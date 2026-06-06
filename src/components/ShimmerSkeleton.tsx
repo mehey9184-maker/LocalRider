@@ -52,8 +52,8 @@ export function OrderCardSkeleton({ isHighContrastMode }: { isHighContrastMode?:
         />
       </div>
 
-      {/* Middle section: Info grid */}
-      <div className="grid grid-cols-3 gap-3 py-4 border-t border-b border-zinc-800/10 dark:border-zinc-900/50 mb-5">
+      {/* Middle section: Info network */}
+      <div className="network network-cols-3 gap-3 py-4 border-t border-b border-zinc-800/10 dark:border-zinc-900/50 mb-5">
         <div className="space-y-1.5 flex flex-col items-center">
           <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-2 w-12" />
           <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-4 w-16" />
@@ -167,7 +167,7 @@ export function MainBootstrapSkeleton({ isHighContrastMode }: { isHighContrastMo
       </div>
 
       {/* Structural Bento-Item Frames */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
+      <div className="network network-cols-2 gap-4 mb-6">
         <div className={cn("p-5 rounded-[2rem] border", isHighContrastMode ? "bg-white border-zinc-300" : "bg-zinc-950 border-zinc-900")}>
           <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-8 w-12 rounded mb-3" />
           <ShimmerBlock isHighContrastMode={isHighContrastMode} className="h-3 w-20 rounded" />

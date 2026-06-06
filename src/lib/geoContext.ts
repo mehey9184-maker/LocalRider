@@ -12,7 +12,7 @@ const REGIONS = [
     name: 'Tembisa',
     greetingTitle: 'Tembisa On-Demand Deliveries',
     heroText: 'Serving food for Tembisa',
-    dispatchMessage: 'Tembisa Grid Relay Active',
+    dispatchMessage: 'Tembisa Network Dispatch Active',
     lat: -26.002,
     lng: 28.225,
     radiusKm: 6
@@ -44,7 +44,7 @@ const DEFAULT_REGION: RegionContext = {
   name: 'Local Sector',
   greetingTitle: 'LocalEats On-Demand Deliveries',
   heroText: 'Serving your neighborhood',
-  dispatchMessage: 'Grid Network Active'
+  dispatchMessage: 'Delivery Network Active'
 };
 
 function getHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {

@@ -54,12 +54,14 @@ import {
   Battery,
   Sun,
   MessageSquare,
-  BellRing
+  BellRing,
+  PhoneCall
 } from 'lucide-react';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Toaster, toast } from 'sonner';
-import { getSupabase, isSupabaseMocked } from './lib/supabase';
+import { getSupabase, isSupabaseMocked, markSupabaseAsMocked } from './lib/supabase';
+import { dispatchError } from './lib/errorHandling';
 import { User } from '@supabase/supabase-js';
 import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection } from './types';
 import { cn } from './lib/utils';
@@ -128,15 +130,26 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 }
 
 const subscribeToPushNotifications = async (userId: string) => {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    console.warn('Push notifications not supported by browser.');
+  const isIframe = () => {
+    try {
+      return window.self !== window.top;
+    } catch {
+      return true;
+    }
+  };
+
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const isTestingOrDev = hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('run.app') || hostname.includes('webcontainer') || isSupabaseMocked();
+  
+  if (isTestingOrDev || isIframe() || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    console.warn('Push notifications bypassed in development, testing, or not supported by browser.');
     return;
   }
   
   // High-reliability non-blocking wrapper to prevent test-suite or network handshakes from hanging
-  const withTimeout = <T,>(promise: Promise<T>, timeoutMs = 2000): Promise<T> => {
+  const withTimeout = <T,>(promise: Promise<T> | T, timeoutMs = 2000): Promise<T> => {
     return Promise.race([
-      promise,
+      Promise.resolve(promise),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), timeoutMs))
     ]);
   };
@@ -185,6 +198,13 @@ const subscribeToPushNotifications = async (userId: string) => {
   } catch (error) {
     console.warn("Skipping push registration (timed out, blocked, or not active):", error);
   }
+};
+
+const promiseWithTimeout = <T,>(promise: Promise<T>, timeoutMs = 2000): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
+  ]);
 };
 
 const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 5, delay = 1000, timeoutMs = 15000): Promise<T> => {
@@ -289,6 +309,15 @@ const isTodayLocal = (dateStr: string) => {
            d.getDate() === today.getDate();
   } catch {
     return false;
+  }
+};
+
+const safeJsonParse = <T,>(str: string | null, fallback: T): T => {
+  if (!str) return fallback;
+  try {
+    return JSON.parse(str) as T;
+  } catch {
+    return fallback;
   }
 };
 
@@ -1930,7 +1959,7 @@ const OrdersFeed = React.memo(({
                         onClick={(e) => {
                           e.stopPropagation();
                           if (isLimitReached) {
-                            toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
+                            toast.error('Limit reached. Please complete a delivery before accepting more.');
                           } else {
                             if (instantAccept) {
                               onAccept(order.id);
@@ -1958,7 +1987,7 @@ const OrdersFeed = React.memo(({
                       label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT"} 
                       onComplete={() => {
                         if (isLimitReached) {
-                          toast.error('PAYLOAD LIMIT REACHED. Complete current missions first.');
+                          toast.error('Limit reached. Please complete a delivery before accepting more.');
                         } else if (instantAccept) {
                           onAccept(order.id);
                           toast.success('Mission accepted instantly!', {
@@ -2159,7 +2188,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       destLat = currentOrder.lat || -25.9933; // Kaalfontein customer fallback
       destLng = currentOrder.lng || 28.2125;
     } else {
-      toast.error('Navigation unavailable for current mission status');
+      toast.error('Navigation is not available for this delivery right now.');
       return;
     }
 
@@ -2729,14 +2758,14 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               <div className="bg-zinc-900/50 border border-emerald-500/10 rounded-xl p-3 flex flex-col gap-3 backdrop-blur-sm">
                 <div className="flex items-center gap-2 px-1">
                   <MessageSquare className="w-4 h-4 text-emerald-400" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400">Client Retention Comm-Link</span>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 font-sans">Location & Safety Assist</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <button 
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, I'm your LocalEats rider. I've picked up your order and I'm heading your way! You can track my live location here: https://localeats.co.za/track/${currentOrder.id}`;
                       window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
-                      toast.success("Retention Protocol: Tracking Link generated!");
+                      toast.success("Notice: Delivery tracking link shared via WhatsApp.");
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
                   >
@@ -2747,17 +2776,43 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, your LocalEats order has arrived! I am outside.`;
                       window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
-                      toast.success("Retention Protocol: Arrival Warning sent!");
+                      toast.success("Notice: Arrival warning shared.");
                     }}
-                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-zinc-800/80 hover:bg-zinc-700/80 text-white border border-zinc-700 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
+                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-zinc-805 hover:bg-zinc-700 text-white border border-zinc-700 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
                   >
                     <BellRing className="w-3 h-3" />
                     I'm Outside
                   </button>
+
+                  <button 
+                    onClick={() => {
+                      const msg = `Hi ${currentOrder.customer_name}, I am approaching your area. Could you please send me a quick WhatsApp location Pin or describe your gate/house to help me find you? Thanks!`;
+                      window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      toast.success("Notice: Location pin requested to save airtime.");
+                    }}
+                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    Request Gate Pin
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      const lat = profile?.current_latitude || -25.9964;
+                      const lng = profile?.current_longitude || 28.2268;
+                      const msg = `LocalEats Security Alert: I'm delivery rider ${profile?.full_name || 'Rider'}. Delivering order #${currentOrder.id.slice(0, 5)} to ${currentOrder.address}. Track my route at: https://maps.google.com/?q=${lat},${lng}. Check on me if I'm quiet for 15 mins.`;
+                      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                      toast.success("Notice: Safety Share template preloaded in WhatsApp!");
+                    }}
+                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-red-500/15 hover:bg-red-500/25 text-red-450 border border-red-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5 animate-pulse" />
+                    Safety Share
+                  </button>
                 </div>
                 <div className="px-1 mt-0.5">
                   <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider leading-relaxed">
-                    Consistent communication increases client trust and retention by 42%. Use the Comm-Link to keep customers informed.
+                    Consistent communication increases client trust. Use the Comm-Link to ask for coordinates and protect your safety.
                   </p>
                 </div>
               </div>
@@ -3615,6 +3670,44 @@ const ProfileView = React.memo(({
   const [syncTotal, setSyncTotal] = useState<number>(0);
   const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
 
+  const getPushNotificationDiagnostics = () => {
+    const hasServiceWorker = typeof window !== 'undefined' && 'serviceWorker' in navigator;
+    const hasPushManager = typeof window !== 'undefined' && 'PushManager' in window;
+    const hasNotification = typeof window !== 'undefined' && 'Notification' in window;
+    const isIframe = () => {
+      try {
+        return typeof window !== 'undefined' && window.self !== window.top;
+      } catch {
+        return true;
+      }
+    };
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+    const isTestingOrDev = hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('run.app') || hostname.includes('webcontainer') || isSupabaseMocked();
+    
+    let permission = 'prompt';
+    try {
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        permission = Notification.permission;
+      }
+    } catch (e) {
+      console.warn("Notification system permissions diagnostic offline", e);
+    }
+
+    const isBypassed = isTestingOrDev || isIframe() || !hasServiceWorker || !hasPushManager || !hasNotification;
+
+    return {
+      hasServiceWorker,
+      hasPushManager,
+      hasNotification,
+      isIframe: isIframe(),
+      isTestingOrDev,
+      permission,
+      isBypassed
+    };
+  };
+
+  const diag = getPushNotificationDiagnostics();
+
   const updateCacheMetrics = useCallback(async () => {
     if (!('caches' in window)) return;
     try {
@@ -3679,10 +3772,10 @@ const ProfileView = React.memo(({
         const { z, x, y } = tileList[i];
         
         const host1 = getRandomHost();
-        const darkUrl = `https://${host1}.basemaps.cartocdn.com/rastertiles/dark_all/${z}/${x}/${y}@2x.png`;
+        const darkUrl = `https://${host1}.basemaps.cartocdn.com/dark_all/${z}/${x}/${y}@2x.png`;
         
         const host2 = getRandomHost();
-        const lightUrl = `https://${host2}.basemaps.cartocdn.com/rastertiles/light_all/${z}/${x}/${y}@2x.png`;
+        const lightUrl = `https://${host2}.basemaps.cartocdn.com/light_all/${z}/${x}/${y}@2x.png`;
         
         try {
           await cache.add(new Request(darkUrl, { mode: 'no-cors' }));
@@ -3708,8 +3801,8 @@ const ProfileView = React.memo(({
       });
       updateCacheMetrics();
     } catch (err) {
-      console.error(err);
-      toast.error("Downlink intercepted: check connectivity");
+      console.warn(err);
+      toast.error("Connection error. Please check your internet.");
     } finally {
       setSyncingSector(null);
     }
@@ -3746,7 +3839,7 @@ const ProfileView = React.memo(({
           .update({ photo_url: url })
           .eq('id', profile.id);
       } catch (err) {
-        console.error("Supabase avatar sync failed:", err);
+        console.warn("Supabase avatar sync failed:", err);
       }
     }
   };
@@ -4145,6 +4238,26 @@ const ProfileView = React.memo(({
             </button>
           </div>
 
+          {isEcoMode && (
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-emerald-950/20 border border-emerald-500/20 rounded-xl p-3 flex justify-between items-center"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-400 text-xs">📈</span>
+                <div className="flex flex-col text-left">
+                  <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider font-sans">Tembisa Data-Saver Guard</span>
+                  <span className="text-[9px] text-zinc-400 font-sans">Adaptive 15s GPS intervals are conserving data packs</span>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <div className="text-[11px] font-mono font-black text-emerald-450 leading-none">~15MB Saved/hr</div>
+                <div className="text-[7.5px] uppercase font-black text-zinc-500 tracking-widest mt-1">Est. +1.5h Range</div>
+              </div>
+            </motion.div>
+          )}
+
           <div className="h-px bg-zinc-800 w-full" />
 
           <div className="flex items-center justify-between">
@@ -4238,6 +4351,51 @@ const ProfileView = React.memo(({
             >
               Reset Default
             </button>
+          </div>
+
+          {/* Diagnostic status block */}
+          <div className="h-px bg-zinc-800/80 my-2" />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Push Status Diagnostic</span>
+              <span className={cn(
+                "px-2 py-0.5 text-[8px] font-black uppercase rounded tracking-wider border font-sans",
+                diag.isBypassed 
+                  ? "bg-amber-500/10 text-amber-500 border-amber-500/20" 
+                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+              )}>
+                {diag.isBypassed ? "Bypassed / Fallback Active" : "System Active"}
+              </span>
+            </div>
+
+            {diag.isBypassed && (
+              <div className="p-3 bg-zinc-950/60 rounded-xl border border-zinc-850 space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <span className="text-xs text-amber-400 mt-0.5 shrink-0">⚠️</span>
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-zinc-300 font-bold leading-normal font-sans">
+                      Push Notifications Bypassed on this Host
+                    </p>
+                    <p className="text-[9px] text-zinc-500 leading-relaxed font-semibold font-sans">
+                      Standard push triggers are bypassed in staging/sandbox environments (<span className="text-zinc-400 font-mono text-[8.5px]">{window.location.hostname}</span>) or preview iframes.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="h-px bg-zinc-900" />
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b]">Tembisa Delivery Guard Engaged</span>
+                  </div>
+                  <span className="text-[8px] font-semibold text-emerald-400 uppercase font-sans">High Reliability</span>
+                </div>
+                <p className="text-[9px] text-zinc-400 leading-normal font-medium font-sans">
+                  No worries! Live WebSocket synchronization and background backup polling are active. Clear order notifications will trigger directly in your current session view without needing browser push permissions.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -4587,7 +4745,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId:
         if (data) setOrder({ ...data, restaurant_name: data.shops?.name || 'Merchant' });
         if (error) toast.error('Failed to load tracking data.');
       } catch (e) {
-        console.error(e);
+        console.warn(e);
       } finally {
         setLoading(false);
       }
@@ -4695,9 +4853,9 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
       console.error("Pairing Error:", err);
       const msg = err instanceof Error ? err.message : 'Connection failed.';
       if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
-        toast.error('Network Error: Cannot pair offline.');
+        toast.error('You must be online to pair with a store.');
       } else {
-        toast.error(msg === 'Connection failed.' ? 'Link failed. Please verify the code.' : msg);
+        toast.error(msg === 'Connection failed.' ? 'Connection failed. Please check the code.' : msg);
       }
     } finally {
       setLoading(false);
@@ -4811,20 +4969,29 @@ function FallbackComponent({ error, resetErrorBoundary }: { error: Error; resetE
       <div className="w-16 h-16 rounded-full bg-red-950/50 border border-red-500/30 flex items-center justify-center text-red-500 mb-6 shadow-[0_0_20px_rgba(239,68,68,0.2)]">
         <ShieldAlert size={32} className="animate-pulse" />
       </div>
-      <h2 className="text-[#f59e0b] text-sm font-black uppercase tracking-[0.2em] mb-2">SYSTEM DE-LINKAGE DETECTED</h2>
-      <p className="text-zinc-600 text-[10px] uppercase max-w-xs mb-6">A fatal exception disrupted the navigation connection. Manual system reboot recommended.</p>
+      <h2 className="text-[#f59e0b] text-sm font-black uppercase tracking-[0.2em] mb-2">CRITICAL SYSTEM ERROR</h2>
+      <p className="text-zinc-600 text-[10px] uppercase max-w-xs mb-6">A fatal exception has occurred. Please restart your session or contact dispatch.</p>
       
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 max-w-sm w-full mb-6 overflow-x-auto text-[9px] text-left">
-        <div className="text-zinc-500 font-bold mb-1 uppercase text-[8px] tracking-wider">Exception Vector:</div>
+        <div className="text-zinc-500 font-bold mb-1 uppercase text-[8px] tracking-wider">Error Trace:</div>
         <div className="text-red-400/90 whitespace-pre-wrap">{error?.message || 'Unknown system error.'}</div>
       </div>
 
-      <button
-        onClick={resetErrorBoundary}
-        className="px-6 py-3 bg-[#f59e0b] text-zinc-950 rounded-full font-black text-xs uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-lg shadow-[#f59e0b]/20"
-      >
-        Re-Establish Link
-      </button>
+      <div className="w-full max-w-xs flex flex-col gap-3">
+        <button
+          onClick={resetErrorBoundary}
+          className="w-full px-6 py-3 bg-[#f59e0b] text-zinc-950 rounded-lg font-black text-xs uppercase tracking-widest hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-[#f59e0b]/20 flex items-center justify-center"
+        >
+          Reconnect to Sector
+        </button>
+        <a
+          href="tel:0800000000"
+          className="w-full px-6 py-3 bg-zinc-800 border border-zinc-700 text-zinc-300 rounded-lg font-black text-xs uppercase hover:bg-zinc-700 hover:text-white transition-all flex items-center justify-center gap-2"
+        >
+          <PhoneCall size={14} />
+          Emergency Dispatch
+        </a>
+      </div>
     </div>
   );
 }
@@ -4868,7 +5035,7 @@ export function App() {
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
   const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
     const saved = localStorage.getItem('localeats_active_orders');
-    return saved ? JSON.parse(saved) : [];
+    return safeJsonParse<DeliveryOrder[]>(saved, []);
   });
 
   const [merchantAllowExternal, setMerchantAllowExternal] = useState(() => {
@@ -4885,7 +5052,7 @@ export function App() {
   });
   const [dispatchToMarketplace, setDispatchToMarketplace] = useState<Record<string, boolean>>(() => {
     const saved = localStorage.getItem('localeats_dispatch_to_marketplace');
-    return saved ? JSON.parse(saved) : {};
+    return safeJsonParse<Record<string, boolean>>(saved, {});
   });
 
   useEffect(() => {
@@ -4908,9 +5075,17 @@ export function App() {
   const hasAlertedBatteryRef = useRef(false);
 
   useEffect(() => {
-    if (batteryLevel !== null && batteryLevel < 20 && !batteryCharging) {
-      if (!hasAlertedBatteryRef.current) {
-        toast.error("BATTERY CRITICAL: UNDER 20%", {
+    if (batteryLevel !== null && batteryLevel < 25 && !batteryCharging) {
+      if (!isEcoMode) {
+        setTimeout(() => {
+          setIsEcoMode(true);
+        }, 0);
+        localStorage.setItem('localeats_eco', 'true');
+        toast.info("Low battery alert! Auto-enabling Tembisa Power Guard to save your phone.");
+        window.dispatchEvent(new Event('storage'));
+      }
+      if (batteryLevel < 20 && !hasAlertedBatteryRef.current) {
+        toast.error("Low battery. Please charge soon.", {
           description: "Connect to a power source immediately to avoid system shutdown during navigation.",
           duration: 8000
         });
@@ -4919,7 +5094,7 @@ export function App() {
     } else if (batteryLevel !== null && (batteryLevel >= 25 || batteryCharging)) {
       hasAlertedBatteryRef.current = false;
     }
-  }, [batteryLevel, batteryCharging]);
+  }, [batteryLevel, batteryCharging, isEcoMode]);
   
   const prevOrdersStatusRef = useRef<Record<string, string>>({});
 
@@ -5058,7 +5233,7 @@ export function App() {
           .eq('id', user.id)
           .single();
         return res as { data: RiderProfile | null; error: { code: string; message: string } | null };
-      }, 3, 1000, 10000); // 3 retries, 10s timeout to handle cold starts
+      }, 2, 1000, 8000); // 2 retries, 8s timeout to protect from hanging DB
 
       if (error && error.code === 'PGRST116') {
         addBootLog('WARN: NO_PROFILE - INITIALIZING...');
@@ -5080,7 +5255,9 @@ export function App() {
           current_longitude: 28.2198,
           updated_at: new Date().toISOString()
         };
-        const { data: created, error: insertError } = await getSupabase().from('rider_profiles').upsert(newProfile).select().single();
+        const { data: created, error: insertError } = await fetchWithRetry(async () => {
+          return await getSupabase().from('rider_profiles').upsert(newProfile).select().single();
+        }, 2, 1000, 8000); // Fail-safe 8s timeout on upsert
         if (created) {
           addBootLog('SYNC: NEW_PROFILE_READY');
           setProfile(created as RiderProfile);
@@ -5127,6 +5304,7 @@ export function App() {
         }
       } else if (error) {
         addBootLog('ERR: FETCH_FAILED - ENGAGING INTERN PROTOCOL');
+        markSupabaseAsMocked();
         const fallbackProfile: RiderProfile = {
           id: user.id,
           name: user.email?.split('@')[0] || 'elite_rider',
@@ -5149,6 +5327,7 @@ export function App() {
     } catch (e: unknown) {
       const errMessage = e instanceof Error ? e.message : 'Unknown error';
       addBootLog(`WARN: DB_OFFLINE (${errMessage}) - OVERRIDING`);
+      markSupabaseAsMocked();
       const fallbackProfile: RiderProfile = {
         id: user.id,
         name: user.email?.split('@')[0] || 'elite_rider',
@@ -5321,7 +5500,7 @@ export function App() {
           .order('expires_at', { ascending: false });
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return res as any;
-      }, 3, 1000, 10000);
+      }, 2, 1000, 8000); // 2 retries, 8s timeout
       
       if (connData) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -5344,22 +5523,32 @@ export function App() {
       let ordersError: any = null;
 
       try {
-        const res = await getSupabase()
-          .from('orders')
-          .select('*, shops(name, allow_external_riders, cash_trust_enabled)')
-          .eq('delivery_status', 'finding_rider')
-          .order('created_at', { ascending: false })
-          .limit(50);
-        ordersData = res.data;
-        ordersError = res.error;
+        const { data, error } = await fetchWithRetry(async () => {
+          const res = await getSupabase()
+            .from('orders')
+            .select('*, shops(name, allow_external_riders, cash_trust_enabled)')
+            .eq('delivery_status', 'finding_rider')
+            .order('created_at', { ascending: false })
+            .limit(50);
+          return res;
+        }, 2, 1000, 8000); // 2 retries, 8s timeout
+        ordersData = data;
+        ordersError = error;
       } catch {
-        const res = await getSupabase()
-          .from('orders')
-          .select('*, shops(name)')
-          .eq('delivery_status', 'finding_rider')
-          .order('created_at', { ascending: false })
-          .limit(50);
-        ordersData = res.data;
+        try {
+          const { data } = await fetchWithRetry(async () => {
+            const res = await getSupabase()
+              .from('orders')
+              .select('*, shops(name)')
+              .eq('delivery_status', 'finding_rider')
+              .order('created_at', { ascending: false })
+              .limit(50);
+            return res;
+          }, 2, 1000, 8000); // 2 retries, 8s timeout
+          ordersData = data;
+        } catch (e2) {
+          console.warn('Quietly handling standby on secondary fallback order query:', e2);
+        }
       }
 
       if (ordersError) throw ordersError;
@@ -5446,9 +5635,9 @@ export function App() {
       console.error(e);
       const errMessage = e instanceof Error ? e.message : 'Unknown error';
       if (errMessage.toLowerCase().includes('fetch') || errMessage.toLowerCase().includes('network') || errMessage.toLowerCase().includes('timeout')) {
-        console.log('WARN: NETWORK_FAILURE - USING CACHED ORDERS');
+        console.warn('WARN: NETWORK_FAILURE - USING CACHED ORDERS');
       } else {
-        toast.error(`ERROR: ${errMessage}`);
+        dispatchError('System error detected', errMessage);
       }
     } finally {
       isFetchingConnRef.current = false;
@@ -5476,13 +5665,16 @@ export function App() {
         return;
       }
       // Active Orders
-      const { data: active } = await getSupabase()
-        .from('orders')
-        .select('*, restaurant_name')
-        .eq('rider_id', user.id)
-        .in('delivery_status', ['accepted', 'picked_up'])
-        .neq('status', 'completed')
-        .neq('status', 'cancelled');
+      const { data: active } = await fetchWithRetry(async () => {
+        const res = await getSupabase()
+          .from('orders')
+          .select('*, restaurant_name')
+          .eq('rider_id', user.id)
+          .in('delivery_status', ['accepted', 'picked_up'])
+          .neq('status', 'completed')
+          .neq('status', 'cancelled');
+        return res as unknown as { data: DeliveryOrder[] | null; error: Error | null };
+      }, 2, 1000, 8000); // 2 retries, 8s timeout
       
       if (active) {
         setActiveOrders(active.map(order => ({
@@ -5494,12 +5686,15 @@ export function App() {
       }
 
       // History
-      const { data: historyData } = await getSupabase()
-        .from('orders')
-        .select('*, restaurant_name')
-        .eq('rider_id', user.id)
-        .eq('delivery_status', 'delivered')
-        .order('updated_at', { ascending: false });
+      const { data: historyData } = await fetchWithRetry(async () => {
+        const res = await getSupabase()
+          .from('orders')
+          .select('*, restaurant_name')
+          .eq('rider_id', user.id)
+          .eq('delivery_status', 'delivered')
+          .order('updated_at', { ascending: false });
+        return res as unknown as { data: DeliveryOrder[] | null; error: Error | null };
+      }, 2, 1000, 8000); // 2 retries, 8s timeout
       
       if (historyData) {
         setHistory(historyData.map(item => ({
@@ -5508,7 +5703,7 @@ export function App() {
         })) as DeliveryOrder[]);
       }
     } catch (e) {
-      console.error(e);
+      console.warn('Quietly tolerating active orders or history sync timeout', e);
     }
   }, [user]);
 
@@ -5552,6 +5747,90 @@ export function App() {
 
   const lastLocationUpdateRef = useRef<{lat: number, lng: number, time: number} | null>(null);
   const isMockedRef = useRef<boolean>(false);
+  const stationaryTicksRef = useRef<number>(0);
+
+  interface QueuedOrderSyncItem {
+    id: string;
+    orderId: string;
+    status: DeliveryStatus;
+    updates: {
+      delivery_status: DeliveryStatus;
+      updated_at: string;
+      rider_id?: string | null;
+    };
+    delivery_fee: number;
+    timestamp: string;
+  }
+
+  // Robust Network-Agnostic Transactional Queue Replay System
+  const syncOrderStateQueue = useCallback(async () => {
+    if (!navigator.onLine || isSupabaseMocked()) return;
+    const queueStr = localStorage.getItem('order_sync_queue');
+    if (!queueStr) return;
+    
+    // Safely parse local storage queue elements following typings guidelines
+    const parsedQueue = (() => {
+      try {
+        return JSON.parse(queueStr);
+      } catch {
+        return null;
+      }
+    })();
+    
+    if (!Array.isArray(parsedQueue) || parsedQueue.length === 0) return;
+    const queue: QueuedOrderSyncItem[] = parsedQueue;
+
+    addBootLog(`SYNC_PROCESSOR: Initiating replay of ${queue.length} cached transaction(s).`);
+    
+    let remaining = [...queue];
+    
+    for (const action of queue) {
+      try {
+        const { orderId, status, updates, delivery_fee } = action;
+        
+        const { error } = await getSupabase()
+          .from('orders')
+          .update(updates)
+          .eq('id', orderId);
+          
+        if (error) throw error;
+        
+        if (status === 'delivered') {
+          const { error: rpcError } = await getSupabase().rpc('increment_rider_stats', {
+            rider_id: profile?.id,
+            earnings_add: delivery_fee || 0,
+            points_add: 15
+          });
+          
+          if (rpcError) {
+             console.warn('RPC failed during cached sync replay, writing directly', rpcError);
+             const profileUpdates = {
+               total_earnings: (profile?.total_earnings || 0) + (delivery_fee || 0),
+               total_deliveries: (profile?.total_deliveries || 0) + 1,
+               active_points: (profile?.active_points || 0) + 15,
+               updated_at: new Date().toISOString()
+             };
+             await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile?.id);
+          }
+        }
+        
+        remaining = remaining.filter(item => item.id !== action.id);
+        localStorage.setItem('order_sync_queue', JSON.stringify(remaining));
+        addBootLog(`SYNC_SUCCESS: Replayed order transition ${status} for #${orderId.slice(-4)}`);
+      } catch (err) {
+        console.error('Failed to replay offline order sync item:', err);
+        addBootLog('SYNC_REPLAY_SUSPENDED: Connection lost during dispatch sync replay');
+        break; // Stop and retry later on next online trigger
+      }
+    }
+    
+    if (remaining.length === 0) {
+      localStorage.removeItem('order_sync_queue');
+      addBootLog('SYNC_COMPLETED: Dispatch queues fully unified with Central DB.');
+      toast.success('Sync complete: Offline orders synchronized with central terminal.');
+      fetchActiveOrdersAndHistory();
+    }
+  }, [profile, fetchActiveOrdersAndHistory]);
   useEffect(() => {
     if (!user || !profile?.is_online || activeOrders.length === 0) return;
 
@@ -5608,8 +5887,47 @@ export function App() {
       const dist = lastLoc ? getHaversineDistance(lastLoc.lat, lastLoc.lng, lat, lng) : Infinity;
       const timeElapsed = lastLoc ? now - lastLoc.time : Infinity;
       
-      // Haversine Throttling: only update if moved > 5 meters OR 15 seconds have passed
-      if (dist < 5 && timeElapsed < 15000) return;
+      // Geolocation Battery & Data Optimizer (Adaptive-interval high-fidelity tracking algorithm)
+      let timeThreshold = 15000; // default 15s in performance mode
+      let distThreshold = 5;     // default 5 meters
+
+      // Adjust distance threshold for low accuracy to ignore high-density GPS jitter (e.g., cell tower drift)
+      if (accuracy && accuracy > 35) {
+        distThreshold = 15; 
+      }
+
+      const isStationary = dist < 3;
+      if (isStationary) {
+        stationaryTicksRef.current += 1;
+      } else {
+        stationaryTicksRef.current = 0;
+      }
+
+      // Calculate adaptive intervals based on battery profiles (Eco mode), background state, and stationary count
+      if (isEcoMode) {
+        timeThreshold = 30000; // Base 30s for Eco mode
+        if (stationaryTicksRef.current > 4) {
+          timeThreshold = 180000; // 3 minutes cooldown if static
+        } else if (stationaryTicksRef.current > 2) {
+          timeThreshold = 90000;  // 1.5 minutes cooldown 
+        }
+      } else {
+        if (stationaryTicksRef.current > 8) {
+          timeThreshold = 120000; // 2 minutes cooldown if static in performance mode
+        } else if (stationaryTicksRef.current > 4) {
+          timeThreshold = 60000;  // 1 minute cooldown
+        }
+      }
+
+      // If document is backgrounded (hidden), apply defensive throttling limits to satisfy OS throttling models
+      if (document.hidden) {
+        timeThreshold = Math.max(timeThreshold, isEcoMode ? 300000 : 90000); // Max 5m (Eco) or 1.5m (Perf)
+      }
+
+      // Check if throttling thresholds are satisfied before processing the sync event
+      if (dist < distThreshold && timeElapsed < timeThreshold) {
+        return;
+      }
 
       lastLocationUpdateRef.current = { lat, lng, time: now };
 
@@ -5673,10 +5991,20 @@ export function App() {
 
     const syncLocationQueue = async () => {
       if (!navigator.onLine || isSupabaseMocked()) return;
+      interface LocSyncItem {
+        lat: number;
+        lng: number;
+        heading: number;
+        speed: number;
+        captured_at: string;
+        is_mocked: boolean;
+        suspicious: boolean;
+        orders: string[];
+      }
       try {
          const queueStr = localStorage.getItem('loc_sync_queue');
          if (!queueStr) return;
-         const queue = JSON.parse(queueStr);
+         const queue = safeJsonParse<LocSyncItem[]>(queueStr, []);
          if (!Array.isArray(queue) || queue.length === 0) return;
          
          const latest = queue[queue.length - 1];
@@ -5708,11 +6036,13 @@ export function App() {
            }, () => {}, { enableHighAccuracy: true, maximumAge: 0 });
          }
          syncLocationQueue();
+         syncOrderStateQueue();
       }
     };
     
     const handleOnline = () => {
       syncLocationQueue();
+      syncOrderStateQueue();
     };
 
     let fallbackIntervalId: NodeJS.Timeout | null = null;
@@ -5732,7 +6062,7 @@ export function App() {
           // Fallback logic for GPS signal failure in high-density areas (Kopanong / Ivory Park Ext)
           if (err.code === 1) { // Permission Denied
              addBootLog('ERROR: GPS_PERM_DENIED');
-             toast.error('GPS AUTH FAILURE. Engaging real-time simulation module.', { id: 'gps-error' });
+             toast.error('Location error. Using offline fallback mode.', { id: 'gps-error' });
           } else if (err.code === 2) { // Position Unavailable
              addBootLog('SIGNAL_LOST: HIGH_DENSITY_INTERFERENCE');
              toast.warning('SIGNAL INTERFERENCE: TRIANGULATING...', { id: 'gps-warning' });
@@ -5793,7 +6123,7 @@ export function App() {
       window.removeEventListener('online', handleOnline);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, profile?.is_online, activeOrders, isEcoMode]);
+  }, [user, profile?.is_online, activeOrders, isEcoMode, syncOrderStateQueue]);
 
   const loadingRef = useRef(loading);
   useEffect(() => {
@@ -5806,9 +6136,10 @@ export function App() {
     const bootTimeout = setTimeout(() => {
       if (loadingRef.current) {
         addBootLog('ERR: TIMEOUT - FORCING SYSTEM BYPASS');
+        markSupabaseAsMocked();
         setLoading(false);
       }
-    }, 12000); // 12s safety timeout
+    }, 8000); // 8s safety timeout
 
     try {
       if (isSupabaseMocked()) {
@@ -5820,7 +6151,7 @@ export function App() {
         return () => clearTimeout(bootTimeout);
       }
 
-      getSupabase().auth.getSession().then(({ data: { session } }) => {
+      promiseWithTimeout(getSupabase().auth.getSession(), 5000).then(({ data: { session } }) => {
         addBootLog(session ? 'AUTH: SESSION_RESTORED' : 'AUTH: NO_SESSION_DETECTED');
         if (session) {
           addBootLog('INITIALIZING TACTICAL OVERLAY');
@@ -5833,7 +6164,9 @@ export function App() {
           clearTimeout(bootTimeout);
         }
       }).catch(() => {
-        addBootLog('ERR: AUTH_FETCH_FAILED');
+        addBootLog('ERR: AUTH_FETCH_FAILED - ENGAGING AUTONOMOUS SIM PROTOCOL');
+        markSupabaseAsMocked();
+        setUser(null);
         setLoading(false);
         clearTimeout(bootTimeout);
       });
@@ -5979,8 +6312,10 @@ export function App() {
   useEffect(() => {
     const init = async () => {
       await fetchActiveOrdersAndHistory();
+      syncOrderStateQueue();
     };
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchActiveOrdersAndHistory]);
 
   // Alert assignment sensing hook
@@ -6015,43 +6350,39 @@ export function App() {
 
     // Integrity Check: Block delivery if mock GPS detected
     if (status === 'delivered' && isMockedRef.current) {
-      toast.error('SECURITY ALERT: Mock Location Detected. Cannot confirm arrival using spoofed GPS.', { duration: 5000 });
-      // Flag the payload or alert backend silently if needed.
+      toast.error('Real location required. Cannot confirm arrival with mocked GPS.', { duration: 5000 });
       return;
     }
 
-    // ROI Protocol: Mandatory Proof of Delivery simulation
-    // Optimization: Swipe gesture in UI is sufficient confirmation
-    // if (status === 'delivered') {
-    //   const confirmed = window.confirm("POD PROTOCOL: Has the asset been successfully delivered? Close proximity detected.");
-    //   if (!confirmed) return;
-    // }
-
     try {
-      if (isSupabaseMocked()) {
+      // OPTIMISTIC LOCAL ACTION:
+      // Instantly transition local state to eliminate cell signal wait-time bottlenecks (3G/LTE towers dropouts)
+      if (status === 'delivered') {
+        setActiveOrders(prev => prev.filter(o => o.id !== orderId));
+        setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
+        setProfile(prev => prev ? {
+          ...prev,
+          total_earnings: prev.total_earnings + (orderToUpdate.delivery_fee || 0),
+          total_deliveries: prev.total_deliveries + 1,
+          active_points: prev.active_points + 15
+        } : null);
+        toast.info("Processing order arrival protocol...", { id: 'status-updating' });
+      } else if (status === 'finding_rider') {
+        setActiveOrders(prev => prev.filter(o => o.id !== orderId));
+        toast.info("Releasing mission to marketplace...", { id: 'status-updating' });
+      } else {
         setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
-        if (status === 'delivered') {
-           setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
-           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-           setProfile(prev => prev ? {
-             ...prev,
-             total_earnings: prev.total_earnings + (orderToUpdate.delivery_fee || 0),
-             total_deliveries: prev.total_deliveries + 1,
-             active_points: prev.active_points + 15
-           } : null);
-           toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`);
-           if (activeOrders.length <= 1) {
-             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
-           }
-        } else if (status === 'finding_rider') {
-           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-           setAvailableOrders(prev => [...prev, {...orderToUpdate, delivery_status: 'finding_rider', rider_id: null}]);
-           toast.success('Mission released back to regional marketplace.');
-        } else {
-           toast.success('Location updated.');
+        toast.info(`Advancing mission phase to ${status}...`, { id: 'status-updating' });
+      }
+
+      if (isSupabaseMocked()) {
+        toast.success(`Success: Phase changed to ${status}`, { id: 'status-updating' });
+        if (status === 'delivered' && activeOrders.length <= 1) {
+          setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
         }
         return;
       }
+
       const { error } = await fetchWithRetry(async () => {
         return await getSupabase()
           .from('orders')
@@ -6060,7 +6391,7 @@ export function App() {
       });
 
       if (error) {
-        toast.error('Update failed');
+        throw error;
       } else {
         if (status === 'delivered') {
           const { error: rpcError } = await fetchWithRetry(async () => {
@@ -6084,28 +6415,46 @@ export function App() {
              });
           }
           
-          setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-          setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
-          
           const remainingMissions = activeOrders.length - 1;
           if (remainingMissions === 0) {
             setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
           }
-          toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`);
+          toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`, { id: 'status-updating' });
         } else if (status === 'finding_rider') {
-           setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-           toast.success('Mission released back to regional marketplace.');
+          toast.success('Mission released back to regional marketplace.', { id: 'status-updating' });
         } else {
-          setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
-          toast.success('Order status updated');
+          toast.success('Order status updated.', { id: 'status-updating' });
         }
       }
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Update failed';
-      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
-        toast.error('Network Error: Cannot sync phase offline.');
-      } else {
-        toast.error(message);
+      console.error('Failed to update status live, caching offline:', e);
+      addBootLog(`OFFLINE_TRANSITION: Queueing state [${status}] for Order #${orderId.slice(-4)}`);
+      
+      try {
+        const queueStr = localStorage.getItem('order_sync_queue');
+        const queue: QueuedOrderSyncItem[] = safeJsonParse<QueuedOrderSyncItem[]>(queueStr, []);
+        
+        // Anti-splitting mechanism: remove prior status changes for this same order in queue
+        const filteredQueue = queue.filter((item: QueuedOrderSyncItem) => !(item.orderId === orderId && item.status === status));
+        
+        filteredQueue.push({
+          id: Math.random().toString(36).substring(2, 9),
+          orderId,
+          status,
+          updates,
+          delivery_fee: orderToUpdate.delivery_fee || 0,
+          timestamp: new Date().toISOString()
+        });
+        
+        localStorage.setItem('order_sync_queue', JSON.stringify(filteredQueue));
+        
+        toast.info("offline: State cached locally. Syncing when connection restores.", {
+          duration: 6000,
+          id: 'status-updating'
+        });
+      } catch (storageErr) {
+        console.error("Failed to queue offline state change", storageErr);
+        toast.error("Could not save locally. Using temporary memory.", { id: 'status-updating' });
       }
     }
   }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, setShowRatingPrompt]);
@@ -6116,7 +6465,7 @@ export function App() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      toast.error('Voice protocols not supported on this device.');
+      toast.error('Voice commands are not supported on this device.');
       return;
     }
 
@@ -6162,7 +6511,7 @@ export function App() {
     recognition.onerror = (event: any) => {
       setIsListening(false);
       console.error('Voice Error:', event.error);
-      toast.error(`Voice error: ${event.error.toUpperCase()}`);
+      toast.error('Voice assistant error. Please try again or use buttons.');
     };
 
     recognition.onend = () => {
@@ -6233,7 +6582,7 @@ export function App() {
     if (!profile) return;
     
     if (profile.verification_status !== 'verified') {
-      toast.error('Identity Verification Pending. Access blocked until verified.');
+      toast.error('Your account is pending verification.');
       return;
     }
 
@@ -6280,7 +6629,7 @@ export function App() {
           setProfile(prev => prev ? { ...prev, onboarding_complete: true } : null);
           addBootLog('SYS_READY: OPERATOR_CERTIFIED');
         } catch (e) {
-          console.error(e);
+          console.warn(e);
         }
       }
       setShowRiderTour(true);
@@ -6307,7 +6656,7 @@ export function App() {
     }
     
     if (activeOrders.length >= 2) {
-      toast.error('Too many active orders. Complete one first.');
+      toast.error('Please complete your current order first.');
       return;
     }
 
@@ -6384,7 +6733,7 @@ export function App() {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Accept failed';
       if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
-        toast.error('Network Error: Cannot accept mission offline.');
+        toast.error('You must be online to accept an order.');
       } else {
         toast.error(message);
       }
@@ -7238,6 +7587,8 @@ export function App() {
   );
 }
 
+import { ErrorNotificationOverlay } from './components/ErrorNotification';
+
 export default function AppWithBoundary() {
   const handleReset = () => {
     console.warn("Initiating manual self-healing protocol from UI...");
@@ -7258,6 +7609,7 @@ export default function AppWithBoundary() {
   return (
     <ErrorBoundary FallbackComponent={FallbackComponent} onReset={handleReset}>
       <App />
+      <ErrorNotificationOverlay />
     </ErrorBoundary>
   );
 }

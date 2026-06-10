@@ -14,7 +14,7 @@ export const HistoryMap = React.memo(({ order, highContrast }: { order: Delivery
 
   useEffect(() => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 second timeout
 
     fetch(`https://router.project-osrm.org/route/v1/driving/${shopLng},${shopLat};${dropLng},${dropLat}?geometries=geojson&overview=full`, {
       signal: controller.signal

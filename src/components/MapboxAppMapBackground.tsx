@@ -68,7 +68,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       const [tLat, tLng] = targetPos;
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+      const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 second timeout
       
       fetch(`https://router.project-osrm.org/route/v1/driving/${rLng},${rLat};${tLng},${tLat}?geometries=geojson&overview=full`, {
         signal: controller.signal

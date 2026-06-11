@@ -1,4 +1,23 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback, useDeferredValue } from 'react';
+
+// Suppress harmless Recharts warning during animations
+const originalWarn = console.error;
+const originalConsoleWarn = console.warn;
+
+console.error = (...args) => {
+  if (typeof args[0] === 'string' && /width\(-?\d+\).*height\(-?\d+\).*should be greater than 0/.test(args[0])) {
+    return;
+  }
+  originalWarn(...args);
+};
+
+console.warn = (...args) => {
+  if (typeof args[0] === 'string' && /width\(-?\d+\).*height\(-?\d+\).*should be greater than 0/.test(args[0])) {
+    return;
+  }
+  originalConsoleWarn(...args);
+};
+
 import { ErrorBoundary } from 'react-error-boundary';
 import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
 import { 
@@ -1083,8 +1102,8 @@ const DashboardWeather = React.memo(({
               Shift Trend: {weather.hourlyForecast[0].temp.toFixed(0)}°C → {weather.hourlyForecast[5]?.temp.toFixed(0)}°C
             </span>
           </div>
-          <div className="h-16 w-full opacity-90">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-16 w-full min-w-0 opacity-90">
+            <ResponsiveContainer width="99%" height="100%">
               <AreaChart data={weather.hourlyForecast} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
                 <defs>
                   <linearGradient id="weatherTempGrad" x1="0" y1="0" x2="0" y2="1">
@@ -3649,7 +3668,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
            <Activity className="w-4 h-4 text-[#f59e0b] opacity-60" />
         </div>
         <div className="h-44 w-full min-w-0">
-          <ResponsiveContainer width="100%" height={176} minWidth={0} minHeight={176}>
+          <ResponsiveContainer width="99%" height={176}>
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="colorYield" x1="0" y1="0" x2="0" y2="1">
@@ -7308,7 +7327,7 @@ export function App() {
 
   return (
     <div className={cn(
-      "min-h-[100dvh] bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black overflow-x-hidden relative transition-all duration-[600ms] ease-in-out"
+      "min-h-[100dvh] flex flex-col bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black relative transition-all duration-[600ms] ease-in-out"
     )}>
       <Toaster position="top-center" theme="dark" richColors />
       
@@ -7553,7 +7572,7 @@ export function App() {
 
       {/* Main Container */}
       <main className={cn(
-        "w-full max-w-5xl mx-auto min-h-[100dvh] pb-32 relative z-10 pointer-events-none transition-all duration-300",
+        "flex-1 w-full max-w-5xl mx-auto pb-32 relative z-10 pointer-events-none transition-all duration-300",
         view !== 'move' ? "pt-[60px]" : "pt-0",
         isEcoMode ? "brightness-[0.82] saturate-[0.88] contrast-[0.95]" : ""
       )}>
@@ -7904,7 +7923,7 @@ export function App() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed bottom-0 left-0 w-full p-6 z-[60] pointer-events-auto"
+            className="sticky bottom-0 left-0 w-full p-4 md:p-6 pb-safe z-[60] pointer-events-auto bg-gradient-to-t from-black/80 to-transparent"
           >
             <div className="max-w-md md:max-w-5xl mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-[2.5rem] p-2 flex items-center justify-between xl:justify-center xl:gap-10 shadow-2xl">
               {[

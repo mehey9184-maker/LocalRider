@@ -49,6 +49,7 @@ export interface DeliveryOrder {
   rider_id?: string | null;
   shop_id: string;
   restaurant_name?: string; // Virtual field joined from shops table
+  shop_updated_at?: string; // Merchant last active heartbeat
   distance_km: number; // Mocked/calculated
   lat?: number; // Destination Latitude
   lng?: number; // Destination Longitude

@@ -163,6 +163,90 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// --- Merchant Heartbeat Status Helper ---
+interface HeartbeatStatus {
+  status: 'live' | 'quiet' | 'offline' | 'recent';
+  colorClass: string;
+  dotColorClass: string;
+  durationText: string;
+  isOver48h: boolean;
+}
+
+const getMerchantHeartbeatStatus = (updatedAtStr?: string): HeartbeatStatus => {
+  if (!updatedAtStr) {
+    return {
+      status: 'offline',
+      colorClass: 'text-zinc-500',
+      dotColorClass: 'bg-zinc-500 shadow-[0_0_6px_#71717a]',
+      durationText: 'Merchant Offline: Unknown',
+      isOver48h: false,
+    };
+  }
+  
+  try {
+    const updatedAt = new Date(updatedAtStr).getTime();
+    const now = Date.now();
+    const diffMs = now - updatedAt;
+    
+    if (isNaN(updatedAt)) {
+      throw new Error('Invalid Date parsed');
+    }
+    
+    const diffSeconds = Math.max(0, Math.floor(diffMs / 1000));
+    const diffMinutes = Math.floor(diffSeconds / 60);
+    const diffHours = Math.floor(diffMinutes / 60);
+    const diffDays = Math.floor(diffHours / 24);
+    
+    let durationText = '';
+    if (diffMinutes < 60) {
+      durationText = `${diffMinutes} ${diffMinutes === 1 ? 'min' : 'mins'} ago`;
+    } else if (diffHours < 24) {
+      durationText = `${diffHours} ${diffHours === 1 ? 'hour' : 'hours'} ago`;
+    } else {
+      durationText = `${diffDays} ${diffDays === 1 ? 'day' : 'days'} ago`;
+    }
+    
+    const isWithin2h = diffHours < 2;
+    const isOver24h = diffHours >= 24;
+    const isOver48h = diffHours >= 48;
+    
+    if (isWithin2h) {
+      return {
+        status: 'live',
+        colorClass: 'text-emerald-400',
+        dotColorClass: 'bg-emerald-500 shadow-[0_0_8px_#10b981] animate-pulse',
+        durationText: `Merchant Live: ${durationText}`,
+        isOver48h: false,
+      };
+    } else if (isOver24h) {
+      return {
+        status: 'quiet',
+        colorClass: 'text-amber-500',
+        dotColorClass: 'bg-amber-500 shadow-[0_0_8px_#f59e0b]',
+        durationText: `Merchant Quiet: ${durationText}`,
+        isOver48h,
+      };
+    } else {
+      return {
+        status: 'recent',
+        colorClass: 'text-zinc-400',
+        dotColorClass: 'bg-zinc-500 shadow-[0_0_6px_#71717a]',
+        durationText: `Merchant Offline: ${durationText}`,
+        isOver48h: false,
+      };
+    }
+  } catch (error) {
+    console.error('Error calculating heartbeat status', error);
+    return {
+      status: 'offline',
+      colorClass: 'text-zinc-500',
+      dotColorClass: 'bg-zinc-500',
+      durationText: 'Merchant Offline',
+      isOver48h: false,
+    };
+  }
+};
+
 const subscribeToPushNotifications = async (userId: string) => {
   const isIframe = () => {
     try {
@@ -2276,19 +2360,19 @@ const OrdersFeed = React.memo(({
                   >
                     <div className="flex justify-between items-start mb-6">
                       <div>
-                        <div className="mb-3 flex items-center gap-3">
+                        <div className="mb-3 flex items-center gap-3 flex-wrap">
                            <StatusBadge status={order.delivery_status} />
                            {order.payment_method === 'cash_on_arrival' ? (
                              <div className="bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-full">
-                               <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest italic">
-                                 💵 Cash On Arrival
-                               </span>
+                                <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest italic">
+                                  💵 Cash On Arrival
+                                </span>
                              </div>
                            ) : (
                              <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full">
-                               <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic">
-                                 💳 Card/Online
-                               </span>
+                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic">
+                                  💳 Card/Online
+                                </span>
                              </div>
                            )}
                            {order.delivery_status === 'finding_rider' && order.auto_look_for_rider && (
@@ -2299,7 +2383,7 @@ const OrdersFeed = React.memo(({
                                </span>
                              </div>
                            )}
-                            {order.cash_trust_enabled && (
+                           {order.cash_trust_enabled && (
                              <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic font-mono leading-none">
@@ -2307,6 +2391,22 @@ const OrdersFeed = React.memo(({
                                </span>
                              </div>
                            )}
+                           {(() => {
+                             const hb = getMerchantHeartbeatStatus(order.shop_updated_at);
+                             if (order.delivery_status === 'finding_rider' && hb.isOver48h) {
+                               return (
+                                 <div className="group/unverified relative bg-amber-500/10 border-2 border-amber-500/40 text-amber-500 px-2.5 py-1 rounded-full flex items-center gap-1 cursor-help transition-all duration-300 hover:bg-amber-500/20">
+                                   <span className="text-[9px] font-black uppercase tracking-widest italic flex items-center gap-1">
+                                     ⚠️ Unverified Shop Response
+                                   </span>
+                                   <div className="absolute left-1/2 bottom-full mb-2 -translate-x-1/2 w-64 bg-zinc-950 border border-amber-500/50 text-amber-300 text-[11px] p-3 rounded-xl shadow-2xl opacity-0 scale-95 pointer-events-none group-hover/unverified:opacity-100 group-hover/unverified:scale-100 transition-all duration-200 z-[100] font-sans font-medium text-center leading-normal">
+                                     The merchant hasn't registered a device heartbeat in 48 hours. Please confirm they are open via phone before traveling.
+                                   </div>
+                                 </div>
+                               );
+                             }
+                             return null;
+                           })()}
                            {order.match_score && (
                              <div className="bg-[#f59e0b]/5 border border-[#f59e0b]/20 px-3 py-1 rounded-full">
                                <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest italic">
@@ -2319,9 +2419,22 @@ const OrdersFeed = React.memo(({
                               <ArrowRight size={8} className="text-zinc-500" />
                            </div>
                         </div>
-                        <h3 className="text-2xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2">
-                          {order.restaurant_name || 'Merchant-X'}
-                        </h3>
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <h3 className="text-2xl font-headline font-black italic text-white uppercase tracking-tight leading-none">
+                            {order.restaurant_name || 'Merchant-X'}
+                          </h3>
+                          {(() => {
+                            const hb = getMerchantHeartbeatStatus(order.shop_updated_at);
+                            return (
+                              <div className="flex items-center gap-1.5 bg-zinc-900/60 border border-white/5 py-0.5 px-2 rounded-full">
+                                <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", hb.dotColorClass)} />
+                                <span className={cn("text-[8.5px] font-black uppercase tracking-wider font-sans", hb.colorClass)}>
+                                  {hb.durationText}
+                                </span>
+                              </div>
+                            );
+                          })()}
+                        </div>
                         <div className="flex flex-col gap-1.5">
                           <div className="flex items-center gap-2 text-zinc-400">
                             <MapPin className="w-4 h-4 text-[#f59e0b] shrink-0" />
@@ -3239,10 +3352,26 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex flex-col min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 mb-1">
-                <div className={cn("px-1 py-0.5 rounded text-[8px] font-black tracking-tighter uppercase bg-transparent", isPickedUp ? "text-emerald-500" : "text-[#f59e0b]")}>
+              <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                <div className={cn("px-1 py-0.5 rounded text-[8px] font-black tracking-tighter uppercase bg-transparent shrink-0", isPickedUp ? "text-emerald-500" : "text-[#f59e0b]")}>
                   • {isPickedUp ? 'DELIVERING' : 'HEADING TO PICK UP'}
                 </div>
+                {currentOrder.restaurant_name && (
+                  <div className="flex items-center gap-1.5 bg-zinc-900/60 border border-white/5 py-0.5 px-2 rounded-full shrink-0">
+                    <span className="text-[8px] font-black uppercase text-zinc-300">{currentOrder.restaurant_name}</span>
+                    {(() => {
+                      const hb = getMerchantHeartbeatStatus(currentOrder.shop_updated_at);
+                      return (
+                        <div className="flex items-center gap-1">
+                          <span className={cn("w-1 h-1 rounded-full shrink-0", hb.dotColorClass)} />
+                          <span className={cn("text-[7.5px] font-bold uppercase tracking-wider font-sans", hb.colorClass)}>
+                            {hb.durationText}
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
               </div>
               <h2 className="text-lg font-headline font-black italic text-white uppercase tracking-tight truncate leading-none">
                 {targetAddress || 'ADDRESS LOCK'}
@@ -6086,6 +6215,7 @@ export function App() {
                 created_at: new Date().toISOString(),
                 restaurant_name: 'Test Burger Hub',
                 shop_id: 's1',
+                shop_updated_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 mins ago (Live green indicator)
                 distance_km: 2.3,
                 lat: -25.9933,
                 lng: 28.2125,
@@ -6112,6 +6242,7 @@ export function App() {
                 created_at: new Date().toISOString(),
                 restaurant_name: 'Flame Grill Chicken',
                 shop_id: 's2',
+                shop_updated_at: new Date(Date.now() - 28 * 60 * 60 * 1000).toISOString(), // 28 hours ago (Quiet amber indicator)
                 distance_km: 4.1,
                 lat: -25.9890,
                 lng: 28.2250,
@@ -6138,6 +6269,7 @@ export function App() {
                 created_at: new Date().toISOString(),
                 restaurant_name: 'Dlamini Traditional Kitchen',
                 shop_id: 's3',
+                shop_updated_at: new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString(), // 3 days ago (> 48 hours, triggers Unverified Shop Warning badge)
                 distance_km: 1.8,
                 lat: -25.9950,
                 lng: 28.2190,
@@ -6200,7 +6332,7 @@ export function App() {
         const { data, error } = await fetchWithRetry(async () => {
           const res = await getSupabase()
             .from('orders')
-            .select('*, shops(name, allow_external_riders, cash_trust_enabled)')
+            .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
             .eq('delivery_status', 'finding_rider')
             .order('created_at', { ascending: false })
             .limit(50);
@@ -6213,7 +6345,7 @@ export function App() {
           const { data } = await fetchWithRetry(async () => {
             const res = await getSupabase()
               .from('orders')
-              .select('*, shops(name)')
+              .select('*, shops(name, updated_at)')
               .eq('delivery_status', 'finding_rider')
               .order('created_at', { ascending: false })
               .limit(50);
@@ -6257,12 +6389,13 @@ export function App() {
               : dbAutoLook;
 
             const finalDispatchToMarketplace = dispatchToMarketplace[item.id] !== undefined
-              ? dispatchToMarketplace[item.id]
-              : dbDispatchToMarketplace;
+               ? dispatchToMarketplace[item.id]
+               : dbDispatchToMarketplace;
 
             return {
               ...item,
               restaurant_name: shopsObj?.name || 'Authorized Merchant',
+              shop_updated_at: shopsObj?.updated_at || item.shop_updated_at,
               distance_km: item.distance_km || haversineDistance(riderLat, riderLng, shopLat, shopLng),
               allow_external_riders: finalAllowExternal,
               cash_trust_enabled: finalCashTrust,
@@ -6339,22 +6472,61 @@ export function App() {
         return;
       }
       // Active Orders
-      const { data: active } = await fetchWithRetry(async () => {
-        const res = await getSupabase()
-          .from('orders')
-          .select('*, restaurant_name')
-          .eq('rider_id', user.id)
-          .in('delivery_status', ['accepted', 'picked_up'])
-          .neq('status', 'completed')
-          .neq('status', 'cancelled');
-        return res as unknown as { data: DeliveryOrder[] | null; error: Error | null };
-      }, 2, 1000, 8000); // 2 retries, 8s timeout
+      let active: Record<string, unknown>[] | null = null;
+      try {
+        const { data } = await fetchWithRetry(async () => {
+          const res = await getSupabase()
+            .from('orders')
+            .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
+            .eq('rider_id', user.id)
+            .in('delivery_status', ['accepted', 'picked_up'])
+            .neq('status', 'completed')
+            .neq('status', 'cancelled');
+          return res;
+        }, 2, 1000, 8000);
+        active = data as Record<string, unknown>[] | null;
+      } catch {
+        try {
+          const { data } = await fetchWithRetry(async () => {
+            const res = await getSupabase()
+              .from('orders')
+              .select('*, shops(name, updated_at)')
+              .eq('rider_id', user.id)
+              .in('delivery_status', ['accepted', 'picked_up'])
+              .neq('status', 'completed')
+              .neq('status', 'cancelled');
+            return res;
+          }, 2, 1000, 8000);
+          active = data as Record<string, unknown>[] | null;
+        } catch {
+          try {
+            const { data } = await fetchWithRetry(async () => {
+              const res = await getSupabase()
+                .from('orders')
+                .select('*, restaurant_name')
+                .eq('rider_id', user.id)
+                .in('delivery_status', ['accepted', 'picked_up'])
+                .neq('status', 'completed')
+                .neq('status', 'cancelled');
+              return res;
+            }, 2, 1000, 8000);
+            active = data as Record<string, unknown>[] | null;
+          } catch (e2) {
+            console.warn('Quietly handling standby on secondary fallback active order query:', e2);
+          }
+        }
+      }
       
       if (active) {
-        setActiveOrders(active.map(order => ({
-          ...order,
-          restaurant_name: order.restaurant_name || 'Local Merchant'
-        })) as DeliveryOrder[]);
+        setActiveOrders(active.map(order => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const shopsObj = Array.isArray(order.shops) ? order.shops[0] : (order.shops as any);
+          return {
+            ...order,
+            restaurant_name: shopsObj?.name || (order.restaurant_name as string) || 'Local Merchant',
+            shop_updated_at: shopsObj?.updated_at || (order.shop_updated_at as string)
+          } as unknown as DeliveryOrder;
+        }));
       } else {
         setActiveOrders([]);
       }

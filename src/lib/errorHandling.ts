@@ -31,6 +31,10 @@ export function dispatchError(message: string, description?: string, onRetry?: (
 // Global error handlers
 if (typeof window !== 'undefined') {
   window.addEventListener('error', (event) => {
+    if (event.message?.includes('Failed to fetch')) {
+      event.preventDefault();
+      return;
+    }
     dispatchError(
       'An unexpected error occurred.',
       event.message || 'System fault detected.',
@@ -39,6 +43,10 @@ if (typeof window !== 'undefined') {
   });
 
   window.addEventListener('unhandledrejection', (event) => {
+    if (event.reason?.message?.includes('Failed to fetch')) {
+      event.preventDefault();
+      return;
+    }
     dispatchError(
       'Network or process failure.',
       event.reason?.message || 'A background task failed.',

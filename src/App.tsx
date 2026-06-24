@@ -50,6 +50,7 @@ import {
   Link2,
   Radar,
   WifiOff,
+  RefreshCw,
   Activity,
   Plus,
   Rocket,
@@ -458,7 +459,7 @@ const StatusBadge = React.memo(({ status }: { status: DeliveryStatus }) => {
         transition={{ duration: 0.2, ease: "easeOut" }}
         className={cn("text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border italic inline-block", styles[status])}
       >
-        {status.replace('_', ' ')}
+        {(status || '').replace('_', ' ')}
       </motion.span>
     </AnimatePresence>
   );
@@ -1086,10 +1087,14 @@ const DashboardWeather = React.memo(({
     } catch (e) {
       console.warn("Weather API unreachable:", e);
       setLastSyncFailed(true);
-      toast.error("Weather sensor connection offline", {
-        description: "Displaying cached local meteorological coordinates. Standing by for reconnect...",
-        duration: 4000
-      });
+      const isSimulatedOffline = localStorage.getItem('localeats_force_offline') === 'true';
+      const isSystemOffline = !navigator.onLine;
+      if (!isSimulatedOffline && !isSystemOffline) {
+        toast.error("Weather sensor connection offline", {
+          description: "Displaying cached local meteorological coordinates. Standing by for reconnect...",
+          duration: 4000
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -1453,10 +1458,10 @@ const Dashboard = React.memo(({
   }, [todayEarnings, totalDeliveries, profile.active_points, rank.title]);
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
-      <header className="flex flex-col gap-1 pt-2 opacity-90 transition-all">
+    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
+      <header className="flex flex-col gap-1 pt-1 opacity-90 transition-all">
         <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-1">{region.heroText}</span>
-        <h1 className="text-3xl font-headline font-black tracking-tight text-white leading-none whitespace-normal">
+        <h1 className="text-xl xs:text-2xl sm:text-3xl font-headline font-black tracking-tight text-white leading-none whitespace-normal">
           {region.greetingTitle}
         </h1>
       </header>
@@ -1969,7 +1974,7 @@ const OrdersFeed = React.memo(({
   };
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
+    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
       {isExtremeWeather && (
         <div className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-[2rem] flex items-center gap-3.5 mb-2 shadow-[0_0_20px_rgba(239,68,68,0.05)] animate-pulse">
           <div className="w-9 h-9 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0">
@@ -1987,9 +1992,9 @@ const OrdersFeed = React.memo(({
           </div>
         </div>
       )}
-      <header className="flex flex-col gap-4 pt-6">
-        <div className="flex items-center justify-between">
-           <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Rider Marketplace Feed</h2>
+      <header className="flex flex-col gap-4 pt-2">
+        <div className="flex items-center justify-between gap-2">
+           <h2 className="text-xl xs:text-2xl sm:text-3xl md:text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Rider Marketplace Feed</h2>
            <div className="flex items-center gap-2">
               <button 
                 onClick={() => setShowNearbyMap(!showNearbyMap)}
@@ -3252,53 +3257,53 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
         )}
 
         {/* Need Help & Close Grouped Buttons */}
-        <div className="absolute right-6 top-1/2 -translate-y-[100px] z-[70] pointer-events-auto flex flex-col items-center gap-4">
+        <div className="absolute right-3 md:right-6 top-24 md:top-1/2 md:-translate-y-[120px] z-[70] pointer-events-auto flex flex-col items-center gap-2 md:gap-3.5 max-h-[70vh] overflow-y-auto no-scrollbar py-2">
           <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => handleStartNav(e, 'google')}>
-             <div className="w-12 h-12 rounded-full bg-[#4285F4] shadow-[0_0_15px_#4285F4]/50 flex items-center justify-center mb-1 hover:brightness-110 active:scale-95 transition-all">
-                <Navigation className="w-5 h-5 text-white fill-white" />
+             <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-[#4285F4] shadow-[0_0_15px_#4285F4]/40 flex items-center justify-center mb-0.5 md:mb-1 hover:brightness-110 active:scale-95 transition-all">
+                <Navigation className="w-4.5 h-4.5 md:w-5 md:h-5 text-white fill-white" />
              </div>
-             <span className="text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest">MAPS</span>
+             <span className="text-[7px] md:text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest leading-none">MAPS</span>
           </div>
 
           <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => handleStartNav(e, 'waze')}>
-             <div className="w-12 h-12 rounded-full bg-cyan-500 shadow-[0_0_15px_rgb(6,182,212)]/50 flex items-center justify-center mb-1 hover:brightness-110 active:scale-95 transition-all">
-                <Navigation className="w-5 h-5 text-white fill-white" />
+             <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-cyan-500 shadow-[0_0_15px_rgb(6,182,212)]/50 flex items-center justify-center mb-0.5 md:mb-1 hover:brightness-110 active:scale-95 transition-all">
+                <Navigation className="w-4.5 h-4.5 md:w-5 md:h-5 text-white fill-white" />
              </div>
-             <span className="text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest">WAZE</span>
+             <span className="text-[7px] md:text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest leading-none">WAZE</span>
           </div>
 
           {isPickedUp && (
             <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); if(onShowTracking) onShowTracking(currentOrder.id); }}>
-               <div className="w-12 h-12 rounded-full bg-emerald-600 shadow-[0_0_15px_rgba(16,185,129,0.5)] flex items-center justify-center mb-1 hover:bg-emerald-500 active:scale-95 transition-all">
-                  <Radar className="w-5 h-5 text-white animate-spin-slow" />
+               <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-emerald-600 shadow-[0_0_15px_rgba(16,185,129,0.5)] flex items-center justify-center mb-0.5 md:mb-1 hover:bg-emerald-500 active:scale-95 transition-all">
+                  <Radar className="w-4.5 h-4.5 md:w-5 md:h-5 text-white animate-spin-slow" />
                </div>
-               <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">SHARE</span>
+               <span className="text-[7px] md:text-[8px] font-black text-emerald-500 uppercase tracking-widest leading-none">SHARE</span>
             </div>
           )}
 
           <div className="flex flex-col items-center group cursor-pointer" onClick={() => { if(onScreenTap) onScreenTap(); }}>
-             <div className="w-12 h-12 rounded-full bg-black/80 backdrop-blur-xl border border-white/10 flex items-center justify-center mb-1 group-hover:border-white/30 transition-all">
-                <X className="w-6 h-6 text-white" />
+             <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-black/80 backdrop-blur-xl border border-white/10 flex items-center justify-center mb-0.5 md:mb-1 group-hover:border-white/30 transition-all">
+                <X className="w-5 h-5 md:w-6 md:h-6 text-white" />
              </div>
-             <span className="text-[8px] font-black text-white/40 uppercase tracking-widest">CLOSE</span>
+             <span className="text-[7px] md:text-[8px] font-black text-white/40 uppercase tracking-widest leading-none">CLOSE</span>
           </div>
 
           <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); optimizeRoute(); }}>
-             <div className="w-12 h-12 rounded-full bg-zinc-900/80 backdrop-blur-xl border border-[#f59e0b]/40 flex items-center justify-center mb-1 group-hover:bg-[#f59e0b] group-hover:text-black transition-all">
-                <Zap className="w-5 h-5 text-[#f59e0b] group-hover:text-black" />
+             <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-zinc-900/80 backdrop-blur-xl border border-[#f59e0b]/40 flex items-center justify-center mb-0.5 md:mb-1 group-hover:bg-[#f59e0b] group-hover:text-black transition-all">
+                <Zap className="w-4.5 h-4.5 md:w-5 md:h-5 text-[#f59e0b] group-hover:text-black" />
              </div>
-             <span className="text-[8px] font-black text-[#f59e0b] uppercase tracking-widest">OPTIMIZE</span>
+             <span className="text-[7px] md:text-[8px] font-black text-[#f59e0b] uppercase tracking-widest leading-none">OPTIMIZE</span>
           </div>
 
           {isVoiceSupported && (
             <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); startListening(); }}>
                <div className={cn(
-                 "w-12 h-12 rounded-full border flex items-center justify-center mb-1 transition-all",
+                 "w-10 h-10 md:w-12 md:h-12 rounded-full border flex items-center justify-center mb-0.5 md:mb-1 transition-all",
                  isListening ? "bg-red-500 border-red-400 animate-pulse" : "bg-black/80 backdrop-blur-xl border-white/10"
                )}>
-                  {isListening ? <Mic className="w-5 h-5 text-white" /> : <MicOff className="w-5 h-5 text-white" />}
+                  {isListening ? <Mic className="w-4.5 h-4.5 md:w-5 md:h-5 text-white" /> : <MicOff className="w-4.5 h-4.5 md:w-5 md:h-5 text-white" />}
                </div>
-               <span className={cn("text-[8px] font-black uppercase tracking-widest", isListening ? "text-red-500" : "text-white/40")}>
+               <span className={cn("text-[7px] md:text-[8px] font-black uppercase tracking-widest leading-none", isListening ? "text-red-500" : "text-white/40")}>
                  {isListening ? 'LISTENING' : 'VOICE'}
                </span>
             </div>
@@ -3306,9 +3311,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
           <button 
             onClick={(e) => { e.stopPropagation(); toast('Support link activated. Connecting to HQ...'); }}
-            className="bg-black/60 backdrop-blur-md border border-white/10 text-white font-black text-[9px] px-4 py-2 rounded-full shadow-2xl active:scale-95 transition-all uppercase tracking-[0.2em] hover:bg-zinc-800"
+            className="bg-black/80 backdrop-blur-md border border-white/10 text-white font-black text-[8px] md:text-[9px] px-3 md:px-4 py-1.5 md:py-2 rounded-full shadow-2xl active:scale-95 transition-all uppercase tracking-[0.2em] hover:bg-zinc-800 leading-none"
           >
-            NEED HELP?
+            HELP
           </button>
         </div>
       </div>
@@ -3490,7 +3495,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   <button 
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, I'm your LocalEats rider. I've picked up your order and I'm heading your way! You can track my live location here: https://localeats.co.za/track/${currentOrder.id}`;
-                      window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
                       toast.success("Notice: Delivery tracking link shared via WhatsApp.");
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
@@ -3501,7 +3506,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   <button 
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, your LocalEats order has arrived! I am outside.`;
-                      window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
                       toast.success("Notice: Arrival warning shared.");
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-zinc-805 hover:bg-zinc-700 text-white border border-zinc-700 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
@@ -3513,7 +3518,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   <button 
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, I am approaching your area. Could you please send me a quick WhatsApp location Pin or describe your gate/house to help me find you? Thanks!`;
-                      window.open(`https://wa.me/${currentOrder.phone.replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
                       toast.success("Notice: Location pin requested to save airtime.");
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
@@ -3836,10 +3841,10 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
   const goalProgressPercent = Math.min(100, Math.round((totals.totalEarned / customGoal) * 100));
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
-      <header className="pt-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
+      <header className="pt-2 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h2 className="text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Activity Ledger</h2>
+          <h2 className="text-xl xs:text-2xl sm:text-3xl md:text-4xl font-headline font-black italic uppercase tracking-tighter text-white mb-2">Activity Ledger</h2>
           <div className="flex items-center gap-3">
              <p className="text-[11px] text-zinc-500 font-black uppercase tracking-[0.3em] flex items-center gap-2 italic">
                Earnings Audit • Active Sector
@@ -4411,7 +4416,9 @@ const ProfileView = React.memo(({
   notificationTitle,
   onUpdateNotificationTitle,
   notificationBody,
-  onUpdateNotificationBody
+  onUpdateNotificationBody,
+  onShowOnboarding,
+  onShowLegal
 }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
@@ -4428,7 +4435,9 @@ const ProfileView = React.memo(({
   notificationTitle: string,
   onUpdateNotificationTitle: (title: string) => void,
   notificationBody: string,
-  onUpdateNotificationBody: (body: string) => void
+  onUpdateNotificationBody: (body: string) => void,
+  onShowOnboarding?: () => void,
+  onShowLegal?: () => void
 }) => {
   const [localAvatar, setLocalAvatar] = useState(() => localStorage.getItem(`localeats_avatar_${profile.id}`) || profile.photo_url || '');
   const [editingAvatar, setEditingAvatar] = useState(false);
@@ -4655,7 +4664,7 @@ const ProfileView = React.memo(({
   };
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
+    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
       <div className="flex items-center justify-between pt-1 w-full">
         <button 
           onClick={onBack}
@@ -5049,6 +5058,50 @@ const ProfileView = React.memo(({
                 "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
                 isHighContrastMode ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
               )} />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Support & Privacy Section */}
+      <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Support & Privacy</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-zinc-850 rounded-xl text-[#f59e0b]">
+                <HelpCircle className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col text-left">
+                <span className="text-xs font-bold text-white font-sans">Operator Manual & Tour</span>
+                <span className="text-[10px] text-zinc-500 font-sans mt-0.5 leading-tight">View system documentation and complete the user tour</span>
+              </div>
+            </div>
+            <button 
+              onClick={onShowOnboarding}
+              className="px-4.5 py-2.5 bg-zinc-850 hover:bg-zinc-800 text-[10px] font-black uppercase text-[#f59e0b] rounded-xl active:scale-95 transition-all shrink-0 font-bold"
+            >
+              Open Guide
+            </button>
+          </div>
+
+          <div className="h-px bg-zinc-800/80 w-full" />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-zinc-850 rounded-xl text-zinc-400">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div className="flex flex-col text-left">
+                <span className="text-xs font-bold text-white font-sans">POPIA & Legal Compliance</span>
+                <span className="text-[10px] text-zinc-500 font-sans mt-0.5 leading-tight">Review personal data usage and regulatory terms</span>
+              </div>
+            </div>
+            <button 
+              onClick={onShowLegal}
+              className="px-4.5 py-2.5 bg-zinc-850 hover:bg-zinc-800 text-[10px] font-black uppercase text-zinc-400 hover:text-white rounded-xl active:scale-95 transition-all shrink-0 font-bold"
+            >
+              View Legal
             </button>
           </div>
         </div>
@@ -5562,7 +5615,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId:
             <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">Order ID: {order.id.slice(-8).toUpperCase()}</p>
           </div>
           <div className="bg-[#f59e0b]/10 px-3 py-1 rounded-full border border-[#f59e0b]/20">
-            <span className="text-[9px] font-black text-[#f59e0b] uppercase">{order.delivery_status.replace('_', ' ')}</span>
+            <span className="text-[9px] font-black text-[#f59e0b] uppercase">{(order.delivery_status || '').replace('_', ' ')}</span>
           </div>
         </div>
       </div>
@@ -5798,6 +5851,74 @@ export function App() {
   const [notificationTitle, setNotificationTitle] = useState(() => localStorage.getItem('localeats_noti_title') || 'New Order');
   const [notificationBody, setNotificationBody] = useState(() => localStorage.getItem('localeats_noti_body') || 'A new order is available in your area.');
 
+  const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
+  const [isHudExpanded, setIsHudExpanded] = useState(false);
+  const [cachedTileCount, setCachedTileCount] = useState<number>(0);
+  const [cachedSizeStr, setCachedSizeStr] = useState<string>('0.0 MB');
+  const [orderQueueCount, setOrderQueueCount] = useState(0);
+  const [locQueueCount, setLocQueueCount] = useState(0);
+
+  const updateCacheMetricsInApp = useCallback(async () => {
+    if (!('caches' in window)) return;
+    try {
+      const cache = await caches.open('localeats-map-tiles-v1');
+      const keys = await cache.keys();
+      setCachedTileCount(keys.length);
+      const sizeMB = (keys.length * 28) / 1024;
+      setCachedSizeStr(sizeMB < 0.1 ? '0.0 MB' : `${sizeMB.toFixed(1)} MB`);
+    } catch (e) {
+      console.warn("Could not read cache metrics in App", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    updateCacheMetricsInApp();
+    const interval = setInterval(updateCacheMetricsInApp, 5000);
+    return () => clearInterval(interval);
+  }, [updateCacheMetricsInApp]);
+
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const val = localStorage.getItem('localeats_force_offline') === 'true';
+      setForceOffline(val);
+      
+      try {
+        const oQueue = JSON.parse(localStorage.getItem('order_sync_queue') || '[]');
+        setOrderQueueCount(Array.isArray(oQueue) ? oQueue.length : 0);
+      } catch {
+        setOrderQueueCount(0);
+      }
+      try {
+        const lQueue = JSON.parse(localStorage.getItem('loc_sync_queue') || '[]');
+        setLocQueueCount(Array.isArray(lQueue) ? lQueue.length : 0);
+      } catch {
+        setLocQueueCount(0);
+      }
+    };
+    handleStorageChange();
+    window.addEventListener('storage', handleStorageChange);
+    const interval = setInterval(handleStorageChange, 1000);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleToggleForceOffline = useCallback(() => {
+    setForceOffline(prev => {
+      const newVal = !prev;
+      localStorage.setItem('localeats_force_offline', newVal.toString());
+      if (newVal) {
+        setDismissedOfflineBanner(false);
+        toast.info("Offline Map Relay ACTIVE. Map tiles will lock to local browser cache.");
+      } else {
+        toast.success("Grid Uplink Active. Map tiles restoring hybrid live network load.");
+      }
+      window.dispatchEvent(new Event('storage'));
+      return newVal;
+    });
+  }, []);
+
   const toggleEcoMode = useCallback(() => {
     setIsEcoMode(prev => {
       const newVal = !prev;
@@ -5818,6 +5939,12 @@ export function App() {
     });
   }, []);
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
+  const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
+  
+  const visibleAvailableOrders = useMemo(() => {
+    return availableOrders.filter(o => !declinedOrderIds.includes(o.id));
+  }, [availableOrders, declinedOrderIds]);
+
   const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
     const saved = localStorage.getItem('localeats_active_orders');
     return safeJsonParse<DeliveryOrder[]>(saved, []);
@@ -5966,12 +6093,12 @@ export function App() {
     const handleOnline = () => {
       setIsOffline(false);
       setDismissedOfflineBanner(false);
-      toast.success('Connection restored.');
+      // toast.success('Connection restored.');
     };
     const handleOffline = () => {
       setIsOffline(true);
       setDismissedOfflineBanner(false);
-      toast.error('Connection lost.');
+      // toast.error('Connection lost.');
     };
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -6908,7 +7035,11 @@ export function App() {
           // Fallback logic for GPS signal failure in high-density areas (Kopanong / Ivory Park Ext)
           if (err.code === 1) { // Permission Denied
              addBootLog('ERROR: GPS_PERM_DENIED');
-             toast.error('Location error. Using offline fallback mode.', { id: 'gps-error' });
+             const _isSysOffline = !navigator.onLine;
+             const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
+             if (!_isSysOffline && !_isSimOffline) {
+               toast.error('Location error. Using offline fallback mode.', { id: 'gps-error' });
+             }
           } else if (err.code === 2) { // Position Unavailable
              addBootLog('SIGNAL_LOST: HIGH_DENSITY_INTERFERENCE');
              toast.warning('SIGNAL INTERFERENCE: TRIANGULATING...', { id: 'gps-warning' });
@@ -7294,10 +7425,14 @@ export function App() {
         
         localStorage.setItem('order_sync_queue', JSON.stringify(filteredQueue));
         
-        toast.info("offline: State cached locally. Syncing when connection restores.", {
-          duration: 6000,
-          id: 'status-updating'
-        });
+        const _isSysOffline = !navigator.onLine;
+        const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
+        if (!_isSysOffline && !_isSimOffline) {
+          toast.info("offline: State cached locally. Syncing when connection restores.", {
+            duration: 6000,
+            id: 'status-updating'
+          });
+        }
       } catch (storageErr) {
         console.error("Failed to queue offline state change", storageErr);
         toast.error("Could not save locally. Using temporary memory.", { id: 'status-updating' });
@@ -7415,9 +7550,13 @@ export function App() {
        }, 3, 1000, 10000);
       if (error) {
         console.warn('Failed to sync system status with active database range:', error);
-        toast.info("Database write bypassed (Local Fallback)", {
-          description: "Online state updated locally. You are ready for live dispatch simulations."
-        });
+        const _isSysOffline = !navigator.onLine;
+        const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
+        if (!_isSysOffline && !_isSimOffline) {
+          toast.info("Database write bypassed (Local Fallback)", {
+            description: "Online state updated locally. You are ready for live dispatch simulations."
+          });
+        }
       } else {
         if (newStatus) {
           toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
@@ -7427,9 +7566,13 @@ export function App() {
       }
     } catch (e: unknown) {
       console.warn('Online status sync exception, falling back:', e);
-      toast.info("Database connection bypassed (Local Fallback)", {
-        description: "Your session state has been initialized successfully."
-      });
+      const _isSysOffline = !navigator.onLine;
+      const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
+      if (!_isSysOffline && !_isSimOffline) {
+        toast.info("Database connection bypassed (Local Fallback)", {
+          description: "Your session state has been initialized successfully."
+        });
+      }
     }
   }, [profile, user]);
 
@@ -7777,30 +7920,102 @@ export function App() {
     )}>
       <Toaster position="top-center" theme="dark" richColors />
       
-      {/* IMPROVEMENT #9 — Offline Detection Banner */}
+      {/* IMPROVEMENT #9 — Offline Detection Banner & HUD */}
       <AnimatePresence>
-        {isOffline && !dismissedOfflineBanner && (
+        {(isOffline || forceOffline) && !dismissedOfflineBanner && (
           <motion.div 
             initial={{ y: -100 }}
             animate={{ y: 0 }}
             exit={{ y: -100 }}
-            whileDrag={{ scale: 0.96 }}
-            drag="x"
-            dragConstraints={{ left: 0, right: 0 }}
-            dragElastic={0.7}
-            onDragEnd={(event, info) => {
-              if (Math.abs(info.offset.x) > 120) {
-                setDismissedOfflineBanner(true);
-                toast.info("Offline warning dismissed. Standing by...");
-              }
-            }}
-            className="fixed top-0 left-0 right-0 z-[1100] bg-red-600/95 text-white py-3.5 px-6 flex items-center justify-between gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl cursor-grab active:cursor-grabbing select-none"
+            className="fixed top-0 left-0 right-0 z-[1100] flex flex-col items-center pointer-events-none"
           >
-            <div className="flex items-center gap-3">
-              <WifiOff className="w-4 h-4 animate-pulse" />
-              <span>Lost connection. Trying to reconnect...</span>
+            {/* Top Bar Indicator */}
+            <div 
+              className={cn(
+                "w-full py-2.5 px-6 flex items-center justify-between gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl pointer-events-auto cursor-pointer select-none transition-colors duration-300",
+                forceOffline ? "bg-[#f59e0b]/95 text-black" : "bg-red-600/95 text-white"
+              )}
+              onClick={() => setIsHudExpanded(!isHudExpanded)}
+            >
+              <div className="flex items-center gap-3">
+                <WifiOff className={cn("w-4 h-4", !forceOffline && "animate-pulse")} />
+                <span>
+                  {forceOffline ? "Simulated Offline Mode" : "Lost connection. Reconnecting..."}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {(orderQueueCount > 0 || locQueueCount > 0) && (
+                  <span className={cn(
+                    "px-2 py-0.5 rounded-full text-[8px]", 
+                    forceOffline ? "bg-black/20" : "bg-black/30"
+                  )}>
+                    {orderQueueCount + locQueueCount} Pending
+                  </span>
+                )}
+                {isHudExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </div>
             </div>
-            <span className="text-[8px] font-sans text-white/50 lowercase tracking-normal">Swipe left/right to dismiss</span>
+
+            {/* Expanded HUD Details */}
+            <AnimatePresence>
+              {isHudExpanded && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="bg-zinc-900 border border-zinc-800 shadow-2xl rounded-b-3xl w-full max-w-md mx-auto overflow-hidden pointer-events-auto"
+                >
+                  <div className="p-5 grid grid-cols-2 gap-4 border-b border-zinc-800">
+                    <div className="bg-black/50 p-3 rounded-xl border border-zinc-800/50">
+                      <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Queued Orders</p>
+                      <p className="text-xl font-mono text-white">{orderQueueCount}</p>
+                    </div>
+                    <div className="bg-black/50 p-3 rounded-xl border border-zinc-800/50">
+                      <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Queued Locations</p>
+                      <p className="text-xl font-mono text-white">{locQueueCount}</p>
+                    </div>
+                    <div className="col-span-2 bg-black/50 p-3 rounded-xl border border-zinc-800/50 flex items-center justify-between">
+                      <div>
+                        <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Map Tile Cache</p>
+                        <p className="text-xs font-mono text-white">{cachedTileCount} Tiles ({cachedSizeStr})</p>
+                      </div>
+                      <Database className="w-5 h-5 text-emerald-500 opacity-50" />
+                    </div>
+                  </div>
+                  <div className="p-3 flex gap-2">
+                    <button 
+                      onClick={() => {
+                        setDismissedOfflineBanner(true);
+                        toast.info("Offline warning dismissed. Standing by...");
+                      }}
+                      className="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-black uppercase text-[9px] tracking-widest rounded-lg transition-colors"
+                    >
+                      Dismiss
+                    </button>
+                    {!isOffline && forceOffline && (
+                      <button 
+                        onClick={handleToggleForceOffline}
+                        className="flex-1 py-2.5 bg-[#f59e0b] hover:bg-[#d98a0b] text-black font-black uppercase text-[9px] tracking-widest rounded-lg transition-colors"
+                      >
+                        Restore Uplink
+                      </button>
+                    )}
+                    {(orderQueueCount > 0 || locQueueCount > 0) && (
+                      <button 
+                        onClick={() => {
+                          syncOrderStateQueue();
+                          syncLocationQueue();
+                          toast.info("Forcing sync of local queues...");
+                        }}
+                        className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase text-[9px] tracking-widest rounded-lg transition-colors flex items-center justify-center gap-2"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Sync
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
@@ -8027,15 +8242,28 @@ export function App() {
         
         {/* Mission Pulse Overlay */}
         <AnimatePresence>
-          {profile?.is_online && availableOrders.length > 0 && activeOrders.length === 0 && view !== 'orders' && (
+          {profile?.is_online && visibleAvailableOrders.length > 0 && activeOrders.length === 0 && view !== 'orders' && (
             <motion.div
               initial={{ y: "100%", opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: "100%", opacity: 0 }}
               className="fixed bottom-28 left-4 right-4 pointer-events-auto z-[200]"
             >
-              <BentoCard glow className="bg-black/95 backdrop-blur-3xl border-2 border-[#f59e0b] p-6 shadow-[0_0_80px_rgba(57,255,20,0.3)] ring-1 ring-white/10">
-                <div className="flex items-start justify-between mb-6">
+              <BentoCard glow className="bg-black/95 backdrop-blur-3xl border-2 border-[#f59e0b] p-6 shadow-[0_0_80px_rgba(57,255,20,0.3)] ring-1 ring-white/10 relative">
+                {/* Dismiss Button in top corner */}
+                <button 
+                  onClick={() => {
+                    const orderId = visibleAvailableOrders[0].id;
+                    setDeclinedOrderIds(prev => [...prev, orderId]);
+                    toast.info("Order dismissed.");
+                  }}
+                  className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors p-1.5 rounded-full hover:bg-zinc-900 border border-transparent hover:border-zinc-850"
+                  title="Dismiss order request"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                <div className="flex items-start justify-between mb-6 pr-8">
                   <div className="flex items-center gap-4">
                     <div className="p-4 bg-[#f59e0b] rounded-2xl animate-pulse shadow-[0_0_20px_#f59e0b]">
                       <Zap className="w-8 h-8 text-black" />
@@ -8043,15 +8271,15 @@ export function App() {
                     <div>
                       <h3 className="text-[10px] font-black uppercase text-[#f59e0b] tracking-[0.4em] mb-1">Drop-Off Protocol</h3>
                       <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter truncate max-w-[200px]">
-                        {availableOrders[0].customer_name || availableOrders[0].product_name || 'Client'}
+                        {visibleAvailableOrders[0].customer_name || visibleAvailableOrders[0].product_name || 'Client'}
                       </p>
-                      <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{availableOrders[0].restaurant_name}</p>
+                      <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{visibleAvailableOrders[0].restaurant_name}</p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-1">Potential</p>
                     <p className="text-3xl font-mono font-bold text-white tracking-tighter">
-                      R{Number(availableOrders[0].delivery_fee || 0).toFixed(2)}
+                      R{Number(visibleAvailableOrders[0].delivery_fee || 0).toFixed(2)}
                     </p>
                   </div>
                 </div>
@@ -8059,23 +8287,37 @@ export function App() {
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">ETA Vector</span>
-                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor(Number(availableOrders[0].distance_km || 0) * 3))}:00 M</span>
+                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor(Number(visibleAvailableOrders[0].distance_km || 0) * 3))}:00 M</span>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-1">Range</span>
-                    <span className="text-xl font-mono font-bold text-white">{Number(availableOrders[0].distance_km || 0).toFixed(1)} KM</span>
+                    <span className="text-xl font-mono font-bold text-white">{Number(visibleAvailableOrders[0].distance_km || 0).toFixed(1)} KM</span>
                   </div>
                 </div>
 
-                <SwipeButton 
-                  label="SLIDE TO ACCEPT"
-                  onComplete={() => {
-                    handleOrderAccept(availableOrders[0].id);
-                    setView('move');
-                  }}
-                  color="#f59e0b"
-                  resetToken={availableOrders[0].id}
-                />
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button 
+                    onClick={() => {
+                      const orderId = visibleAvailableOrders[0].id;
+                      setDeclinedOrderIds(prev => [...prev, orderId]);
+                      toast.info("Order request ignored.");
+                    }}
+                    className="py-4 px-6 bg-zinc-900 border border-zinc-800 hover:border-red-500/30 text-zinc-400 hover:text-red-400 font-black uppercase tracking-[0.2em] text-xs rounded-2xl transition-all active:scale-95 flex items-center justify-center"
+                  >
+                    Decline
+                  </button>
+                  <div className="flex-1">
+                    <SwipeButton 
+                      label="SLIDE TO ACCEPT"
+                      onComplete={() => {
+                        handleOrderAccept(visibleAvailableOrders[0].id);
+                        setView('move');
+                      }}
+                      color="#f59e0b"
+                      resetToken={visibleAvailableOrders[0].id}
+                    />
+                  </div>
+                </div>
               </BentoCard>
             </motion.div>
           )}
@@ -8112,8 +8354,8 @@ export function App() {
                           </div>
                         </div>
                         <div className="flex items-center gap-6">
-                          <TelemetryData label="Destination" value={activeOrders[0].restaurant_name.split(' ')[0]} />
-                          <TelemetryData label="Status" value={activeOrders[0].delivery_status.replace('_', ' ').toUpperCase()} />
+                          <TelemetryData label="Destination" value={(activeOrders[0]?.restaurant_name || '').split(' ')[0]} />
+                          <TelemetryData label="Status" value={(activeOrders[0]?.delivery_status || '').replace('_', ' ').toUpperCase()} />
                         </div>
                         <button 
                           onClick={() => setView('move')}
@@ -8206,8 +8448,8 @@ export function App() {
                         </div>
                         <div className="flex items-center gap-6">
                            <TelemetryData label="Carrier" value={profile?.name || 'Unit-1'} />
-                           <TelemetryData label="Objective" value={activeOrders[0].delivery_status.replace('_', ' ').toUpperCase()} />
-                           <TelemetryData label="Payload" value={`R${Number(activeOrders[0].delivery_fee || 0).toFixed(0)}`} />
+                           <TelemetryData label="Objective" value={(activeOrders[0]?.delivery_status || '').replace('_', ' ').toUpperCase()} />
+                           <TelemetryData label="Payload" value={`R${Number(activeOrders[0]?.delivery_fee || 0).toFixed(0)}`} />
                         </div>
                         <button 
                           onClick={() => setView('move')}
@@ -8351,6 +8593,11 @@ export function App() {
                     setNotificationBody(body);
                     localStorage.setItem('localeats_noti_body', body);
                   }}
+                  onShowOnboarding={() => {
+                    setOnboardingMode('helphub');
+                    setShowOnboarding(true);
+                  }}
+                  onShowLegal={() => setShowLegalModal(true)}
                 />
                 <VoiceController 
                   isListening={isListening} 
@@ -8371,9 +8618,9 @@ export function App() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
             transition={{ duration: 0.2, ease: "easeOut" }}
-            className="sticky bottom-0 left-0 w-full p-4 md:p-6 pb-safe z-[60] pointer-events-auto bg-gradient-to-t from-black/80 to-transparent"
+            className="fixed bottom-0 left-0 w-full p-2 sm:p-4 md:p-6 pb-safe z-[60] pointer-events-auto bg-gradient-to-t from-black/80 to-transparent"
           >
-            <div className="max-w-md md:max-w-5xl mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-[2.5rem] p-2 flex items-center justify-between xl:justify-center xl:gap-10 shadow-2xl">
+            <div className="max-w-md md:max-w-5xl mx-auto bg-zinc-900/90 backdrop-blur-3xl border border-zinc-800/50 rounded-3xl sm:rounded-[2.5rem] p-1.5 sm:p-2 flex items-center justify-between xl:justify-center xl:gap-10 shadow-2xl">
               {[
                 { icon: BarChart3, label: 'HOME', view: 'dash' },
                 { icon: List, label: 'ORDERS', view: 'feed' },
@@ -8389,15 +8636,15 @@ export function App() {
                     id={`nav-${item.view}`}
                     onClick={() => setView(item.view as AppView)}
                     className={cn(
-                      "relative flex-1 flex flex-col items-center py-4 rounded-[2rem] transition-smooth", 
+                      "relative flex-1 flex flex-col items-center py-2.5 sm:py-4 rounded-2xl sm:rounded-[2rem] transition-smooth min-w-0", 
                       isActive 
                         ? "bg-[#f59e0b] text-zinc-950 shadow-xl shadow-[#f59e0b]/25 scale-105 font-bold" 
                         : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/20"
                     )}
                   >
                     {item.alert && <span className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(249,115,22,0.6)] animate-bounce" />}
-                    <item.icon size={18} className={cn("transition-transform duration-300", isActive && "fill-current scale-110")} />
-                    <span className="text-[9px] font-black uppercase mt-1.5 tracking-wider">{item.label}</span>
+                    <item.icon className={cn("w-4.5 h-4.5 sm:w-5 sm:h-5 transition-transform duration-300", isActive && "fill-current scale-110")} />
+                    <span className="hidden xs:block text-[8px] sm:text-[9px] font-black uppercase mt-1 sm:mt-1.5 tracking-wider truncate max-w-full px-0.5 leading-none">{item.label}</span>
                     {isActive && <motion.div layoutId="nav-glow" className="absolute -inset-1 bg-[#f59e0b]/25 blur-xl -z-10 rounded-full" />}
                   </button>
                 );
@@ -8406,51 +8653,6 @@ export function App() {
           </motion.nav>
         )}
       </AnimatePresence>
-
-      {/* Floating System Intel Manual Trigger (?) */}
-      <div 
-        className={cn(
-          "fixed right-6 z-[80] transition-all duration-300 md:right-8",
-          (view !== 'move' ? true : isGlobalNavVisible) ? "bottom-28" : "bottom-6"
-        )}
-      >
-        <button
-          onClick={() => {
-            setOnboardingMode('helphub');
-            setShowOnboarding(true);
-          }}
-          className="relative w-12 h-12 rounded-full bg-zinc-950/95 border border-[#f59e0b]/40 text-[#f59e0b] hover:bg-zinc-900 active:scale-95 transition-all shadow-[0_0_15px_rgba(245,158,11,0.2)] hover:shadow-[0_0_25px_rgba(245,158,11,0.45)] flex items-center justify-center group pointer-events-auto backdrop-blur-md"
-          title="Open System Manual & Tour"
-        >
-          {/* Subtle spinning outline */}
-          <div className="absolute inset-0 rounded-full border border-dashed border-[#f59e0b]/20 group-hover:rotate-45 transition-transform duration-500" />
-          
-          <HelpCircle size={20} className="stroke-[2.5] group-hover:scale-110 transition-transform" />
-          
-          {/* Active flashing signal beacon to guide first time operators */}
-          <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#f59e0b]/60 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-[#f59e0b] flex items-center justify-center text-[7px] font-black text-black">?</span>
-          </span>
-        </button>
-      </div>
-
-      {/* Floating Legal/POPIA Compliance Trigger */}
-      <div 
-        className={cn(
-          "fixed left-6 z-[80] transition-all duration-300 md:left-8",
-          (view !== 'move' ? true : isGlobalNavVisible) ? "bottom-28" : "bottom-6"
-        )}
-      >
-        <button
-          onClick={() => setShowLegalModal(true)}
-          className="relative px-3 py-1.5 rounded-full bg-zinc-950/80 border border-zinc-800 text-zinc-400 hover:text-[#f59e0b] hover:border-[#f59e0b]/50 transition-all flex items-center gap-1.5 backdrop-blur-md shadow-lg"
-          title="Privacy & Legal"
-        >
-          <ShieldAlert className="w-3 h-3" />
-          <span className="text-[9px] font-black uppercase tracking-widest leading-none pt-px">POPIA</span>
-        </button>
-      </div>
 
       <AnimatePresence>
         {showLegalModal && (

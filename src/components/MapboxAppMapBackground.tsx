@@ -22,6 +22,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   riderLocation,
   highlightedOrderId,
   highContrast,
+  hideNavigationHUD,
 }: {
   isOnline?: boolean;
   activeOrder?: DeliveryOrder | null;
@@ -40,6 +41,23 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   highContrast?: boolean;
 }) {
   const mapRef = useRef<MapRef | null>(null);
+
+  const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
+
+  useEffect(() => {
+    const checkOffline = () => {
+      const isOff = localStorage.getItem('localeats_force_offline') === 'true';
+      if (isOff !== forceOffline) {
+        setForceOffline(isOff);
+      }
+    };
+    const interval = setInterval(checkOffline, 1000);
+    window.addEventListener('storage', checkOffline);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', checkOffline);
+    };
+  }, [forceOffline]);
 
   const [riderPos, setRiderPos] = useState<[number, number] | null>(
     riderLocation || (riderProfileLat && riderProfileLng ? [riderProfileLat, riderProfileLng] : [-25.9964, 28.2268])
@@ -70,7 +88,9 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 second timeout
       
-      fetch(`https://router.project-osrm.org/route/v1/driving/${rLng},${rLat};${tLng},${tLat}?geometries=geojson&overview=full`, {
+      const routingUrl = `https://router.project-osrm.org/route/v1/driving/${rLng},${rLat};${tLng},${tLat}?geometries=geojson&overview=full${forceOffline ? '&force_offline=true' : ''}`;
+      
+      fetch(routingUrl, {
         signal: controller.signal
       })
         .then(res => {
@@ -108,7 +128,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
     } else {
       setRouteCoordinates([]);
     }
-  }, [riderPos, targetPos, activeOrder, onDistanceUpdate, onETAUpdate, onProgressUpdate]);
+  }, [riderPos, targetPos, activeOrder, onDistanceUpdate, onETAUpdate, onProgressUpdate, forceOffline]);
 
 
   const [viewState, setViewState] = useState({
@@ -474,6 +494,34 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         </div>
       </div>
 
+      {/* Tembisa Offline Mode Active Indicator Badge */}
+      {forceOffline && (
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            e.nativeEvent.stopPropagation();
+          }}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            e.nativeEvent.stopPropagation();
+          }}
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            e.nativeEvent.stopPropagation();
+          }}
+          className="absolute top-14 right-4 bg-amber-950/90 backdrop-blur-md border border-[#f59e0b]/40 rounded-xl p-3 text-[10px] font-mono shadow-xl pointer-events-auto z-20 animate-pulse flex items-center gap-2 max-w-[220px]"
+        >
+          <span className="flex h-2 w-2 relative shrink-0">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#f59e0b] opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#f59e0b]"></span>
+          </span>
+          <div className="text-left leading-tight">
+            <p className="font-black text-[#f59e0b] uppercase tracking-widest">OFFLINE DATA SAVE</p>
+            <p className="text-[8.5px] text-zinc-400 mt-0.5 font-sans font-semibold leading-normal">Bypassing live cellular cells. Rendering from local map memory.</p>
+          </div>
+        </div>
+      )}
+
       {/* Dynamic Camera Navigator Controls */}
       {activeOrder && (
         <div 
@@ -549,7 +597,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
             e.stopPropagation();
             e.nativeEvent.stopPropagation();
           }}
-          className="absolute bottom-6 right-6 bg-zinc-900 border border-cyan-500/50 text-cyan-400 px-4 py-2 rounded-full shadow-[0_0_15px_rgba(34,211,238,0.3)] font-mono text-sm hover:bg-zinc-800 transition-colors z-20 flex items-center gap-2 pointer-events-auto group"
+          className={`absolute ${hideNavigationHUD ? 'bottom-28 md:bottom-32' : 'bottom-6'} right-6 bg-zinc-900 border border-cyan-500/50 text-cyan-400 px-4 py-2 rounded-full shadow-[0_0_15px_rgba(34,211,238,0.3)] font-mono text-sm hover:bg-zinc-800 transition-all duration-300 z-20 flex items-center gap-2 pointer-events-auto group`}
         >
           <Navigation className="w-4 h-4 fill-cyan-400/20 group-hover:scale-110 transition-transform" style={{ transform: 'rotate(45deg)' }} />
           Recenter

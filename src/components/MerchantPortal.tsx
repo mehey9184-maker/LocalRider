@@ -109,8 +109,8 @@ export const MerchantPortal = React.memo(({
   ], [allowExternal, onToggleAllowExternal, cashTrust, onToggleCashTrust, autoLook, onToggleAutoLook]);
 
   return (
-    <div className="p-6 space-y-8 pb-32 max-w-5xl mx-auto w-full">
-      <header className="flex flex-col gap-4 pt-6">
+    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
+      <header className="flex flex-col gap-4 pt-2">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-500 shadow-[0_4px_20px_rgba(245,158,11,0.15)] animate-pulse">
             <ShoppingBag className="w-6 h-6" />

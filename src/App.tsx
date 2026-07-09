@@ -25,7 +25,7 @@ console.warn = (...args) => {
 };
 
 import { ErrorBoundary } from 'react-error-boundary';
-import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Smartphone, 
   Bike, 
@@ -60,9 +60,7 @@ import {
   X,
   Mic,
   MicOff,
-  LifeBuoy,
   Target,
-  Eye,
   EyeOff,
   Phone,
   ExternalLink,
@@ -83,11 +81,9 @@ import {
   MessageSquare,
   BellRing,
   PhoneCall,
-  CloudRain,
-  Cloud,
   CloudLightning,
-  Wind,
-  Package
+  Package,
+  Volume2
 } from 'lucide-react';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -95,8 +91,26 @@ import { Toaster, toast } from 'sonner';
 import { getSupabase, isSupabaseMocked, markSupabaseAsMocked } from './lib/supabase';
 import { dispatchError } from './lib/errorHandling';
 import { User } from '@supabase/supabase-js';
-import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection } from './types';
+import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection, AppView, WeatherData } from './types';
 import { cn } from './lib/utils';
+import { BentoCard } from './components/BentoCard';
+import { StatusBadge } from './components/StatusBadge';
+import { TelemetryData } from './components/TelemetryData';
+import { SwipeButton } from './components/SwipeButton';
+import { VoiceController } from './components/VoiceController';
+import { Dashboard } from './components/Dashboard';
+import {
+  haversineDistance,
+  safeJsonParse,
+  isTodayLocal,
+  promiseWithTimeout,
+  fetchWithRetry,
+  useBatteryStatus,
+  getMerchantHeartbeatStatus,
+  getRandomHost,
+  getTilesForCoordinate,
+  fuzzyMatch
+} from './lib/appUtils';
 import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/MapboxAppMapBackground';
 import { HistoryMap } from './components/HistoryMap';
@@ -122,132 +136,7 @@ import {
   YAxis
 } from 'recharts';
 
-// --- Voice Controller ---
-
-const VoiceController = ({ isListening, onStart }: { isListening: boolean, onStart: () => void }) => {
-  return (
-    <motion.button
-      whileHover={{ scale: 1.05 }}
-      whileTap={{ scale: 0.95 }}
-      onClick={onStart}
-      className={cn(
-        "fixed bottom-24 right-6 w-14 h-14 rounded-full flex items-center justify-center shadow-2xl z-50 border-2 transition-all",
-        isListening 
-          ? "bg-emerald-500 border-emerald-400 animate-pulse shadow-emerald-500/40" 
-          : "bg-zinc-900 border-zinc-800 shadow-black/60"
-      )}
-    >
-      {isListening ? (
-        <Mic className="w-6 h-6 text-black" />
-      ) : (
-        <MicOff className="w-6 h-6 text-zinc-500" />
-      )}
-      
-      {isListening && (
-        <span className="absolute -top-1 -right-1 flex h-4 w-4">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-          <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500"></span>
-        </span>
-      )}
-    </motion.button>
-  );
-};
-
-// --- Utilities ---
-
-function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // Earth's radius in km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1 * Math.PI/180) *
-            Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 // --- Merchant Heartbeat Status Helper ---
-interface HeartbeatStatus {
-  status: 'live' | 'quiet' | 'offline' | 'recent';
-  colorClass: string;
-  dotColorClass: string;
-  durationText: string;
-  isOver48h: boolean;
-}
-
-const getMerchantHeartbeatStatus = (updatedAtStr?: string): HeartbeatStatus => {
-  if (!updatedAtStr) {
-    return {
-      status: 'offline',
-      colorClass: 'text-zinc-500',
-      dotColorClass: 'bg-zinc-500 shadow-[0_0_6px_#71717a]',
-      durationText: 'Merchant Offline: Unknown',
-      isOver48h: false,
-    };
-  }
-  
-  try {
-    const updatedAt = new Date(updatedAtStr).getTime();
-    const now = Date.now();
-    const diffMs = now - updatedAt;
-    
-    if (isNaN(updatedAt)) {
-      throw new Error('Invalid Date parsed');
-    }
-    
-    const diffSeconds = Math.max(0, Math.floor(diffMs / 1000));
-    const diffMinutes = Math.floor(diffSeconds / 60);
-    const diffHours = Math.floor(diffMinutes / 60);
-    const diffDays = Math.floor(diffHours / 24);
-    
-    let durationText = '';
-    if (diffMinutes < 60) {
-      durationText = `${diffMinutes} ${diffMinutes === 1 ? 'min' : 'mins'} ago`;
-    } else if (diffHours < 24) {
-      durationText = `${diffHours} ${diffHours === 1 ? 'hour' : 'hours'} ago`;
-    } else {
-      durationText = `${diffDays} ${diffDays === 1 ? 'day' : 'days'} ago`;
-    }
-    
-    const isWithin2h = diffHours < 2;
-    const isOver24h = diffHours >= 24;
-    const isOver48h = diffHours >= 48;
-    
-    if (isWithin2h) {
-      return {
-        status: 'live',
-        colorClass: 'text-emerald-400',
-        dotColorClass: 'bg-emerald-500 shadow-[0_0_8px_#10b981] animate-pulse',
-        durationText: `Merchant Live: ${durationText}`,
-        isOver48h: false,
-      };
-    } else if (isOver24h) {
-      return {
-        status: 'quiet',
-        colorClass: 'text-amber-500',
-        dotColorClass: 'bg-amber-500 shadow-[0_0_8px_#f59e0b]',
-        durationText: `Merchant Quiet: ${durationText}`,
-        isOver48h,
-      };
-    } else {
-      return {
-        status: 'recent',
-        colorClass: 'text-zinc-400',
-        dotColorClass: 'bg-zinc-500 shadow-[0_0_6px_#71717a]',
-        durationText: `Merchant Offline: ${durationText}`,
-        isOver48h: false,
-      };
-    }
-  } catch (error) {
-    console.error('Error calculating heartbeat status', error);
-    return {
-      status: 'offline',
-      colorClass: 'text-zinc-500',
-      dotColorClass: 'bg-zinc-500',
-      durationText: 'Merchant Offline',
-      isOver48h: false,
-    };
-  }
-};
-
 const subscribeToPushNotifications = async (userId: string) => {
   const isIframe = () => {
     try {
@@ -317,241 +206,6 @@ const subscribeToPushNotifications = async (userId: string) => {
   } catch (error) {
     console.warn("Skipping push registration (timed out, blocked, or not active):", error);
   }
-};
-
-const promiseWithTimeout = <T,>(promise: Promise<T>, timeoutMs = 2000): Promise<T> => {
-  return Promise.race([
-    promise,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
-  ]);
-};
-
-const fetchWithRetry = async <T,>(fn: () => Promise<T>, retries = 5, delay = 1000, timeoutMs = 15000): Promise<T> => {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeoutPromise = new Promise<T>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-    });
-    
-    const result = await Promise.race([
-      fn(),
-      timeoutPromise
-    ]);
-    
-    if (timeoutId) clearTimeout(timeoutId);
-    return result;
-  } catch (error) {
-    if (timeoutId) clearTimeout(timeoutId);
-    const isNetworkOrTimeoutErr = error instanceof TypeError || (error instanceof Error && (
-      error.message === 'timeout' || 
-      /fetch|network|offline|connection|failed|changed|cors|disconnected|abort/i.test(error.message)
-    ));
-    if (retries > 0 && isNetworkOrTimeoutErr) {
-      const nextDelay = delay * 1.5; 
-      const errMessage = error instanceof Error ? error.message : 'Network sequence interrupted';
-      console.log(`[RETRYING] ${errMessage.toUpperCase()} | Attempts remaining: ${retries}`);
-      await new Promise(res => setTimeout(res, delay));
-      return fetchWithRetry(fn, retries - 1, nextDelay, timeoutMs);
-    }
-    throw error;
-  }
-};
-
-interface BatteryManager extends EventTarget {
-  charging: boolean;
-  chargingTime: number;
-  dischargingTime: number;
-  level: number;
-  onchargingchange: () => void;
-  onlevelchange: () => void;
-}
-
-interface NavigatorWithBattery extends Navigator {
-  getBattery?: () => Promise<BatteryManager>;
-}
-
-const useBatteryStatus = () => {
-  const [level, setLevel] = useState<number | null>(75); 
-  const [charging, setCharging] = useState<boolean>(false);
-  const [isSupported] = useState<boolean>(() => {
-    return typeof window !== 'undefined' && 'getBattery' in navigator;
-  });
-
-  useEffect(() => {
-    const nav = navigator as NavigatorWithBattery;
-    if (typeof window === 'undefined' || !nav.getBattery) {
-      const interval = setInterval(() => {
-        setLevel(prev => {
-          if (prev === null) return 85;
-          if (prev <= 15) return 25; // cycle back for continuous visibility
-          return Number((prev - 0.2).toFixed(1));
-        });
-      }, 30000);
-      return () => clearInterval(interval);
-    }
-
-    let battery: BatteryManager | null = null;
-
-    const updateBattery = () => {
-      if (battery) {
-        setLevel(Math.round(battery.level * 100));
-        setCharging(battery.charging);
-      }
-    };
-
-    nav.getBattery().then((bat: BatteryManager) => {
-      battery = bat;
-      updateBattery();
-      bat.addEventListener('chargingchange', updateBattery);
-      bat.addEventListener('levelchange', updateBattery);
-    }).catch(() => {
-      // safe fallback
-    });
-
-    return () => {
-      if (battery) {
-        battery.removeEventListener('chargingchange', updateBattery);
-        battery.removeEventListener('levelchange', updateBattery);
-      }
-    };
-  }, []);
-
-  return { level, charging, isSupported };
-};
-
-const isTodayLocal = (dateStr: string) => {
-  try {
-    const d = new Date(dateStr);
-    const today = new Date();
-    return d.getFullYear() === today.getFullYear() &&
-           d.getMonth() === today.getMonth() &&
-           d.getDate() === today.getDate();
-  } catch {
-    return false;
-  }
-};
-
-const safeJsonParse = <T,>(str: string | null, fallback: T): T => {
-  if (!str) return fallback;
-  try {
-    return JSON.parse(str) as T;
-  } catch {
-    return fallback;
-  }
-};
-
-const StatusBadge = React.memo(({ status }: { status: DeliveryStatus }) => {
-  const styles: Record<DeliveryStatus, string> = {
-    finding_rider: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
-    accepted: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
-    picked_up: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
-    delivered: 'bg-[#f59e0b]/10 text-[#f59e0b] border-[#f59e0b]/20',
-    cancelled: 'bg-red-500/10 text-red-500 border-red-500/20',
-    none: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20',
-  };
-  return (
-    <AnimatePresence mode="wait">
-      <motion.span 
-        key={status}
-        initial={{ opacity: 0, y: 10, scale: 0.95 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: -10, scale: 0.95 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
-        className={cn("text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border italic inline-block", styles[status])}
-      >
-        {(status || '').replace('_', ' ')}
-      </motion.span>
-    </AnimatePresence>
-  );
-});
-
-const TelemetryData = React.memo(({ label, value, unit }: { label: string, value: string | number, unit?: string }) => (
-  <div className="flex flex-col">
-    <span className="text-[9px] text-zinc-500 font-black uppercase tracking-[0.2em] mb-1">{label}</span>
-    <div className="flex items-baseline gap-1">
-      <span className="text-4xl md:text-5xl font-mono font-bold text-[#F0F0F0] tabular-nums tracking-tighter">{value}</span>
-      {unit && <span className="text-xs text-zinc-400 font-bold uppercase">{unit}</span>}
-    </div>
-  </div>
-));
-
-const BentoCard = React.memo(({ children, className, glow = false, ...props }: { children: React.ReactNode, className?: string, glow?: boolean } & React.HTMLAttributes<HTMLDivElement>) => (
-  <div {...props} className={cn(
-    "bg-[#0a0a0c]/90 border border-zinc-800/80 rounded-3xl p-6 relative overflow-hidden group transition-smooth",
-    glow && "shadow-[0_0_50px_rgba(245,158,11,0.08)] border-[#f59e0b]/25 bg-[#0e0e11]",
-    className
-  )}>
-    {glow && <div className="absolute -top-12 -right-12 w-40 h-40 bg-[#f59e0b]/5 rounded-full blur-3xl pointer-events-none group-hover:bg-[#f59e0b]/10 transition-all duration-700" />}
-    <div className="relative z-10">{children}</div>
-  </div>
-));
-
-const SwipeButton = ({ label, onComplete, color = "#f59e0b", resetToken, disabled = false }: { 
-  label: string, 
-  onComplete: () => void, 
-  color?: string, 
-  resetToken?: string | number,
-  disabled?: boolean
-}) => {
-  const [isComplete, setIsComplete] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [maxDrag, setMaxDrag] = useState(260);
-  const x = useMotionValue(0);
-
-  useEffect(() => {
-    if (resetToken !== undefined) {
-      setTimeout(() => {
-        setIsComplete(false);
-        x.set(0);
-      }, 0);
-    }
-  }, [resetToken, x]);
-
-  useEffect(() => {
-    if (containerRef.current) {
-      const handleWidth = 72;
-      setMaxDrag(containerRef.current.offsetWidth - handleWidth - 12);
-    }
-  }, []);
-
-  return (
-    <div ref={containerRef} className={cn(
-      "relative h-20 bg-zinc-900/60 backdrop-blur-md border border-zinc-800 rounded-2xl overflow-hidden p-1.5 select-none transition-smooth",
-      disabled ? "opacity-50 grayscale cursor-not-allowed" : "hover:border-zinc-700/80 shadow-[inset_0_2px_4px_rgba(0,0,0,0.4)]"
-    )}>
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <span className="text-[10px] font-black uppercase tracking-[0.4em] text-zinc-400 opacity-60">
-          {label}
-        </span>
-      </div>
-      <motion.div
-        drag={disabled ? false : "x"}
-        dragConstraints={{ left: 0, right: maxDrag }}
-        dragElastic={0.08}
-        style={{ x, backgroundColor: isComplete ? '#fff' : color, touchAction: 'none' }}
-        onDragEnd={(_, info) => {
-          if (disabled) return;
-          if (info.offset.x > maxDrag * 0.75) {
-            setIsComplete(true);
-            onComplete();
-            if (navigator.vibrate) navigator.vibrate([10, 20, 10]);
-          } else {
-            animate(x, 0, { type: "spring", stiffness: 450, damping: 35 });
-          }
-        }}
-        whileHover={disabled ? {} : { scale: 1.02, boxShadow: "0 4px 20px rgba(245,158,11,0.25)" }}
-        whileTap={disabled ? {} : { scale: 0.98 }}
-        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_4px_15px_rgba(0,0,0,0.3)] transition-all touch-action-none"
-      >
-        <ArrowRight className="w-8 h-8 text-black" strokeWidth={3} />
-      </motion.div>
-      
-      <motion.div 
-        style={{ width: x, opacity: 0.15, backgroundColor: color }}
-        className="absolute left-0 top-0 bottom-0 pointer-events-none z-10"
-      />
-    </div>
-  );
 };
 
 // --- Auth Views ---
@@ -843,915 +497,8 @@ const AuthView = ({
 
 // --- Main App Views ---
 
-const SOSButton = ({ riderName }: { riderName: string }) => {
-  const [isHolding, setIsHolding] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+// --- Dashboard Component ---
 
-  const startHold = () => {
-    if (isHolding) return;
-    setIsHolding(true);
-    setProgress(0);
-    
-    if (navigator.vibrate) navigator.vibrate(50);
-    
-    const tickMs = 50;
-    const duration = 2000; // 2 seconds
-    const increment = (tickMs / duration) * 100;
-    let currentProgress = 0;
-
-    progressIntervalRef.current = setInterval(() => {
-      currentProgress += increment;
-      const pct = Math.min(currentProgress, 100);
-      setProgress(pct);
-      
-      if (pct >= 100) {
-        clearInterval(progressIntervalRef.current!);
-        triggerSOS();
-      }
-    }, tickMs);
-  };
-
-  const endHold = () => {
-    setIsHolding(false);
-    setProgress(0);
-    if (progressIntervalRef.current) {
-      clearInterval(progressIntervalRef.current);
-    }
-  };
-
-  const triggerSOS = async () => {
-    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
-    
-    let locationUrl = 'Location unknown';
-    try {
-      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject);
-      });
-      locationUrl = `https://www.openstreetmap.org/?mlat=${pos.coords.latitude}&mlon=${pos.coords.longitude}#map=17/${pos.coords.latitude}/${pos.coords.longitude}`;
-    } catch {
-      // Fallback location gathering
-    }
-
-    const message = `EMERGENCY: Rider ${riderName} needs help at ${locationUrl}`;
-    
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: '🆘 SOS EMERGENCY - RIDER IN DISTRESS',
-          text: message,
-          url: locationUrl
-        });
-        toast.success('SOS Signal Broadcasted');
-      } catch (err) {
-        if (err instanceof Error && err.name !== 'AbortError') {
-          const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
-          window.open(whatsappUrl, '_blank');
-        }
-      }
-    } else {
-      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
-    }
-    
-    setIsHolding(false);
-    setProgress(0);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, []);
-
-  return (
-    <div 
-      onMouseDown={startHold}
-      onMouseUp={endHold}
-      onMouseLeave={endHold}
-      onTouchStart={startHold}
-      onTouchEnd={endHold}
-      className="p-4 bg-red-600/10 border-2 border-red-500/50 rounded-2xl flex flex-col items-center justify-center gap-2 active:scale-95 transition-all text-red-500 group relative overflow-hidden shadow-[0_0_20px_rgba(239,68,68,0.1)] select-none cursor-pointer h-full min-h-[92px]"
-    >
-      {/* Background glowing layer */}
-      <div className={cn("absolute inset-0 bg-red-500/10 transition-opacity duration-300", isHolding ? "opacity-30" : "opacity-15 animate-pulse")} />
-      
-      {/* Progress animation filling background */}
-      <div 
-        className="absolute bottom-0 left-0 bg-red-600/30 transition-all duration-75 pointer-events-none"
-        style={{ width: `${progress}%`, height: '100%' }}
-      />
-      
-      <LifeBuoy className={cn("w-6 h-6 z-10 duration-200 text-red-500", isHolding ? "scale-110 animate-spin" : "scale-100 animate-bounce")} />
-      
-      <div className="flex flex-col items-center z-10">
-        <span className="text-[10px] font-black uppercase tracking-widest text-white">
-          {isHolding ? `${Math.round(progress)}% HOLD...` : "HOLD 2S FOR SOS"}
-        </span>
-        <span className="text-[7.5px] font-bold text-red-400 uppercase tracking-wider mt-0.5">
-          {isHolding ? "Release to cancel" : "Emergency protocol"}
-        </span>
-      </div>
-      
-      {/* Visual active pointer indicator */}
-      {isHolding && (
-        <div className="absolute top-2 right-2 w-3.5 h-3.5 rounded-full border border-red-500/30 flex items-center justify-center">
-          <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
-        </div>
-      )}
-    </div>
-  );
-};
-
-const VoiceDashboardCard = ({ isListening, onStart }: { isListening: boolean, onStart: () => void }) => {
-  return (
-    <button 
-      onClick={onStart}
-      className={cn(
-        "p-4 border rounded-2xl flex flex-col items-center justify-center gap-2 active:scale-95 transition-all text-center relative overflow-hidden h-full min-h-[92px] group w-full",
-        isListening 
-          ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.15)] animate-pulse" 
-          : "bg-zinc-900 border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:bg-zinc-900/80"
-      )}
-    >
-      {isListening ? (
-        <>
-          <div className="flex gap-0.5 items-end justify-center h-6 mb-1 z-10">
-            {/* Elegant bouncing voice lines */}
-            <div className="w-0.5 h-3 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.1s]" />
-            <div className="w-0.5 h-5 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.3s]" />
-            <div className="w-0.5 h-2 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.5s]" />
-            <div className="w-0.5 h-4 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.2s]" />
-            <div className="w-0.5 h-1.5 bg-emerald-400 rounded-full animate-bounce [animation-delay:0.4s]" />
-          </div>
-          <div className="flex flex-col items-center z-10">
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b]">VOICE: ACTIVE</span>
-            <span className="text-[7.5px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">Listening to command...</span>
-          </div>
-        </>
-      ) : (
-        <>
-          <Mic className="w-6 h-6 text-zinc-500 group-hover:text-amber-500 transition-colors z-10" />
-          <div className="flex flex-col items-center z-10">
-            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-300">VOICE COMMANDS</span>
-            <span className="text-[7.5px] font-bold text-zinc-500 uppercase tracking-wider mt-0.5">Tap to activate</span>
-          </div>
-        </>
-      )}
-    </button>
-  );
-};
-
-interface WeatherForecastHour {
-  time: string;
-  temp: number;
-}
-
-interface WeatherData {
-  temp: number;
-  feelsLike: number;
-  precipitation: number;
-  windSpeed: number;
-  code: number;
-  timestamp: number;
-  hourlyForecast: WeatherForecastHour[];
-}
-
-const DashboardWeather = React.memo(({ 
-  lat, 
-  lng, 
-  weather, 
-  setWeather 
-}: { 
-  lat?: number; 
-  lng?: number;
-  weather: WeatherData | null;
-  setWeather: React.Dispatch<React.SetStateAction<WeatherData | null>>;
-}) => {
-  const [loading, setLoading] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const [lastSyncFailed, setLastSyncFailed] = useState(false);
-
-  // Periodically refresh minutes elapsed counter
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setNow(Date.now());
-    }, 30000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const fetchWeather = useCallback(async (latitude: number, longitude: number) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,precipitation,wind_speed_10m,weather_code&hourly=temperature_2m&timezone=auto`);
-      if (res.ok) {
-        const data = await res.json();
-        
-        const nowIso = new Date().toISOString().substring(0, 13) + ":00";
-        let startIndex = -1;
-        if (data.hourly && Array.isArray(data.hourly.time)) {
-          startIndex = data.hourly.time.findIndex((t: string) => t >= nowIso);
-        }
-        if (startIndex === -1) startIndex = 0;
-        
-        const hourlyForecast: WeatherForecastHour[] = [];
-        if (data.hourly && Array.isArray(data.hourly.time) && Array.isArray(data.hourly.temperature_2m)) {
-          for (let i = 0; i < 6; i++) {
-            const index = startIndex + i;
-            if (index < data.hourly.time.length) {
-              const timeStr = data.hourly.time[index];
-              const dateObj = new Date(timeStr);
-              const hourNum = dateObj.getHours();
-              hourlyForecast.push({
-                time: `${hourNum}:00`,
-                temp: Number(data.hourly.temperature_2m[index])
-              });
-            }
-          }
-        }
-
-        const info: WeatherData = {
-          temp: data.current.temperature_2m,
-          feelsLike: data.current.apparent_temperature,
-          precipitation: data.current.precipitation,
-          windSpeed: data.current.wind_speed_10m,
-          code: data.current.weather_code,
-          timestamp: Date.now(),
-          hourlyForecast
-        };
-        setWeather(info);
-        localStorage.setItem('localeats_cached_weather', JSON.stringify(info));
-        setLastSyncFailed(false);
-      } else {
-        setLastSyncFailed(true);
-      }
-    } catch (e) {
-      console.warn("Weather API unreachable:", e);
-      setLastSyncFailed(true);
-      const isSimulatedOffline = localStorage.getItem('localeats_force_offline') === 'true';
-      const isSystemOffline = !navigator.onLine;
-      if (!isSimulatedOffline && !isSystemOffline) {
-        toast.error("Weather sensor connection offline", {
-          description: "Displaying cached local meteorological coordinates. Standing by for reconnect...",
-          duration: 4000
-        });
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [setWeather]);
-
-  useEffect(() => {
-    const activeLat = lat || -25.9964;
-    const activeLng = lng || 28.2268;
-    
-    let isMounted = true;
-    const checkAndTrigger = () => {
-      if (!isMounted) return;
-      if (!weather) {
-        fetchWeather(activeLat, activeLng);
-      } else {
-        const cached = localStorage.getItem('localeats_cached_weather');
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached);
-            if (Date.now() - parsed.timestamp >= 3600000) {
-              fetchWeather(activeLat, activeLng);
-            }
-          } catch (err) {
-            console.warn("Cache parsing failed", err);
-          }
-        }
-      }
-    };
-
-    const timer = setTimeout(checkAndTrigger, 150);
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [lat, lng, weather, fetchWeather]);
-
-  if (!weather && loading) {
-    return (
-      <div className="w-full h-24 rounded-3xl bg-zinc-900/40 border border-zinc-800/60 animate-pulse flex items-center justify-center">
-        <span className="text-[10px] font-black uppercase text-zinc-500 tracking-wider">Acquiring Weather Coordinates...</span>
-      </div>
-    );
-  }
-
-  if (!weather) return null;
-
-  // Confidence calculations based on sync age and status
-  const minutesElapsed = Math.max(0, Math.floor((now - weather.timestamp) / 60000));
-  let confidence: 'High' | 'Medium' | 'Low' | 'Offline' = 'High';
-  let confColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
-  let dotColor = 'bg-emerald-400';
-  
-  if (lastSyncFailed) {
-    confidence = 'Offline';
-    confColor = 'text-amber-500 bg-amber-500/10 border-amber-500/20';
-    dotColor = 'bg-amber-500 animate-pulse';
-  } else if (minutesElapsed >= 45) {
-    confidence = 'Low';
-    confColor = 'text-red-400 bg-red-500/10 border-red-500/20';
-    dotColor = 'bg-red-400 animate-ping';
-  } else if (minutesElapsed >= 15) {
-    confidence = 'Medium';
-    confColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
-    dotColor = 'bg-amber-400';
-  }
-
-  const isExtremePrecipitation = weather.precipitation > 5;
-  const isExtremeWind = weather.windSpeed > 40;
-  const hasExtremeSafetyAlert = isExtremePrecipitation || isExtremeWind;
-
-  const getWeatherDetails = (code: number) => {
-    if (code >= 51 && code <= 67) {
-      return { 
-        label: 'Rainy', 
-        icon: <CloudRain className="w-5 h-5 text-blue-400" />, 
-        bg: 'border-blue-500/20 bg-gradient-to-br from-slate-950 via-[#1e293b]/50 to-slate-950 shadow-[inset_0_1px_2px_rgba(59,130,246,0.05)]',
-        glow: 'before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top_right,rgba(59,130,246,0.12),transparent_60%)]',
-        tips: '⚠️ Wet roads detected! Avoid hard braking, lean gently on corners, and wear reflective kit.'
-      };
-    }
-    if (code >= 80 && code <= 99) {
-      return { 
-        label: 'Storm / Rain Showers', 
-        icon: <CloudLightning className="w-5 h-5 text-amber-500 animate-pulse" />, 
-        bg: 'border-amber-500/20 bg-gradient-to-br from-slate-950 via-[#78350f]/20 to-slate-950 shadow-[0_0_30px_rgba(245,158,11,0.05)]',
-        glow: 'before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.14),transparent_60%)]',
-        tips: '🚨 Storm Warning! Turn on hazard lights, reduce speed by 20km/h, and keep your phone in a safe pocket.'
-      };
-    }
-    if (code >= 1 && code <= 3) {
-      return { 
-        label: 'Partly Cloudy', 
-        icon: <Cloud className="w-5 h-5 text-zinc-400" />, 
-        bg: 'border-zinc-800 bg-gradient-to-br from-zinc-950 via-zinc-900/60 to-zinc-950 shadow-[inset_0_1px_2px_rgba(255,255,255,0.02)]',
-        glow: 'before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.04),transparent_50%)]',
-        tips: '⛅ Clear vision conditions. Perfect weather for smooth dispatch pacing.'
-      };
-    }
-    if (weather.windSpeed > 25) {
-      return { 
-        label: 'High Winds', 
-        icon: <Wind className="w-5 h-5 text-teal-400" />, 
-        bg: 'border-teal-500/20 bg-gradient-to-br from-zinc-950 via-[#0f766e]/15 to-zinc-950 shadow-[inset_0_1px_2px_rgba(20,184,166,0.05)]',
-        glow: 'before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top_right,rgba(20,184,166,0.12),transparent_60%)]',
-        tips: '💨 High wind drag! Keep two hands on handlebars and stay clear of large trucks.'
-      };
-    }
-    return { 
-      label: 'Clear Sky', 
-      icon: <Sun className="w-5 h-5 text-[#f59e0b]" />, 
-      bg: 'border-emerald-500/10 bg-gradient-to-br from-zinc-950 via-[#7c2d12]/10 to-zinc-950 shadow-[inset_0_1px_2px_rgba(245,158,11,0.04)]',
-      glow: 'before:absolute before:inset-0 before:bg-[radial-gradient(circle_at_top_right,rgba(245,158,11,0.1),transparent_60%)]',
-      tips: '☀️ Beautiful riding weather. Stay hydrated and remember sunscreen.'
-    };
-  };
-
-  const details = getWeatherDetails(weather.code);
-
-  return (
-    <BentoCard className={cn("border p-5 rounded-[2rem] relative overflow-hidden transition-all", details.bg, details.glow)}>
-      <div className="flex items-start justify-between gap-2 relative z-10">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-black/60 border border-white/5 flex items-center justify-center shrink-0">
-            {details.icon}
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5 leading-none">
-              <span className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b] font-headline">WEATHER COMM</span>
-              <span className="w-1 h-1 rounded-full bg-orange-500" />
-              <span className="text-[8px] font-sans font-bold text-zinc-500">TEMBISA SENSOR</span>
-            </div>
-            <h4 className="text-base font-black font-headline text-white mt-1.5 uppercase italic tracking-wide flex items-center gap-2">
-              {details.label} • {weather.temp.toFixed(1)}°C
-            </h4>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-4 relative z-20 shrink-0">
-          <div className="flex items-end gap-3 text-right">
-            <div className="flex flex-col">
-              <span className="text-[7.5px] font-black uppercase text-zinc-500 tracking-wider">Feels Like</span>
-              <span className="text-xs font-mono font-bold text-white leading-tight">{weather.feelsLike.toFixed(1)}°C</span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[7.5px] font-black uppercase text-zinc-500 tracking-wider">Wind</span>
-              <span className="text-xs font-mono font-bold text-white leading-tight">{weather.windSpeed.toFixed(0)} kmh</span>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            {/* Status confidence and age chip */}
-            <div className={cn("flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[7.5px] font-black uppercase tracking-wider font-sans leading-none", confColor)}>
-              <span className={cn("w-1 h-1 rounded-full shrink-0", dotColor)} />
-              <span>CONF: {confidence} • {minutesElapsed === 0 ? "just now" : `${minutesElapsed}m ago`}</span>
-            </div>
-            <button 
-              onClick={() => {
-                fetchWeather(lat || -25.9964, lng || 28.2268);
-                toast.success('Syncing high-fidelity meteorological sensors...');
-              }}
-              className="p-1 px-2 rounded-lg bg-black hover:bg-zinc-805 text-zinc-400 hover:text-white transition-all text-[8px] font-sans uppercase font-bold flex items-center gap-1.5 border border-zinc-800"
-              title="Refresh weather"
-            >
-              <span>Refresh Sensor</span> 🔄
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Safety alert banner when conditions cross critical cyclist thresholds */}
-      {hasExtremeSafetyAlert && (
-        <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl relative z-10 flex items-start gap-3">
-          <span className="text-sm shrink-0 mt-0.5 animate-bounce">🚨</span>
-          <div className="space-y-0.5">
-            <p className="text-[9.5px] text-red-400 font-bold uppercase tracking-wider font-sans leading-none">Extreme Cyclist Safety Warning</p>
-            <p className="text-[9px] text-zinc-300 font-sans leading-relaxed font-semibold">
-              {isExtremePrecipitation && `Severe downpour detected (${weather.precipitation}mm). wet tires have 60% less grip. Extend stopping distance by 3x.`}
-              {isExtremePrecipitation && isExtremeWind && ` • `}
-              {isExtremeWind && `Dangerous high winds of ${weather.windSpeed}kmh. Avoid draft tunnels next to heavy freight vehicles.`}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* 6-hour forecast Sparkline Chart */}
-      {weather.hourlyForecast && weather.hourlyForecast.length > 0 && (
-        <div className="mt-4 relative z-10">
-          <div className="flex justify-between items-center mb-1.5">
-            <span className="text-[8px] font-black uppercase tracking-widest text-zinc-550">6-Hour Temperature Projection</span>
-            <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-wider font-sans leading-none">
-              Shift Trend: {weather.hourlyForecast[0].temp.toFixed(0)}°C → {weather.hourlyForecast[5]?.temp.toFixed(0)}°C
-            </span>
-          </div>
-          <div className="h-16 w-full min-w-0 opacity-90">
-            <ResponsiveContainer width="99%" height="100%">
-              <AreaChart data={weather.hourlyForecast} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="weatherTempGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.25}/>
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#18181b" opacity={0.3} />
-                <XAxis 
-                  dataKey="time" 
-                  tickLine={false} 
-                  axisLine={false} 
-                  stroke="#52525b" 
-                  fontSize={8} 
-                  dy={4}
-                  fontWeight="bold"
-                />
-                <Tooltip 
-                  content={({ active, payload }) => {
-                    if (active && payload && payload.length) {
-                      return (
-                        <div className="bg-black/90 p-1.5 px-2.5 rounded-lg border border-zinc-800 text-[9px] font-mono shadow-xl leading-none">
-                          <span className="text-zinc-400 font-bold">{payload[0].payload.time}</span> : <span className="text-amber-400 font-black font-sans">{Number(payload[0].value).toFixed(1)}°C</span>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="temp" 
-                  stroke="#f59e0b" 
-                  strokeWidth={2} 
-                  fillOpacity={1} 
-                  fill="url(#weatherTempGrad)" 
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-
-      <div className="h-px bg-zinc-850/60 my-3 relative z-10" />
-      
-      <div className="flex items-start gap-2.5 relative z-10">
-        <span className="text-xs shrink-0 mt-0.5">💡</span>
-        <p className="text-[9.5px] text-zinc-400 font-sans font-bold uppercase tracking-wider leading-relaxed">
-          {details.tips}
-        </p>
-      </div>
-    </BentoCard>
-  );
-});
-
-const AnimatedCounter = React.memo(({ value, duration = 1.0, isCurrency = false }: { value: number; duration?: number; isCurrency?: boolean }) => {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let startTime: number | null = null;
-    const startValue = 0;
-    const endValue = value;
-
-    const step = (timestamp: number) => {
-      if (!startTime) startTime = timestamp;
-      const progress = Math.min((timestamp - startTime) / (duration * 1000), 1);
-      const easedProgress = progress * (2 - progress); // easeOutQuad
-      const currentCount = startValue + easedProgress * (endValue - startValue);
-      setCount(currentCount);
-
-      if (progress < 1) {
-        frameId = requestAnimationFrame(step);
-      }
-    };
-
-    let frameId = requestAnimationFrame(step);
-    return () => {
-      cancelAnimationFrame(frameId);
-    };
-  }, [value, duration]);
-
-  return (
-    <motion.span
-      initial={{ opacity: 0, scale: 0.95, y: 5 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      className="inline-block"
-    >
-      {isCurrency ? `R ${count.toFixed(2)}` : Math.round(count)}
-    </motion.span>
-  );
-});
-
-const Dashboard = React.memo(({ 
-  profile, 
-  todayEarnings, 
-  totalDeliveries, 
-  history, 
-  onToggleOnline, 
-  setView, 
-  connectionCount,
-  isListening,
-  onStartListening,
-  weather,
-  setWeather
-}: { 
-  profile: RiderProfile, 
-  todayEarnings: number,
-  totalDeliveries: number,
-  history: DeliveryOrder[],
-  onToggleOnline: () => void,
-  setView: (view: AppView) => void,
-  connectionCount: number,
-  isListening: boolean,
-  onStartListening: () => void,
-  weather: WeatherData | null,
-  setWeather: React.Dispatch<React.SetStateAction<WeatherData | null>>
-}) => {
-  const [shiftCount] = useState(() => {
-    return parseInt(localStorage.getItem('shiftCount') || '0', 10);
-  });
-
-  const region = detectRegion(profile.current_latitude, profile.current_longitude);
-
-  useEffect(() => {
-    if (profile.is_online && shiftCount < 3) {
-      const newCount = shiftCount + 1;
-      localStorage.setItem('shiftCount', newCount.toString());
-      // we do not update state immediately to allow them to see it during this session
-    }
-  }, [profile.is_online, shiftCount]);
-
-  const getRank = (pts: number) => {
-    if (pts >= 7500) return { title: 'GOLD', next: 10000, target: 10000, progress: 100, color: 'text-[#f59e0b]' };
-    if (pts >= 2500) return { title: 'SILVER', next: 7500, target: 7500, progress: ((pts - 2500) / 5000) * 100, color: 'text-zinc-300' };
-    return { title: 'BRONZE', next: 2500, target: 2500, progress: (pts / 2500) * 100, color: 'text-orange-700' };
-  };
-
-  const rank = getRank(profile.active_points || 0);
-
-  const [isStatsVisible, setIsStatsVisible] = useState(true);
-
-  const handleExportData = useCallback(() => {
-    try {
-      const timestamp = new Date().toISOString();
-      const csvContent = `ID,Metric,Value,Standing
-1,Today Earnings,R ${Number(todayEarnings || 0).toFixed(2)},${rank.title}
-2,Drops Cleared,${totalDeliveries} UNITS,${rank.title}
-3,Active Points,${profile.active_points} EXP,${rank.title}
-4,Export Timestamp,${timestamp},--
-`;
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `localeats_stats_${new Date().toISOString().split('T')[0]}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      toast.success('Stats CSV report exported successfully!');
-    } catch {
-      toast.error('Failed to export state data.');
-    }
-  }, [todayEarnings, totalDeliveries, profile.active_points, rank.title]);
-
-  return (
-    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
-      <header className="flex flex-col gap-1 pt-1 opacity-90 transition-all">
-        <span className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-1">{region.heroText}</span>
-        <h1 className="text-xl xs:text-2xl sm:text-3xl font-headline font-black tracking-tight text-white leading-none whitespace-normal">
-          {region.greetingTitle}
-        </h1>
-      </header>
-
-      {connectionCount === 0 && (
-         <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-red-500/10 border-2 border-red-500/20 text-red-500 p-5 rounded-[2rem] flex items-center gap-4 group cursor-pointer shadow-[0_0_20px_rgba(239,68,68,0.1)]"
-            onClick={() => setView('hub')}
-         >
-            <div className="w-12 h-12 rounded-2xl bg-red-500/20 flex items-center justify-center animate-pulse">
-               <ShieldAlert className="w-6 h-6" />
-            </div>
-            <div className="flex-1">
-               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">No Connections Found</h4>
-               <p className="text-sm font-bold text-white/70 italic leading-tight">You haven't connected to any stores yet. Go to the Hub to link your account.</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-red-500 transition-colors" />
-         </motion.div>
-      )}
-
-      {profile.verification_status !== 'verified' && connectionCount > 0 && (
-        <BentoCard className="bg-orange-500/10 border-orange-500/20 text-orange-500 py-5">
-          <div className="flex items-center gap-4">
-            <ShieldAlert className="w-6 h-6 shrink-0" />
-            <div className="flex flex-col">
-              <span className="text-[11px] font-black uppercase tracking-widest leading-none mb-1">Status: Under Review</span>
-              <span className="text-sm font-bold leading-tight text-white/80 italic">We are reviewing your profile. Some features might be unavailable.</span>
-            </div>
-          </div>
-        </BentoCard>
-      )}
-
-      {/* Safety & Performance Protocols */}
-      <div className="grid grid-cols-2 gap-4">
-        <SOSButton riderName={profile.name} />
-        <VoiceDashboardCard isListening={isListening} onStart={onStartListening} />
-      </div>
-
-      <DashboardWeather lat={profile.current_latitude} lng={profile.current_longitude} weather={weather} setWeather={setWeather} />
-
-      {/* Power Toggle */}
-      <div className="flex flex-col gap-2">
-        <button 
-          id="dash-online-btn"
-          onClick={() => {
-            onToggleOnline();
-            if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
-          }}
-          className={cn(
-            "w-full min-h-[76px] px-6 py-4 rounded-3xl flex items-center justify-start gap-5 transition-smooth focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/40",
-            profile.is_online 
-              ? "bg-[#0b130e] border border-emerald-500/30 hover:border-emerald-400/50 glow-green shadow-[0_8px_30px_rgba(34,197,94,0.04)]" 
-              : "bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-[#121214] shadow-[0_8px_30px_rgba(0,0,0,0.2)]"
-          )}
-        >
-          <div className={cn(
-            "w-12 h-12 rounded-2xl flex items-center justify-center transition-smooth",
-            profile.is_online 
-              ? "text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/25 shadow-[0_0_20px_rgba(16,185,129,0.3)]" 
-              : "text-zinc-500 bg-zinc-800/60"
-          )}>
-            <Power className={cn("w-5 h-5 transition-smooth", profile.is_online && "scale-110")} />
-          </div>
-          <div className="flex flex-col items-start leading-tight">
-            <div className="flex items-center gap-3">
-              <span className={cn("text-[17px] font-headline font-black uppercase tracking-wider italic transition-colors", profile.is_online ? "text-white text-glow" : "text-zinc-400")}>
-                {profile.is_online ? 'You are Online' : 'You are Offline'}
-              </span>
-              {profile.is_online && (
-                <div className="flex items-center gap-0.5">
-                   <div className="w-1 h-3 bg-emerald-500/20 rounded-full" />
-                   <div className="w-1 h-2 bg-emerald-500/40 rounded-full" />
-                   <div className="w-1 h-4 bg-emerald-500/60 rounded-full animate-pulse" />
-                   <div className="w-1 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-[11px] font-sans font-semibold uppercase tracking-wider transition-colors", profile.is_online ? "text-emerald-400/80" : "text-zinc-500")}>
-                {profile.is_online ? 'Looking for orders...' : 'Tap to go online'}
-              </span>
-              {profile.verification_status === 'verified' && (
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 backdrop-blur-sm shadow-[0_2px_10px_rgba(16,185,129,0.05)]">
-                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                  <span className="text-[8px] font-black text-emerald-400 tracking-wider">VERIFIED</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </button>
-
-        {profile.is_online && shiftCount < 3 && (
-          <motion.div 
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-green-500/10 border border-green-500/20 p-4 rounded-xl flex items-start gap-3 mt-2 mx-1"
-          >
-            <div className="w-2 h-2 mt-1.5 rounded-full bg-green-500 animate-ping shrink-0" />
-            <p className="text-[12px] font-sans text-green-400 font-medium leading-relaxed">
-              You're active! New orders will appear here when your linked shops broadcast them.
-            </p>
-          </motion.div>
-        )}
-      </div>
-
-      {/* Stats Bento */}
-      <div className="space-y-4 relative">
-        <div className="flex items-center justify-between px-1">
-          <span className="text-[10px] font-black tracking-widest text-zinc-500 uppercase">UPLINK METRICS</span>
-          <div className="flex items-center gap-2">
-            <button
-              id="export-stats-btn"
-              onClick={handleExportData}
-              className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-[#f59e0b] border border-zinc-800 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider active:scale-95 shadow-md justify-center"
-              title="Export Local Summary Report"
-            >
-              <Download className="w-3 h-3" />
-              <span>Export</span>
-            </button>
-            <button
-              id="toggle-stats-btn"
-              onClick={() => setIsStatsVisible(!isStatsVisible)}
-              className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider active:scale-95 shadow-md justify-center"
-              title={isStatsVisible ? "Hide Stats Panel" : "Show Stats Panel"}
-            >
-              {isStatsVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-              <span>{isStatsVisible ? "Hide" : "Show"}</span>
-            </button>
-          </div>
-        </div>
-
-        <AnimatePresence initial={false}>
-          {isStatsVisible && (
-            <motion.div 
-              id="dash-stats-panel" 
-              initial={{ opacity: 0, height: 0, scale: 0.95 }}
-              animate={{ opacity: 1, height: 'auto', scale: 1 }}
-              exit={{ opacity: 0, height: 0, scale: 0.95 }}
-              transition={{ duration: 0.3, ease: 'easeOut' }}
-              className="grid grid-cols-1 sm:grid-cols-2 gap-4 overflow-hidden"
-            >
-              {/* Earnings Stat Card */}
-              <BentoCard className="bg-gradient-to-br from-zinc-950 to-zinc-900 border-zinc-800/80 p-5 flex flex-col justify-between" glow>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 px-1.5 bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20 rounded text-[9px] font-mono font-black tracking-widest uppercase">
-                      VAL // UPLINK
-                    </div>
-                  </div>
-                  <div className="p-1.5 bg-[#f59e0b]/10 rounded-lg border border-[#f59e0b]/20">
-                    <TrendingUp className="w-4 h-4 text-[#f59e0b]" />
-                  </div>
-                </div>
-                <div>
-                  <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] block mb-1">Today Earnings</span>
-                  <p className="text-3xl font-headline font-black italic tracking-tight text-white">
-                    <AnimatedCounter value={todayEarnings || 0} isCurrency />
-                  </p>
-                  <div className="flex items-center gap-1 mt-2 text-[8px] font-bold text-zinc-500 uppercase tracking-widest">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Direct Payout Ready
-                  </div>
-                </div>
-              </BentoCard>
-
-              {/* Deliveries Stat Card */}
-              <BentoCard className="bg-gradient-to-br from-zinc-950 to-zinc-900 border-zinc-800/80 p-5 flex flex-col justify-between" glow>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 px-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded text-[9px] font-mono font-black tracking-widest uppercase">
-                      OPS // DR-CLD
-                    </div>
-                  </div>
-                  <div className="p-1.5 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
-                    <CheckCircle className="w-4 h-4 text-emerald-400" />
-                  </div>
-                </div>
-                <div>
-                  <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] block mb-1">Drops Cleared</span>
-                  <p className="text-3xl font-headline font-black italic tracking-tight text-white">
-                    <AnimatedCounter value={totalDeliveries || 0} /> <span className="text-xs font-mono font-bold tracking-tighter text-zinc-500 uppercase">UNITS</span>
-                  </p>
-                  <div className="flex items-center gap-1 mt-2 text-[8px] font-bold text-zinc-500 uppercase tracking-widest">
-                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#f59e0b] animate-pulse" /> Speed rating 100%
-                  </div>
-                </div>
-              </BentoCard>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-
-        {/* Level / Tier EXP Card */}
-        <BentoCard className="bg-zinc-900/50 border-zinc-800/80 p-5">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-2">
-              <span className="text-[9px] font-mono font-black text-zinc-500 uppercase tracking-[0.2em]">RIDER TIER STANDING</span>
-            </div>
-            <span className={cn("text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border", 
-              rank.title === 'BRONZE' ? 'text-amber-700 bg-amber-950/20 border-amber-900/40' :
-              rank.title === 'SILVER' ? 'text-slate-400 bg-slate-950/20 border-slate-800/40' :
-              rank.title === 'GOLD' ? 'text-yellow-500 bg-[#f59e0b]/10 border-[#f59e0b]/40' :
-              'text-purple-400 bg-purple-950/20 border-purple-900/40'
-            )}>{rank.title} TIER</span>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex justify-between items-end">
-              <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-headline font-black italic text-white uppercase tracking-tighter leading-none">{profile.active_points}</span>
-                <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">EXP</span>
-              </div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-[#f0f0f0]">Next Tier: {rank.next.toLocaleString()} Pts</p>
-            </div>
-            <div className="h-3 w-full bg-zinc-950 rounded-full overflow-hidden p-0.5 border border-zinc-800">
-               <motion.div 
-                 initial={{ width: 0 }} 
-                 animate={{ width: `${Math.min(rank.progress, 100)}%` }} 
-                 className="h-full bg-gradient-to-r from-amber-500 to-[#f59e0b] rounded-full shadow-[0_0_15px_rgba(245,158,11,0.5)]" 
-               />
-            </div>
-          </div>
-        </BentoCard>
-
-        {/* Quest Radar */}
-        <BentoCard className="p-6 bg-zinc-900/30 border-zinc-900">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-amber-500/10 rounded-lg">
-              <Rocket className="w-4 h-4 text-amber-500" />
-            </div>
-            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-400 italic">Your Progress</span>
-          </div>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-                <div>
-                   <p className="text-sm font-bold text-zinc-200">Sector Specialist</p>
-                   <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Complete 3 orders for +50 Pts</p>
-                </div>
-                <div className="text-right">
-                   <p className="text-sm font-black text-amber-500">{Math.min(totalDeliveries, 3)}/3</p>
-                </div>
-            </div>
-            <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden">
-               <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min((totalDeliveries / 3) * 100, 100)}%` }} className="h-full bg-amber-500" />
-            </div>
-          </div>
-        </BentoCard>
-
-        {/* Logs */}
-        <section className="space-y-4 pt-4 pb-12">
-          <div className="flex items-center justify-between px-2">
-            <h2 className="text-lg font-black italic uppercase tracking-tight flex items-center gap-3">
-              <Clock className="w-5 h-5 text-zinc-600" /> Recent Logs
-            </h2>
-            <button onClick={() => setView('log')} className="text-xs font-black uppercase tracking-widest text-[#f59e0b] hover:underline">Full Feed</button>
-          </div>
-          <div className="space-y-3">
-            {history.length === 0 ? (
-              <div className="py-12 text-center bg-zinc-900/10 rounded-[2rem] border border-dashed border-zinc-800">
-                <p className="text-[11px] font-bold text-zinc-600 uppercase tracking-widest italic">No recent deliveries.</p>
-              </div>
-            ) : (
-              history.slice(0, 3).map(order => (
-                <BentoCard key={order.id} className="p-5 border-zinc-800/40 bg-zinc-900/10 hover:bg-zinc-900/20 transition-all cursor-pointer group">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-zinc-900 border border-zinc-800 rounded-2xl flex items-center justify-center group-hover:border-[#f59e0b]/30 transition-all">
-                        <ShoppingBag className="w-6 h-6 text-zinc-500 group-hover:text-[#f59e0b] transition-all" />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-zinc-100 uppercase tracking-tight mb-1">{order.restaurant_name}</h4>
-                        <div className="flex items-center gap-3">
-                           <span className="text-[10px] font-mono text-zinc-500 uppercase">{order.delivery_status}</span>
-                           <div className="w-1 h-1 rounded-full bg-zinc-800" />
-                           <span className="text-[10px] font-mono text-zinc-600">{new Date(order.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-base font-black italic text-[#f59e0b]">R{Number(order.delivery_fee || 0).toFixed(2)}</p>
-                  </div>
-                </BentoCard>
-              ))
-            )}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-});
 
 const getDistanceBetween = (lat1?: number, lon1?: number, lat2?: number, lon2?: number): number => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
@@ -1974,7 +721,7 @@ const OrdersFeed = React.memo(({
   };
 
   return (
-    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
+    <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-7xl mx-auto w-full">
       {isExtremeWeather && (
         <div className="bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-[2rem] flex items-center gap-3.5 mb-2 shadow-[0_0_20px_rgba(239,68,68,0.05)] animate-pulse">
           <div className="w-9 h-9 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0">
@@ -1992,33 +739,77 @@ const OrdersFeed = React.memo(({
           </div>
         </div>
       )}
-      <header className="flex flex-col gap-4 pt-2">
-        <div className="flex items-center justify-between gap-2">
-           <h2 className="text-xl xs:text-2xl sm:text-3xl md:text-4xl font-headline font-black italic uppercase tracking-tighter text-white">Rider Marketplace Feed</h2>
-           <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setShowNearbyMap(!showNearbyMap)}
-                className="bg-zinc-900 border border-zinc-800 p-2 rounded-xl text-zinc-400 hover:text-white transition-all active:scale-95"
-                title={showNearbyMap ? "Hide Sector Map" : "Show Sector Map"}
-              >
-                {showNearbyMap ? <EyeOff size={16} /> : <Map size={16} />}
-              </button>
-              {isOnline && (
-                 <button 
-                   onClick={handleRefresh}
-                   className={cn(
-                     "bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-4 py-2 rounded-2xl flex items-center gap-2 transition-all active:scale-90",
-                     isRefreshing && "animate-pulse brightness-150"
-                   )}
-                 >
-                   <Radar className={cn("w-3 h-3 text-[#f59e0b]", isRefreshing && "animate-spin")} />
-                   <span className="text-[11px] font-black text-[#f59e0b] tracking-widest">
-                     {isRefreshing ? 'SCANNING...' : 'SCAN AGAIN'}
-                   </span>
-                 </button>
-              )}
-           </div>
-        </div>
+
+      <div className={cn(
+        "grid grid-cols-1 gap-6 items-start",
+        showNearbyMap && isOnline ? "lg:grid-cols-12" : "grid-cols-1"
+      )}>
+        {/* MAP COLUMN */}
+        {showNearbyMap && isOnline && (
+          <div className="lg:col-span-5 lg:sticky lg:top-24 space-y-4 order-1 lg:order-2">
+            <div className="w-full h-[300px] lg:h-[calc(100vh-220px)] lg:min-h-[480px] overflow-hidden rounded-[2.5rem] border border-zinc-800 shadow-2xl relative group bg-zinc-950">
+              <div className="absolute inset-0 z-10 pointer-events-none bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+              <div className="absolute top-4 left-4 z-20 px-3 py-1.5 bg-black/80 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-2">
+                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]" />
+                 <span className="text-[9px] font-black text-white uppercase tracking-widest font-sans">Map Live</span>
+              </div>
+              
+              <AppMapBackground 
+                isOnline={true} 
+                riderProfileLat={riderLat} 
+                riderProfileLng={riderLng} 
+                allOrders={filteredAndSortedOrders}
+                onOrderMarkerClick={handleMarkerClick}
+                highlightedOrderId={highlightedOrderId}
+                highContrast={isHighContrastMode}
+              />
+              
+              <div className="absolute bottom-6 left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest italic mb-0.5 font-sans">Current Area</span>
+                  <span className="text-xs font-black text-white uppercase italic tracking-tight font-sans">Tembisa Sector Map • {filteredAndSortedOrders.length} Found</span>
+                </div>
+                <div className="px-3 py-1 bg-[#f59e0b] text-black rounded-lg pointer-events-auto shadow-[0_10px_30px_rgba(245,158,11,0.4)] transition-transform flex items-center gap-1">
+                  <Activity size={10} className="animate-pulse" />
+                  <span className="text-[8px] font-black uppercase tracking-tight font-sans">Live</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FEED LIST COLUMN */}
+        <div className={cn(
+          "space-y-6 order-2 lg:order-1",
+          showNearbyMap && isOnline ? "lg:col-span-7" : "col-span-1"
+        )}>
+          <header className="flex flex-col gap-4">
+            <div className="flex items-center justify-between gap-2">
+               <h2 className="text-xl xs:text-2xl font-headline font-black italic uppercase tracking-tighter text-white">Rider Marketplace Feed</h2>
+               <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setShowNearbyMap(!showNearbyMap)}
+                    className="bg-zinc-900 border border-zinc-800 p-2 rounded-xl text-zinc-400 hover:text-white transition-all active:scale-95"
+                    title={showNearbyMap ? "Hide Sector Map" : "Show Sector Map"}
+                  >
+                    {showNearbyMap ? <EyeOff size={16} /> : <Map size={16} />}
+                  </button>
+                  {isOnline && (
+                     <button 
+                       onClick={handleRefresh}
+                       className={cn(
+                         "bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-3.5 py-1.5 rounded-xl flex items-center gap-2 transition-all active:scale-90",
+                         isRefreshing && "animate-pulse brightness-150"
+                       )}
+                     >
+                       <Radar className={cn("w-3 h-3 text-[#f59e0b]", isRefreshing && "animate-spin")} />
+                       <span className="text-[10px] font-black text-[#f59e0b] tracking-wider">
+                         {isRefreshing ? 'SCANNING...' : 'SCAN AGAIN'}
+                       </span>
+                     </button>
+                  )}
+               </div>
+            </div>
         
         {/* Search, Sort and Filter UI */}
         <div className="flex flex-col gap-3">
@@ -2156,44 +947,6 @@ const OrdersFeed = React.memo(({
           </div>
         </div>
       </header>
-
-      <AnimatePresence>
-        {showNearbyMap && isOnline && (
-          <motion.div 
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 350, opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="w-full overflow-hidden rounded-[2.5rem] border border-zinc-800 shadow-2xl relative group bg-zinc-950"
-          >
-            <div className="absolute inset-0 z-10 pointer-events-none bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-            <div className="absolute top-4 left-4 z-20 px-3 py-1.5 bg-black/80 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-2">
-               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]" />
-               <span className="text-[9px] font-black text-white uppercase tracking-widest">Map Live</span>
-            </div>
-            
-            <AppMapBackground 
-              isOnline={true} 
-              riderProfileLat={riderLat} 
-              riderProfileLng={riderLng} 
-              allOrders={filteredAndSortedOrders}
-              onOrderMarkerClick={handleMarkerClick}
-              highlightedOrderId={highlightedOrderId}
-              highContrast={isHighContrastMode}
-            />
-            
-            <div className="absolute bottom-6 left-6 right-6 z-20 flex items-center justify-between pointer-events-none">
-              <div className="flex flex-col">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest italic mb-0.5">Current Area</span>
-                <span className="text-sm font-black text-white uppercase italic tracking-tight">Tembisa, Kaalfontein & Ivory Park • {filteredAndSortedOrders.length} Orders found</span>
-              </div>
-              <div className="px-4 py-2 bg-[#f59e0b] text-black rounded-xl pointer-events-auto shadow-[0_10px_30px_rgba(245,158,11,0.4)] group-hover:scale-105 transition-transform flex items-center gap-2">
-                <Activity size={12} className="animate-pulse" />
-                <span className="text-[10px] font-black uppercase tracking-tight">Real-Time Tracking</span>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {confirmId && (
         <motion.div 
@@ -2465,19 +1218,10 @@ const OrdersFeed = React.memo(({
                                       const isAccepted = order.delivery_status === 'accepted' || order.delivery_status === 'picked_up';
                                       let totalDist = Number(order.distance_km || 1);
                                       
-                                      const rad = Math.PI / 180;
-                                      const R = 6371;
-                                      const getDist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-                                        const dLat = (lat2 - lat1) * rad;
-                                        const dLon = (lon2 - lon1) * rad;
-                                        const a = Math.sin(dLat/2)**2 + Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)**2;
-                                        return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                                      };
-
                                       if (isAccepted && riderLat && riderLng && order.lat && order.lng) {
-                                        totalDist = getDist(riderLat, riderLng, order.lat, order.lng);
+                                        totalDist = getDistanceBetween(riderLat, riderLng, order.lat, order.lng);
                                       } else if (!isAccepted && riderLat && riderLng && order.shop_lat && order.shop_lng && order.lat && order.lng) {
-                                        totalDist = getDist(riderLat, riderLng, order.shop_lat, order.shop_lng) + getDist(order.shop_lat, order.shop_lng, order.lat, order.lng);
+                                        totalDist = getDistanceBetween(riderLat, riderLng, order.shop_lat, order.shop_lng) + getDistanceBetween(order.shop_lat, order.shop_lng, order.lat, order.lng);
                                       }
 
                                       const etaMinutes = Math.max(1, Math.ceil((totalDist / 20) * 60));
@@ -2666,56 +1410,51 @@ const OrdersFeed = React.memo(({
                       )}
                     </AnimatePresence>
 
-                    {/* Accept Dispatch Mission direct click button */}
-                    <div className="mt-4 pb-2">
-                      <button
-                        id={`accept-dispatch-btn-${order.id}`}
-                        disabled={isLimitReached}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (isLimitReached) {
-                            toast.error('Limit reached. Please complete a delivery before accepting more.');
-                          } else {
-                            if (instantAccept) {
+                    {/* Smart Unified CTA Action */}
+                    {instantAccept ? (
+                      <div className="mt-4">
+                        <button
+                          id={`accept-dispatch-btn-${order.id}`}
+                          disabled={isLimitReached}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isLimitReached) {
+                              toast.error('Limit reached. Please complete a delivery before accepting more.');
+                            } else {
                               onAccept(order.id);
                               toast.success('Mission accepted instantly!', {
                                 description: `You are locked into delivering for ${order.restaurant_name}.`
                               });
+                            }
+                          }}
+                          className={cn(
+                            "w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest italic font-headline transition-all active:scale-95 flex items-center justify-center gap-2",
+                            isLimitReached 
+                              ? "bg-zinc-950 text-zinc-600 border border-zinc-900 cursor-not-allowed" 
+                              : "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-[0_4px_20px_rgba(16,185,129,0.3)] border border-emerald-500/30"
+                          )}
+                        >
+                          <CheckCircle className="w-4 h-4 animate-pulse" />
+                          Tap to Lock Order Instantly
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-4">
+                        <SwipeButton 
+                          label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT MISSION"} 
+                          onComplete={() => {
+                            if (isLimitReached) {
+                              toast.error('Limit reached. Please complete a delivery before accepting more.');
                             } else {
                               setConfirmId(order.id);
                             }
-                          }
-                        }}
-                        className={cn(
-                          "w-full py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest italic font-headline transition-all active:scale-95 flex items-center justify-center gap-2",
-                          isLimitReached 
-                            ? "bg-zinc-950 text-zinc-650 border border-zinc-900 cursor-not-allowed" 
-                            : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_4px_20px_rgba(16,185,129,0.25)] border border-emerald-500/30"
-                        )}
-                      >
-                        <CheckCircle className="w-3.5 h-3.5 animate-pulse" />
-                        Accept Dispatch Mission
-                      </button>
-                    </div>
-
-                    <SwipeButton 
-                      label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT"} 
-                      onComplete={() => {
-                        if (isLimitReached) {
-                          toast.error('Limit reached. Please complete a delivery before accepting more.');
-                        } else if (instantAccept) {
-                          onAccept(order.id);
-                          toast.success('Mission accepted instantly!', {
-                            description: `You are locked into delivering for ${order.restaurant_name}.`
-                          });
-                        } else {
-                          setConfirmId(order.id);
-                        }
-                      }} 
-                      disabled={isLimitReached}
-                      color={isLimitReached ? "#3f3f46" : "#f59e0b"}
-                      resetToken={confirmId || 'reset'}
-                    />
+                          }} 
+                          disabled={isLimitReached}
+                          color={isLimitReached ? "#3f3f46" : "#f59e0b"}
+                          resetToken={confirmId || 'reset'}
+                        />
+                      </div>
+                    )}
                   </BentoCard>
                 </motion.div>
               </motion.div>
@@ -2724,6 +1463,8 @@ const OrdersFeed = React.memo(({
           </AnimatePresence>
         </div>
       )}
+        </div> {/* FEED LIST COLUMN */}
+      </div> {/* GRID CONTAINER */}
     </div>
   );
 });
@@ -2855,10 +1596,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const validDist = isNaN(rawDist) ? 0 : rawDist;
   const etaDisplay = String(Math.max(0, Math.floor(validDist * 2))).padStart(2, '0');
 
-  if (!currentOrder) return null;
 
-  const isPickedUp = currentOrder.delivery_status === 'picked_up';
-  const targetAddress = `${currentOrder.address}, ${currentOrder.city}`;
+  const isPickedUp = currentOrder?.delivery_status === 'picked_up';
+  const targetAddress = `${currentOrder?.address}, ${currentOrder?.city}`;
 
   const optimizeRoute = () => {
     setSortMethod('optimized');
@@ -2871,9 +1611,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
   const buildNavigationUrl = (originLat: number, originLng: number, destLat: number, destLng: number, vehicleType: string) => {
     let travelMode = 'driving';
-    if (vehicleType === 'bicycle') travelMode = 'bicycling';
+    if (vehicleType === 'Road' || vehicleType === 'MTB' || vehicleType === 'E-Bike') travelMode = 'bicycling';
     // Google maps universal link handles two-wheeler mostly as driving or two-wheeler if available
-    if (vehicleType === 'scooter') travelMode = 'two-wheeler';
+    if (vehicleType === 'Motor') travelMode = 'two-wheeler';
     
     return `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${destLat},${destLng}&travelmode=${travelMode}`;
   };
@@ -2882,7 +1622,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
     return `https://waze.com/ul?ll=${destLat},${destLng}&navigate=yes`;
   };
 
-  const handleStartNav = (e: React.MouseEvent, provider: 'google' | 'waze' = 'google') => {
+  const handleStartNav = useCallback((e: React.MouseEvent, provider: 'google' | 'waze' = 'google') => {
     e.stopPropagation();
     
     const originLat = profile?.current_latitude || -25.9964; // Regional rider fallback (Tembisa)
@@ -2896,10 +1636,10 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
     let destLat: number | undefined;
     let destLng: number | undefined;
 
-    if (currentOrder.delivery_status === 'accepted') {
+    if (currentOrder?.delivery_status === 'accepted') {
       destLat = currentOrder.shop_lat || -25.9922; // Ivory Park merchant fallback
       destLng = currentOrder.shop_lng || 28.2045;
-    } else if (currentOrder.delivery_status === 'picked_up') {
+    } else if (currentOrder?.delivery_status === 'picked_up') {
       destLat = currentOrder.lat || -25.9933; // Kaalfontein customer fallback
       destLng = currentOrder.lng || 28.2125;
     } else {
@@ -2916,9 +1656,24 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       ? buildWazeNavigationUrl(destLat, destLng)
       : buildNavigationUrl(originLat, originLng, destLat, destLng, profile?.vehicle_type || 'car');
     
+    // Save to Pending Route (Minimum Viable Trip filter: must be active for >2 minutes)
+    try {
+      const destName = currentOrder?.delivery_status === 'accepted' ? currentOrder.restaurant_name : currentOrder?.address;
+      const pendingRoute = {
+        name: destName,
+        lat: destLat,
+        lng: destLng,
+        timestamp: Date.now(),
+        committed: false
+      };
+      localStorage.setItem('localeats_pending_route', JSON.stringify(pendingRoute));
+      window.dispatchEvent(new Event('storage'));
+    } catch { /* ignore */ }
+
     // Open in new tab/native maps app
     window.open(url, '_blank', 'noreferrer');
-  };
+  }, [currentOrder, profile]);
+  if (!currentOrder) return null;
 
   return (
     <div className="h-screen flex flex-col pointer-events-none max-w-5xl mx-auto w-full relative">
@@ -3494,7 +2249,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                 <div className="grid grid-cols-2 gap-2">
                   <button 
                     onClick={() => {
-                      const msg = `Hi ${currentOrder.customer_name}, I'm your LocalEats rider. I've picked up your order and I'm heading your way! You can track my live location here: https://localeats.co.za/track/${currentOrder.id}`;
+                      const msg = `Hi ${currentOrder.customer_name}, I'm your LocalEats rider. I've picked up your order and I'm heading your way! You can track my live location here: https://localeatssa.co.za/track/${currentOrder.id}`;
                       window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
                       toast.success("Notice: Delivery tracking link shared via WhatsApp.");
                     }}
@@ -3531,7 +2286,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                     onClick={() => {
                       const lat = profile?.current_latitude || -25.9964;
                       const lng = profile?.current_longitude || 28.2268;
-                      const msg = `LocalEats Security Alert: I'm delivery rider ${profile?.full_name || 'Rider'}. Delivering order #${currentOrder.id.slice(0, 5)} to ${currentOrder.address}. Track my route at: https://maps.google.com/?q=${lat},${lng}. Check on me if I'm quiet for 15 mins.`;
+                      const msg = `LocalEats Security Alert: I'm delivery rider ${profile?.full_name || 'Rider'}. Delivering order #${currentOrder.id.slice(0, 5)} to ${currentOrder?.address}. Track my route at: https://maps.google.com/?q=${lat},${lng}. Check on me if I'm quiet for 15 mins.`;
                       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
                       toast.success("Notice: Safety Share template preloaded in WhatsApp!");
                     }}
@@ -3627,7 +2382,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                 }
               }}
               color="#f59e0b"
-              resetToken={`${currentOrder.delivery_status}-${arrivedAtCustomer[currentOrder.id] || false}-${cashCollected[currentOrder.id] || false}`}
+              resetToken={`${currentOrder?.delivery_status}-${arrivedAtCustomer[currentOrder.id] || false}-${cashCollected[currentOrder.id] || false}`}
             />
 
             {/* Release Mission Action */}
@@ -4361,44 +3116,7 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
   </div>
 );
 
-const getRandomHost = () => {
-  const hosts = ['a', 'b', 'c', 'd'];
-  return hosts[Math.floor(Math.random() * hosts.length)];
-};
-
-const getTilesForCoordinate = (lat: number, lng: number, extent: number = 0.015) => {
-  const list: { z: number; x: number; y: number }[] = [];
-  const zooms = [12, 13, 14, 15, 16, 17, 18];
-  
-  zooms.forEach(z => {
-    const minLat = lat - extent;
-    const maxLat = lat + extent;
-    const minLng = lng - extent;
-    const maxLng = lng + extent;
-    
-    const tileMinX = Math.floor((minLng + 180) / 360 * Math.pow(2, z));
-    const tileMaxX = Math.floor((maxLng + 180) / 360 * Math.pow(2, z));
-    
-    const tileMinY = Math.floor((1 - Math.log(Math.tan(maxLat * Math.PI / 180) + 1 / Math.cos(maxLat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
-    const tileMaxY = Math.floor((1 - Math.log(Math.tan(minLat * Math.PI / 180) + 1 / Math.cos(minLat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
-    
-    const minX = Math.min(tileMinX, tileMaxX);
-    const maxX = Math.max(tileMinX, tileMaxX);
-    const minY = Math.min(tileMinY, tileMaxY);
-    const maxY = Math.max(tileMinY, tileMaxY);
-    
-    const totalTilesInZoom = (maxX - minX + 1) * (maxY - minY + 1);
-    if (totalTilesInZoom <= 1200) {
-      for (let x = minX; x <= maxX; x++) {
-        for (let y = minY; y <= maxY; y++) {
-          list.push({ z, x, y });
-        }
-      }
-    }
-  });
-  
-  return list;
-};
+// --- Settings View Helpers (Imported) ---
 
 const ProfileView = React.memo(({ 
   profile, 
@@ -4449,44 +3167,6 @@ const ProfileView = React.memo(({
   const [syncProgress, setSyncProgress] = useState<number>(0);
   const [syncTotal, setSyncTotal] = useState<number>(0);
   const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
-
-  const getPushNotificationDiagnostics = () => {
-    const hasServiceWorker = typeof window !== 'undefined' && 'serviceWorker' in navigator;
-    const hasPushManager = typeof window !== 'undefined' && 'PushManager' in window;
-    const hasNotification = typeof window !== 'undefined' && 'Notification' in window;
-    const isIframe = () => {
-      try {
-        return typeof window !== 'undefined' && window.self !== window.top;
-      } catch {
-        return true;
-      }
-    };
-    const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-    const isTestingOrDev = hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('run.app') || hostname.includes('webcontainer') || isSupabaseMocked();
-    
-    let permission = 'prompt';
-    try {
-      if (typeof window !== 'undefined' && 'Notification' in window) {
-        permission = Notification.permission;
-      }
-    } catch (e) {
-      console.warn("Notification system permissions diagnostic offline", e);
-    }
-
-    const isBypassed = isTestingOrDev || isIframe() || !hasServiceWorker || !hasPushManager || !hasNotification;
-
-    return {
-      hasServiceWorker,
-      hasPushManager,
-      hasNotification,
-      isIframe: isIframe(),
-      isTestingOrDev,
-      permission,
-      isBypassed
-    };
-  };
-
-  const diag = getPushNotificationDiagnostics();
 
   const updateCacheMetrics = useCallback(async () => {
     if (!('caches' in window)) return;
@@ -4597,6 +3277,9 @@ const ProfileView = React.memo(({
 
   const [copied, setCopied] = useState(false);
   const [showQR, setShowQR] = useState(false);
+  const [activeTab, setActiveTab] = useState<'overview' | 'identity' | 'settings'>('overview');
+  const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
@@ -4789,46 +3472,154 @@ const ProfileView = React.memo(({
         </div>
       </header>
 
-      {/* Grid Performance Diagnostics (Opaque ratings and stats solved!) */}
-      <section className="space-y-4">
-        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Grid Performance Diagnostics</h3>
-        <div className="grid grid-cols-3 gap-3">
-          <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Orders Accepted</span>
-            <span className="text-xl font-headline font-black italic text-emerald-550">99.2%</span>
-            <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Acceptance</span>
-          </div>
-          <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Cargo Security</span>
-            <span className="text-xl font-headline font-black italic text-[#f59e0b]">100%</span>
-            <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Integrity</span>
-          </div>
-          <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Flight On-Time</span>
-            <span className="text-xl font-headline font-black italic text-cyan-400">98.4%</span>
-            <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Arrival Index</span>
-          </div>
-        </div>
+      {/* Tabs */}
+      <div className="flex bg-black/40 p-1.5 rounded-2xl mb-6 shadow-inner border border-zinc-900/50 max-w-sm mx-auto">
+        {(['overview', 'identity', 'settings'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={cn(
+              "flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+              activeTab === tab 
+                ? "bg-zinc-900 text-[#f59e0b] shadow-[0_4px_15px_rgba(0,0,0,0.5)] border border-zinc-800" 
+                : "text-zinc-550 hover:text-zinc-300"
+            )}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
 
-        {/* Tactical Kudos Badges */}
-        <div className="bg-zinc-900/65 border border-zinc-900 p-4 rounded-3xl space-y-3">
-          <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block border-b border-zinc-900 pb-1.5">Merchant Community Accolades</span>
-          <div className="flex flex-wrap gap-2 text-zinc-300">
-            <span className="px-3 py-1.5 bg-cyan-950/40 text-cyan-455 text-[10px] font-black uppercase tracking-widest rounded-xl border border-cyan-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(34,211,238,0.05)]">
-              🏎️ Fast Pilot <span className="text-xs font-mono text-cyan-500 font-bold">x32</span>
-            </span>
-            <span className="px-3 py-1.5 bg-amber-950/40 text-[#f59e0b] text-[10px] font-black uppercase tracking-widest rounded-xl border border-amber-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.05)]">
-              📦 Secure Cargo <span className="text-xs font-mono text-amber-500 font-bold">x24</span>
-            </span>
-            <span className="px-3 py-1.5 bg-emerald-950/40 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl border border-emerald-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
-              🤝 Polite Rider <span className="text-xs font-mono text-emerald-500 font-bold">x45</span>
-            </span>
-          </div>
-        </div>
-      </section>
+      {activeTab === 'overview' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Grid Performance Diagnostics (Opaque ratings and stats solved!) */}
+          <section className="space-y-4">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Grid Performance Diagnostics</h3>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Orders Accepted</span>
+                <span className="text-xl font-headline font-black italic text-emerald-550">99.2%</span>
+                <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Acceptance</span>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Cargo Security</span>
+                <span className="text-xl font-headline font-black italic text-[#f59e0b]">100%</span>
+                <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Integrity</span>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Flight On-Time</span>
+                <span className="text-xl font-headline font-black italic text-cyan-400">98.4%</span>
+                <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Arrival Index</span>
+              </div>
+            </div>
 
-      {/* Share / Invitation Protocol (Stores require driver sync IDs) */}
+            {/* Tactical Kudos Badges */}
+            <div className="bg-zinc-900/65 border border-zinc-900 p-4 rounded-3xl space-y-3">
+              <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block border-b border-zinc-900 pb-1.5">Merchant Community Accolades</span>
+              <div className="flex flex-wrap gap-2 text-zinc-300">
+                <span className="px-3 py-1.5 bg-cyan-950/40 text-cyan-455 text-[10px] font-black uppercase tracking-widest rounded-xl border border-cyan-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(34,211,238,0.05)]">
+                  🏎️ Fast Pilot <span className="text-xs font-mono text-cyan-500 font-bold">x32</span>
+                </span>
+                <span className="px-3 py-1.5 bg-amber-950/40 text-[#f59e0b] text-[10px] font-black uppercase tracking-widest rounded-xl border border-amber-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.05)]">
+                  📦 Secure Cargo <span className="text-xs font-mono text-amber-500 font-bold">x24</span>
+                </span>
+                <span className="px-3 py-1.5 bg-emerald-950/40 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl border border-emerald-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
+                  🤝 Polite Rider <span className="text-xs font-mono text-emerald-500 font-bold">x45</span>
+                </span>
+              </div>
+            </div>
+          </section>
+
+
+      {/* Fleet Configuration (Gated residential access identification specs solved!) */}
       <section className="space-y-4">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Fleet Configuration</h3>
+        <BentoCard className="bg-zinc-900 border-zinc-800 p-5 space-y-5">
+           <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Vehicle Type</span>
+              <span className="px-2 py-0.5 bg-[#f59e0b]/10 text-[#f59e0b] text-[9px] font-black uppercase rounded border border-[#f59e0b]/20">Active</span>
+           </div>
+           
+           <div className="grid grid-cols-2 gap-2">
+              {(['Road', 'MTB', 'E-Bike', 'Motor'] as UserVehicle[]).map(v => (
+                <button
+                  key={v}
+                  onClick={() => onUpdateVehicle(v)}
+                  className={cn(
+                    "flex items-center justify-center gap-2 px-4 py-3 rounded-xl border transition-all text-[10px] font-black uppercase tracking-widest active:scale-95",
+                    profile.vehicle_type === v 
+                      ? "bg-[#f59e0b] text-black border-[#f59e0b] shadow-[0_0_20px_rgba(245,158,11,0.2)]" 
+                      : "bg-black/40 text-zinc-500 border-zinc-800/50 hover:border-zinc-700"
+                  )}
+                >
+                   {v === 'Motor' && <Rocket size={12} />}
+                   {v === 'E-Bike' && <Zap size={12} />}
+                   {v === 'Road' && <Bike size={12} />}
+                   {v === 'MTB' && <Bike size={12} />}
+                   {v}
+                </button>
+              ))}
+           </div>
+
+           {/* Dynamic Vehicle Identification Specs for Security Gates & Customers */}
+           <div className="border-t border-zinc-950 pt-4 space-y-4">
+             <div className="flex items-center justify-between">
+               <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Security Gate Identification</span>
+               {showLicenseSaved ? (
+                 <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1 bg-emerald-950/20 border border-emerald-500/20 px-2 py-0.5 rounded-lg animate-fade-in animate-pulse">
+                   <Check className="w-2.5 h-2.5" /> Specs Locked
+                 </span>
+               ) : (
+                 <span className="text-[8px] font-bold text-zinc-650 uppercase tracking-widest">Instant local update</span>
+               )}
+             </div>
+
+             <div className="grid grid-cols-2 gap-3">
+               <div className="space-y-1.5 text-left">
+                 <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">License Plate ID</label>
+                 <input 
+                   type="text"
+                   value={licensePlate}
+                   onChange={e => {
+                     setLicensePlate(e.target.value.toUpperCase());
+                   }}
+                   onBlur={saveSpecs}
+                   placeholder="e.g. CZ 99 GP"
+                   className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs font-mono text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
+                 />
+               </div>
+
+               <div className="space-y-1.5 text-left">
+                 <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Vehicle Make / Color</label>
+                 <input 
+                   type="text"
+                   value={vehicleDetails}
+                   onChange={e => {
+                     setVehicleDetails(e.target.value);
+                   }}
+                   onBlur={saveSpecs}
+                   placeholder="e.g. White Yamaha NMAX"
+                   className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
+                 />
+               </div>
+             </div>
+             
+             <button
+               onClick={saveSpecs}
+               className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-zinc-300 uppercase tracking-widest rounded-xl transition-colors active:scale-95"
+             >
+               Confirm Vehicle Attributes
+              </button>
+            </div>
+          </BentoCard>
+        </section>
+        </div>
+      )}
+
+      {activeTab === 'identity' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Share / Invitation Protocol (Stores require driver sync IDs) */}
+          <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Network Identity</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4 relative overflow-hidden">
           <div className="flex items-center justify-between">
@@ -4993,7 +3784,99 @@ const ProfileView = React.memo(({
         )}
       </section>
 
+      {/* LocalEats SA Portal Network */}
+      <section className="space-y-4 pt-2">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">LocalEats SA Portal Network</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
+          <p className="text-[10px] text-zinc-400 font-sans leading-relaxed uppercase tracking-wider">
+            LocalEats South Africa operates as a fully integrated multi-portal logistics ecosystem. Easily view and access the production portals below:
+          </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Customer App */}
+            <div className="bg-zinc-950/80 border border-zinc-850 rounded-2xl p-4 flex flex-col justify-between hover:border-zinc-700 transition-all">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                    <Globe className="w-4 h-4" />
+                  </div>
+                  <span className="text-[8px] font-black text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded uppercase tracking-widest">Active</span>
+                </div>
+                <div className="text-left">
+                  <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Customer Portal</h4>
+                  <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">
+                    Place orders, view restaurant menus, and track live rider locations.
+                  </p>
+                </div>
+              </div>
+              <a 
+                href="https://localeatssa.co.za" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-zinc-900 hover:bg-zinc-850 hover:text-white border border-zinc-800 rounded-xl transition-all text-[9px] font-black uppercase tracking-widest text-zinc-400"
+              >
+                localeatssa.co.za <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            {/* Merchant App */}
+            <div className="bg-zinc-950/80 border border-zinc-850 rounded-2xl p-4 flex flex-col justify-between hover:border-zinc-700 transition-all">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-[#f59e0b]">
+                    <ShoppingBag className="w-4 h-4" />
+                  </div>
+                  <span className="text-[8px] font-black text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded uppercase tracking-widest">Active</span>
+                </div>
+                <div className="text-left">
+                  <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Merchant Dashboard</h4>
+                  <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">
+                    Storefront dispatch management for restaurants to list menus and assign orders.
+                  </p>
+                </div>
+              </div>
+              <a 
+                href="https://dashboard.localeatssa.co.za" 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-zinc-900 hover:bg-zinc-850 hover:text-white border border-zinc-800 rounded-xl transition-all text-[9px] font-black uppercase tracking-widest text-[#f59e0b]"
+              >
+                dashboard.localeatssa.co.za <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            {/* Rider App */}
+            <div className="bg-zinc-950/80 border border-[#f59e0b]/30 rounded-2xl p-4 flex flex-col justify-between ring-2 ring-[#f59e0b]/5 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-16 h-16 bg-[#f59e0b]/5 blur-[20px] rounded-full pointer-events-none" />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="w-8 h-8 rounded-xl bg-[#f59e0b]/10 border border-[#f59e0b]/20 flex items-center justify-center text-[#f59e0b]">
+                    <Smartphone className="w-4 h-4 animate-pulse" />
+                  </div>
+                  <span className="text-[8px] font-black text-white bg-[#f59e0b] px-1.5 py-0.5 rounded uppercase tracking-widest">Current</span>
+                </div>
+                <div className="text-left">
+                  <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Rider Portal</h4>
+                  <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">
+                    Dispatch logistics, live navigation routing, and safety assist tools.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-xl text-[9px] font-black uppercase tracking-widest text-zinc-300">
+                rider.localeatssa.co.za
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      </div>
+      )}
+
+      {activeTab === 'settings' && (
+        <div className="space-y-6 animate-fade-in">
+
       {/* System Settings */}
+      {fuzzyMatch(settingsSearchQuery, "device settings battery saver mode high contrast day mode alert sounds voice default navigation language display push notifications biometric access") && (
       <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Device Settings</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
@@ -5009,7 +3892,7 @@ const ProfileView = React.memo(({
             </div>
             <button 
               onClick={onToggleEcoMode}
-              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors"
+              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
             >
               <div className={cn(
                 "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
@@ -5017,26 +3900,6 @@ const ProfileView = React.memo(({
               )} />
             </button>
           </div>
-
-          {isEcoMode && (
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="bg-emerald-950/20 border border-emerald-500/20 rounded-xl p-3 flex justify-between items-center"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-emerald-400 text-xs">📈</span>
-                <div className="flex flex-col text-left">
-                  <span className="text-[10px] font-black uppercase text-emerald-400 tracking-wider font-sans">Tembisa Data-Saver Guard</span>
-                  <span className="text-[9px] text-zinc-400 font-sans">Adaptive 15s GPS intervals are conserving data packs</span>
-                </div>
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-[11px] font-mono font-black text-emerald-450 leading-none">~15MB Saved/hr</div>
-                <div className="text-[7.5px] uppercase font-black text-zinc-500 tracking-widest mt-1">Est. +1.5h Range</div>
-              </div>
-            </motion.div>
-          )}
 
           <div className="h-px bg-zinc-800 w-full" />
 
@@ -5052,7 +3915,7 @@ const ProfileView = React.memo(({
             </div>
             <button 
               onClick={onToggleHighContrastMode}
-              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors"
+              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
             >
               <div className={cn(
                 "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
@@ -5060,10 +3923,67 @@ const ProfileView = React.memo(({
               )} />
             </button>
           </div>
+          
+          <div className="h-px bg-zinc-800 w-full" />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-zinc-800 rounded-xl">
+                <Volume2 className="w-5 h-5 text-cyan-400" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-white font-sans">Alert Sounds & Voice</span>
+                <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Audio feedback and vocal announcements</span>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                const isMuted = localStorage.getItem('localeats_muted') === 'true';
+                localStorage.setItem('localeats_muted', (!isMuted).toString());
+                toast.success(isMuted ? "Sound and Voice enabled" : "Sound muted");
+                window.dispatchEvent(new Event('storage'));
+              }}
+              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
+            >
+              <div className={cn(
+                "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
+                localStorage.getItem('localeats_muted') !== 'true' ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
+              )} />
+            </button>
+          </div>
+
+          <div className="h-px bg-zinc-800 w-full" />
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-zinc-800 rounded-xl">
+                <Navigation className="w-5 h-5 text-indigo-400" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-white font-sans">Default Navigation</span>
+                <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Launch maps for order drop-offs</span>
+              </div>
+            </div>
+            <select
+              value={localStorage.getItem('localeats_nav_pref') || 'google'}
+              onChange={(e) => {
+                localStorage.setItem('localeats_nav_pref', e.target.value);
+                toast.success(`Navigation set to ${e.target.value === 'waze' ? 'Waze' : 'Google Maps'}`);
+                window.dispatchEvent(new Event('storage'));
+              }}
+              className="bg-zinc-800 text-xs font-bold text-white border border-zinc-700 rounded-xl px-3 py-2 outline-none focus:border-indigo-500"
+            >
+              <option value="google">Google Maps</option>
+              <option value="waze">Waze</option>
+            </select>
+          </div>
+
         </div>
       </section>
+      )}
 
       {/* Support & Privacy Section */}
+      {fuzzyMatch(settingsSearchQuery, "support privacy operator manual tour popia legal compliance") && (
       <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Support & Privacy</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
@@ -5106,445 +4026,557 @@ const ProfileView = React.memo(({
           </div>
         </div>
       </section>
+      )}
 
-      {/* Dynamic Customizable Notifications (Swiss-Modern style) */}
-      <section className="space-y-4">
-        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Order Alert Customization</h3>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-5">
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-[#f59e0b] shrink-0">
-              <BellRing className="w-5 h-5 shrink-0" />
-            </div>
-            <div>
-              <h4 className="text-xs font-black uppercase tracking-widest text-[#f59e0b] font-headline italic">Dynamic Notification Swapper</h4>
-              <p className="text-[10px] text-zinc-400 mt-0.5 leading-relaxed font-sans font-semibold">
-                Swap the system's dispatch announcements dynamically. Changes are preserved and integrated directly with local browser alerts and paired storefront broadcasts.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5 text-left">
-              <label htmlFor="custom-noti-title" className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Notification Title</label>
-              <input 
-                id="custom-noti-title"
-                type="text" 
-                value={notificationTitle}
-                onChange={e => onUpdateNotificationTitle(e.target.value)}
-                placeholder="e.g. New Order"
-                className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors font-sans font-bold"
-              />
-            </div>
-            <div className="space-y-1.5 text-left">
-              <label htmlFor="custom-noti-desc" className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Notification Body / Desc</label>
-              <input 
-                id="custom-noti-desc"
-                type="text" 
-                value={notificationBody}
-                onChange={e => onUpdateNotificationBody(e.target.value)}
-                placeholder="e.g. A new order is available in your area."
-                className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors font-sans"
-              />
-            </div>
-          </div>
-
-          <div className="pt-2 flex flex-col sm:flex-row gap-2">
-            <button
-              onClick={() => {
-                if ('vibrate' in navigator) {
-                  navigator.vibrate(100);
-                }
-                toast(notificationTitle, { 
-                  description: notificationBody,
-                  duration: 5000,
-                  icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
-                  style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
-                });
-              }}
-              className="flex-1 py-2.5 bg-[#f59e0b] hover:bg-amber-600 text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 text-center flex items-center justify-center gap-1.5"
-            >
-              <Zap className="w-3.5 h-3.5" /> Test Custom Notification
-            </button>
-            <button
-              onClick={() => {
-                onUpdateNotificationTitle('New Order');
-                onUpdateNotificationBody('A new order is available in your area.');
-                toast.success('Reset notifications to default templates');
-              }}
-              className="px-4 py-2.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-zinc-400 uppercase tracking-widest rounded-xl transition-colors active:scale-[0.97]"
-            >
-              Reset Default
-            </button>
-          </div>
-
-          {/* Diagnostic status block */}
-          <div className="h-px bg-zinc-800/80 my-2" />
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Push Status Diagnostic</span>
-              <span className={cn(
-                "px-2 py-0.5 text-[8px] font-black uppercase rounded tracking-wider border font-sans",
-                diag.isBypassed 
-                  ? "bg-amber-500/10 text-amber-500 border-amber-500/20" 
-                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-              )}>
-                {diag.isBypassed ? "Bypassed / Fallback Active" : "System Active"}
-              </span>
-            </div>
-
-            {diag.isBypassed && (
-              <div className="p-3 bg-zinc-950/60 rounded-xl border border-zinc-850 space-y-2">
-                <div className="flex items-start gap-2.5">
-                  <span className="text-xs text-amber-400 mt-0.5 shrink-0">⚠️</span>
-                  <div className="space-y-1">
-                    <p className="text-[10px] text-zinc-300 font-bold leading-normal font-sans">
-                      Push Notifications Bypassed on this Host
-                    </p>
-                    <p className="text-[9px] text-zinc-500 leading-relaxed font-semibold font-sans">
-                      Standard push triggers are bypassed in staging/sandbox environments (<span className="text-zinc-400 font-mono text-[8.5px]">{window.location.hostname}</span>) or preview iframes.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="h-px bg-zinc-900" />
-
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b]">Tembisa Delivery Guard Engaged</span>
-                  </div>
-                  <span className="text-[8px] font-semibold text-emerald-400 uppercase font-sans">High Reliability</span>
-                </div>
-                <p className="text-[9px] text-zinc-400 leading-normal font-medium font-sans">
-                  No worries! Live WebSocket synchronization and background backup polling are active. Clear order notifications will trigger directly in your current session view without needing browser push permissions.
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-      
-      {/* Fleet Configuration (Gated residential access identification specs solved!) */}
-      <section className="space-y-4">
-        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Fleet Configuration</h3>
-        <BentoCard className="bg-zinc-900 border-zinc-800 p-5 space-y-5">
-           <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Vehicle Type</span>
-              <span className="px-2 py-0.5 bg-[#f59e0b]/10 text-[#f59e0b] text-[9px] font-black uppercase rounded border border-[#f59e0b]/20">Active</span>
-           </div>
-           
-           <div className="grid grid-cols-2 gap-2">
-              {(['Road', 'MTB', 'E-Bike', 'Motor'] as UserVehicle[]).map(v => (
-                <button
-                  key={v}
-                  onClick={() => onUpdateVehicle(v)}
-                  className={cn(
-                    "flex items-center justify-center gap-2 px-4 py-3 rounded-xl border transition-all text-[10px] font-black uppercase tracking-widest active:scale-95",
-                    profile.vehicle_type === v 
-                      ? "bg-[#f59e0b] text-black border-[#f59e0b] shadow-[0_0_20px_rgba(245,158,11,0.2)]" 
-                      : "bg-black/40 text-zinc-500 border-zinc-800/50 hover:border-zinc-700"
-                  )}
-                >
-                   {v === 'Motor' && <Rocket size={12} />}
-                   {v === 'E-Bike' && <Zap size={12} />}
-                   {v === 'Road' && <Bike size={12} />}
-                   {v === 'MTB' && <Bike size={12} />}
-                   {v}
-                </button>
-              ))}
-           </div>
-
-           {/* Dynamic Vehicle Identification Specs for Security Gates & Customers */}
-           <div className="border-t border-zinc-950 pt-4 space-y-4">
-             <div className="flex items-center justify-between">
-               <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Security Gate Identification</span>
-               {showLicenseSaved ? (
-                 <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-1 bg-emerald-950/20 border border-emerald-500/20 px-2 py-0.5 rounded-lg animate-fade-in animate-pulse">
-                   <Check className="w-2.5 h-2.5" /> Specs Locked
-                 </span>
-               ) : (
-                 <span className="text-[8px] font-bold text-zinc-650 uppercase tracking-widest">Instant local update</span>
-               )}
-             </div>
-
-             <div className="grid grid-cols-2 gap-3">
-               <div className="space-y-1.5 text-left">
-                 <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">License Plate ID</label>
-                 <input 
-                   type="text"
-                   value={licensePlate}
-                   onChange={e => {
-                     setLicensePlate(e.target.value.toUpperCase());
-                   }}
-                   onBlur={saveSpecs}
-                   placeholder="e.g. CZ 99 GP"
-                   className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs font-mono text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
-                 />
-               </div>
-
-               <div className="space-y-1.5 text-left">
-                 <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Vehicle Make / Color</label>
-                 <input 
-                   type="text"
-                   value={vehicleDetails}
-                   onChange={e => {
-                     setVehicleDetails(e.target.value);
-                   }}
-                   onBlur={saveSpecs}
-                   placeholder="e.g. White Yamaha NMAX"
-                   className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
-                 />
-               </div>
-             </div>
-             
-             <button
-               onClick={saveSpecs}
-               className="w-full py-2.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-zinc-300 uppercase tracking-widest rounded-xl transition-colors active:scale-95"
-             >
-               Confirm Vehicle Attributes
-              </button>
-            </div>
-          </BentoCard>
-        </section>
-                  {/* Offline Roadmap Cache */}
-      <section className="space-y-4">
-        <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-650 ml-2">Offline Roadmap Cache</h3>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 relative overflow-hidden space-y-6">
-          <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
-            <Radar className="w-16 h-16 text-emerald-500" />
-          </div>
-          
-          <div className="flex items-center justify-between relative z-10">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400">
-                <Database className="w-5 h-5" />
-              </div>
-              <div className="text-left">
-                <p className="text-[12px] font-black uppercase tracking-[0.1em] text-white">Active Cache Eng: v2.1</p>
-                <p className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b] mt-0.5">
-                  {cachedTileCount > 0 ? `${cachedTileCount} tiles loaded (${cachedSizeStr})` : '0 tiles cached'}
-                </p>
-              </div>
-            </div>
-            {cachedTileCount > 0 && (
-              <button 
-                onClick={clearMapCache}
-                className="p-2 bg-red-950/20 hover:bg-red-900/30 border border-red-500/20 hover:border-red-500/40 text-red-400 rounded-xl transition-all active:scale-95"
-                title="Purge Map Cache"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-
-          {/* Strict Offline Simulator Switch */}
-          <div className="p-4 bg-black/40 border border-zinc-850 rounded-2xl flex items-center justify-between gap-4">
-            <div className="flex flex-col text-left">
-              <span className="text-[11px] font-bold text-white font-sans">Simulate Strict Offline Mode</span>
-              <span className="text-[9px] text-zinc-550 leading-relaxed font-sans mt-0.5">
-                Forces map to bypass live web cells and render strictly using local cached coordinate layers
-              </span>
-            </div>
-            <button 
-              onClick={toggleForceOffline}
-              className={cn(
-                "w-12 h-6 rounded-full relative transition-colors shrink-0",
-                forceOffline ? "bg-red-600" : "bg-zinc-800"
-              )}
-            >
-              <div className={cn(
-                "w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow-md",
-                forceOffline ? "left-6.5" : "left-0.5"
-              )} />
-            </button>
-          </div>
-
-          {/* Deliver Sectors for Pre-Downloading */}
-          <div className="space-y-3">
-            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block text-left">Pre-download Core Sectors</span>
-            
-            {[
-              { id: 'tembisa', name: 'Tembisa Hub Area', lat: -25.9964, lng: 28.2268, approx: 'Central Plaza & Retail Sector' },
-              { id: 'kaalfontein', name: 'Kaalfontein Sector B', lat: -25.9850, lng: 28.2450, approx: 'North Route Gate & Residential' },
-              { id: 'ivory', name: 'Ivory Park Sector C', lat: -25.9995, lng: 28.2580, approx: 'East Link & Security Checks' }
-            ].map((sector) => {
-              const isSyncing = syncingSector === sector.name;
-              return (
-                <div 
-                  key={sector.id} 
-                  className="bg-black/30 border border-zinc-850 p-4 rounded-2xl flex flex-col space-y-3 text-left relative overflow-hidden"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex flex-col">
-                      <span className="text-[11px] font-black uppercase text-zinc-200 tracking-wide">{sector.name}</span>
-                      <span className="text-[9px] text-zinc-500 mt-0.5 leading-snug">{sector.approx}</span>
-                      <span className="text-[8px] font-mono text-zinc-600 mt-1 uppercase">Coords: {sector.lat.toFixed(4)}S / {sector.lng.toFixed(4)}E</span>
-                    </div>
-                    <button
-                      onClick={() => downloadSectorTiles(sector.name, sector.lat, sector.lng)}
-                      disabled={syncingSector !== null}
-                      className={cn(
-                        "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 select-none transition-all active:scale-95 shrink-0",
-                        isSyncing 
-                          ? "bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20"
-                          : syncingSector !== null
-                            ? "bg-zinc-900 text-zinc-650 border border-zinc-850 cursor-not-allowed"
-                            : "bg-[#f59e0b] text-black border border-[#f59e0b] hover:bg-amber-600"
-                      )}
-                    >
-                      {isSyncing ? (
-                        <>
-                          <Radar className="w-3.5 h-3.5 animate-spin" />
-                          <span>Caching</span>
-                        </>
-                      ) : (
-                        <>
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Sync Coords</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-
-                  {/* Progress Bar for downloading sector tiles */}
-                  <AnimatePresence>
-                    {isSyncing && (
-                      <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="space-y-1.5 overflow-hidden"
-                      >
-                        <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
-                          <motion.div 
-                            className="bg-[#f59e0b] h-1.5 rounded-full" 
-                            style={{ width: `${(syncProgress / syncTotal) * 100}%` }}
-                            transition={{ duration: 0.1 }}
-                          />
-                        </div>
-                        <div className="flex justify-between items-center text-[8px] font-mono uppercase text-[#f59e0b]">
-                          <span>Downloading sector maps...</span>
-                          <span>{Math.round((syncProgress / syncTotal) * 100)}% ({syncProgress}/{syncTotal})</span>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="pt-4 border-t border-zinc-800/50 flex justify-between items-center text-[8px] font-black uppercase tracking-wider text-zinc-550">
-            <span>Grid Integrity Checklist</span>
-            <span className="text-emerald-400">P2P Relay Ready</span>
-          </div>
-        </div>
-      </section>
-
-      {/* System Diagnostics & Bypass Hotlines (Rider emergency support solved!) */}
-      <section className="space-y-3">
+      {/* Advanced Settings Toggle */}
+      {!settingsSearchQuery && (
         <button
-          onClick={() => setShowDiagnostics(!showDiagnostics)}
-          className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between text-left hover:border-zinc-750 transition-colors"
+          onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+          className="w-full bg-zinc-900 border border-zinc-800 rounded-[2rem] p-4 flex items-center justify-between text-left hover:border-zinc-750 transition-colors mt-8"
         >
           <div className="flex items-center gap-3">
-            <Activity className="w-5 h-5 text-cyan-400" />
+            <div className="p-2 bg-zinc-800 rounded-xl">
+              <SlidersHorizontal className="w-5 h-5 text-zinc-400" />
+            </div>
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-white">System Diagnostics & Dispatch Comms</p>
-              <p className="text-[8.5px] font-black uppercase text-zinc-550 tracking-widest mt-0.5">Bypass Support Hotlines</p>
+              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-white">Advanced Tools</p>
+              <p className="text-[8.5px] font-black uppercase text-zinc-550 tracking-widest mt-0.5">Diagnostics, Map Cache, Deactivation</p>
             </div>
           </div>
-          <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform duration-200", showDiagnostics ? "rotate-90 text-cyan-400" : "")} />
+          <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform duration-200", showAdvancedSettings ? "rotate-90 text-zinc-400" : "")} />
         </button>
+      )}
 
-        <AnimatePresence>
-          {showDiagnostics && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="bg-zinc-950 border border-zinc-900 rounded-[2rem] p-5 space-y-4">
-                <div className="bg-zinc-900/60 p-4 rounded-2xl border border-zinc-800 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-black uppercase text-zinc-400 tracking-widest flex items-center gap-1.5">
-                      <Radar className="w-3.5 h-3.5 text-[#f59e0b]" /> Network Signal Analyzer
-                    </span>
-                    <button
-                      onClick={runDiagnostics}
-                      disabled={pinging}
-                      className="px-2.5 py-1 bg-cyan-950 text-cyan-400 hover:text-white border border-cyan-800/30 text-[8px] font-black uppercase rounded shadow-md font-mono transition-all"
-                    >
-                      {pinging ? "PINGING..." : "PING TEST"}
-                    </button>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px] font-mono">
-                      <span className="text-zinc-500 uppercase font-black">Latency</span>
-                      {pingResult ? (
-                        <span className="text-[#f59e0b] font-bold">{pingResult}ms</span>
-                      ) : pinging ? (
-                        <span className="text-zinc-650 animate-pulse">Testing</span>
-                      ) : (
-                        <span className="text-zinc-700">Not Tested</span>
-                      )}
-                    </div>
-                    <div className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px] font-mono">
-                      <span className="text-zinc-500 uppercase font-black">GPS Lock</span>
-                      <span className="text-emerald-500 font-bold">SECURE</span>
-                    </div>
-                  </div>
+      {(showAdvancedSettings || settingsSearchQuery) && (
+        <div className="space-y-6 animate-fade-in mt-4">
+          
+          {/* Dynamic Customizable Notifications */}
+          {(!settingsSearchQuery || "order alert customization notification dynamic swapper".includes(settingsSearchQuery.toLowerCase())) && (
+          <section className="space-y-4">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Order Alert Customization</h3>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-5">
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-[#f59e0b] shrink-0">
+                  <BellRing className="w-5 h-5 shrink-0" />
                 </div>
-
-                <div className="space-y-2 text-left">
-                  <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Active Hotline Channels</span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => window.open("tel:08005553287", "_self")}
-                      className="p-3 bg-zinc-900 hover:bg-[#f59e0b]/5 border border-zinc-800 hover:border-[#f59e0b]/30 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center"
-                    >
-                      📞 Dispatch Comms
-                    </button>
-                    <button
-                      onClick={() => toast.info("Simulated emergency help signal broadcasted")}
-                      className="p-3 bg-red-950/40 hover:bg-red-900/40 border border-red-500/20 hover:border-red-500 text-red-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center animate-pulse"
-                    >
-                      🚨 Emergency Desk
-                    </button>
-                  </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-widest text-[#f59e0b] font-headline italic">Dynamic Notification Swapper</h4>
+                  <p className="text-[10px] text-zinc-400 mt-0.5 leading-relaxed font-sans font-semibold">
+                    Swap the system's dispatch announcements dynamically.
+                  </p>
                 </div>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </section>
 
-      <section className="space-y-3 pt-4">
-        <BentoCard className="p-2 border-zinc-800/30">
-          <button className="w-full flex items-center justify-between p-3 text-zinc-350 hover:text-white transition-colors">
-            <div className="flex items-center gap-3">
-              <Smartphone className="w-4 h-4 text-zinc-500" />
-              <span className="text-xs font-bold uppercase tracking-widest">Device Sync Mode</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5 text-left">
+                  <label htmlFor="custom-noti-title" className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Notification Title</label>
+                  <input 
+                    id="custom-noti-title"
+                    type="text" 
+                    value={notificationTitle}
+                    onChange={e => onUpdateNotificationTitle(e.target.value)}
+                    placeholder="e.g. New Order"
+                    className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors font-sans font-bold"
+                  />
+                </div>
+                <div className="space-y-1.5 text-left">
+                  <label htmlFor="custom-noti-desc" className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Notification Body / Desc</label>
+                  <input 
+                    id="custom-noti-desc"
+                    type="text" 
+                    value={notificationBody}
+                    onChange={e => onUpdateNotificationBody(e.target.value)}
+                    placeholder="e.g. A new order is available in your area."
+                    className="w-full bg-black/65 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors font-sans"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row gap-2">
+                <button
+                  onClick={() => {
+                    if ('vibrate' in navigator) {
+                      navigator.vibrate(100);
+                    }
+                    toast(notificationTitle, { 
+                      description: notificationBody,
+                      duration: 5000,
+                      icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
+                      style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
+                    });
+                  }}
+                  className="flex-1 py-2.5 bg-[#f59e0b] hover:bg-amber-600 text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all active:scale-95 text-center flex items-center justify-center gap-1.5"
+                >
+                  <Zap className="w-3.5 h-3.5" /> Test Custom Notification
+                </button>
+                <button
+                  onClick={() => {
+                    onUpdateNotificationTitle('New Order');
+                    onUpdateNotificationBody('A new order is available in your area.');
+                    toast.success('Reset notifications to default templates');
+                  }}
+                  className="px-4 py-2.5 bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-black text-zinc-400 uppercase tracking-widest rounded-xl transition-colors active:scale-[0.97]"
+                >
+                  Reset Default
+                </button>
+              </div>
+
             </div>
-            <ChevronRight className="w-4 h-4 text-zinc-700" />
-          </button>
-        </BentoCard>
-        
-        <BentoCard className="p-2 border-zinc-900 bg-red-500/5">
-          <button 
-            onClick={onLogout}
-            className="w-full flex items-center justify-between p-3 text-red-500/70 hover:text-red-500 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <LogOut className="w-4 h-4" />
-              <span className="text-xs font-bold uppercase tracking-widest">Deactivate Hub</span>
+          </section>
+          )}
+
+
+          {/* Offline Roadmap Cache */}
+          {fuzzyMatch(settingsSearchQuery, "offline roadmap cache simulate map sync pre-download") && (
+          <section className="space-y-4">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-650 ml-2">Offline Roadmap Cache</h3>
+            <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 relative overflow-hidden space-y-6">
+              <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                <Radar className="w-16 h-16 text-emerald-500" />
+              </div>
+              
+              <div className="flex items-center justify-between relative z-10">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-emerald-500/10 rounded-xl border border-emerald-500/20 text-emerald-400">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-[12px] font-black uppercase tracking-[0.1em] text-white">Active Cache Eng: v2.1</p>
+                    <p className="text-[9px] font-black uppercase tracking-widest text-[#f59e0b] mt-0.5">
+                      {cachedTileCount > 0 ? `${cachedTileCount} tiles loaded (${cachedSizeStr})` : '0 tiles cached'}
+                    </p>
+                  </div>
+                </div>
+                {cachedTileCount > 0 && (
+                  <button 
+                    onClick={clearMapCache}
+                    className="p-2 bg-red-950/20 hover:bg-red-900/30 border border-red-500/20 hover:border-red-500/40 text-red-400 rounded-xl transition-all active:scale-95"
+                    title="Purge Map Cache"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Strict Offline Simulator Switch */}
+              <div className="p-4 bg-black/40 border border-zinc-850 rounded-2xl flex items-center justify-between gap-4">
+                <div className="flex flex-col text-left">
+                  <span className="text-[11px] font-bold text-white font-sans">Simulate Strict Offline Mode</span>
+                  <span className="text-[9px] text-zinc-550 leading-relaxed font-sans mt-0.5">
+                    Forces map to bypass live web cells and render strictly using local cached coordinate layers
+                  </span>
+                </div>
+                <button 
+                  onClick={toggleForceOffline}
+                  className={cn(
+                    "w-12 h-6 rounded-full relative transition-colors shrink-0",
+                    forceOffline ? "bg-red-600" : "bg-zinc-800"
+                  )}
+                >
+                  <div className={cn(
+                    "w-5 h-5 bg-white rounded-full absolute top-0.5 transition-all shadow-md",
+                    forceOffline ? "left-6.5" : "left-0.5"
+                  )} />
+                </button>
+              </div>
+
+              {/* Deliver Sectors for Pre-Downloading */}
+              <div className="space-y-3">
+                <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block text-left">Pre-download Core Sectors</span>
+                
+                {[
+                  { id: 'tembisa', name: 'Tembisa Hub Area', lat: -25.9964, lng: 28.2268, approx: 'Central Plaza & Retail Sector' },
+                  { id: 'kaalfontein', name: 'Kaalfontein Sector B', lat: -25.9850, lng: 28.2450, approx: 'North Route Gate & Residential' },
+                  { id: 'ivory', name: 'Ivory Park Sector C', lat: -25.9995, lng: 28.2580, approx: 'East Link & Security Checks' }
+                ].map((sector) => {
+                  const isSyncing = syncingSector === sector.name;
+                  return (
+                    <div 
+                      key={sector.id} 
+                      className="bg-black/30 border border-zinc-850 p-4 rounded-2xl flex flex-col space-y-3 text-left relative overflow-hidden"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col">
+                          <span className="text-[11px] font-black uppercase text-zinc-200 tracking-wide">{sector.name}</span>
+                          <span className="text-[9px] text-zinc-500 mt-0.5 leading-snug">{sector.approx}</span>
+                          <span className="text-[8px] font-mono text-zinc-600 mt-1 uppercase">Coords: ${sector.lat.toFixed(4)}S / ${sector.lng.toFixed(4)}E</span>
+                        </div>
+                        <button
+                          onClick={() => downloadSectorTiles(sector.name, sector.lat, sector.lng)}
+                          disabled={syncingSector !== null}
+                          className={cn(
+                            "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 select-none transition-all active:scale-95 shrink-0",
+                            isSyncing 
+                              ? "bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/20"
+                              : syncingSector !== null
+                                ? "bg-zinc-900 text-zinc-650 border border-zinc-850 cursor-not-allowed"
+                                : "bg-[#f59e0b] text-black border border-[#f59e0b] hover:bg-amber-600"
+                          )}
+                        >
+                          {isSyncing ? (
+                            <>
+                              <Radar className="w-3.5 h-3.5 animate-spin" />
+                              <span>Caching</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-3.5 h-3.5" />
+                              <span>Sync Coords</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Progress Bar for downloading sector tiles */}
+                      <AnimatePresence>
+                        {isSyncing && (
+                          <motion.div 
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="space-y-1.5 overflow-hidden"
+                          >
+                            <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                              <motion.div 
+                                className="bg-[#f59e0b] h-1.5 rounded-full" 
+                                style={{ width: `${(syncProgress / syncTotal) * 100}%` }}
+                                transition={{ duration: 0.1 }}
+                              />
+                            </div>
+                            <div className="flex justify-between items-center text-[8px] font-mono uppercase text-[#f59e0b]">
+                              <span>Downloading sector maps...</span>
+                              <span>{Math.round((syncProgress / syncTotal) * 100)}% ({syncProgress}/{syncTotal})</span>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="pt-4 border-t border-zinc-800/50 flex justify-between items-center text-[8px] font-black uppercase tracking-wider text-zinc-550">
+                <span>Grid Integrity Checklist</span>
+                <span className="text-emerald-400">P2P Relay Ready</span>
+              </div>
             </div>
-            <ChevronRight className="w-4 h-4 text-red-900" />
-          </button>
-        </BentoCard>
-      </section>
+          </section>
+          )}
+
+          {/* System Diagnostics & Bypass Hotlines */}
+          {fuzzyMatch(settingsSearchQuery, "system diagnostics dispatch comms support hotlines") && (
+          <section className="space-y-3">
+            <button
+              onClick={() => setShowDiagnostics(!showDiagnostics)}
+              className="w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between text-left hover:border-zinc-750 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Activity className="w-5 h-5 text-cyan-400" />
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-[0.1em] text-white">System Diagnostics & Dispatch Comms</p>
+                  <p className="text-[8.5px] font-black uppercase text-zinc-550 tracking-widest mt-0.5">Bypass Support Hotlines</p>
+                </div>
+              </div>
+              <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform duration-200", showDiagnostics ? "rotate-90 text-cyan-400" : "")} />
+            </button>
+
+            <AnimatePresence>
+              {showDiagnostics && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="bg-zinc-950 border border-zinc-900 rounded-[2rem] p-5 space-y-4">
+                    <div className="bg-zinc-900/60 p-4 rounded-2xl border border-zinc-800 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] font-black uppercase text-zinc-400 tracking-widest flex items-center gap-1.5">
+                          <Radar className="w-3.5 h-3.5 text-[#f59e0b]" /> Network Signal Analyzer
+                        </span>
+                        <button
+                          onClick={runDiagnostics}
+                          disabled={pinging}
+                          className="px-2.5 py-1 bg-cyan-950 text-cyan-400 hover:text-white border border-cyan-800/30 text-[8px] font-black uppercase rounded shadow-md font-mono transition-all"
+                        >
+                          {pinging ? "PINGING..." : "PING TEST"}
+                        </button>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px] font-mono">
+                          <span className="text-zinc-500 uppercase font-black">Latency</span>
+                          {pingResult ? (
+                            <span className="text-[#f59e0b] font-bold">{pingResult}ms</span>
+                          ) : pinging ? (
+                            <span className="text-zinc-650 animate-pulse">Testing</span>
+                          ) : (
+                            <span className="text-zinc-700">Not Tested</span>
+                          )}
+                        </div>
+                        <div className="bg-black/40 border border-zinc-900 p-3 rounded-xl flex justify-between items-center text-[10px] font-mono">
+                          <span className="text-zinc-500 uppercase font-black">GPS Lock</span>
+                          <span className="text-emerald-500 font-bold">SECURE</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 text-left">
+                      <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Active Hotline Channels</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => window.open("tel:08005553287", "_self")}
+                          className="p-3 bg-zinc-900 hover:bg-[#f59e0b]/5 border border-zinc-800 hover:border-[#f59e0b]/30 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center"
+                        >
+                          📞 Dispatch Comms
+                        </button>
+                        <button
+                          onClick={() => toast.info("Simulated emergency help signal broadcasted")}
+                          className="p-3 bg-red-950/40 hover:bg-red-900/40 border border-red-500/20 hover:border-red-500 text-red-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all text-center animate-pulse"
+                        >
+                          🚨 Emergency Desk
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </section>
+          )}
+
+          {/* Wipe Hub Device Sync */}
+          {fuzzyMatch(settingsSearchQuery, "wipe reset logout deactivate hub device sync") && (
+          <section className="space-y-3 pt-4 border-t border-zinc-800">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-red-500 ml-1">Danger Zone</h3>
+            
+            <div className="grid grid-cols-2 gap-2">
+              <BentoCard className="p-2 border-zinc-900 bg-red-500/5 hover:bg-red-500/10 transition-colors cursor-pointer">
+                <button 
+                  onClick={() => {
+                    if(window.confirm('CRITICAL: This will wipe all local order history, caches, and telemetry. Proceed?')) {
+                      localStorage.clear();
+                      window.location.reload();
+                    }
+                  }}
+                  className="w-full flex items-center justify-between p-3 text-red-500/70 hover:text-red-500 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <Trash2 className="w-4 h-4" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Factory<br/>Wipe</span>
+                  </div>
+                </button>
+              </BentoCard>
+
+              <BentoCard className="p-2 border-zinc-900 bg-red-500/5 hover:bg-red-500/10 transition-colors cursor-pointer">
+                <button 
+                  onClick={onLogout}
+                  className="w-full flex items-center justify-between p-3 text-red-500/70 hover:text-red-500 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <LogOut className="w-4 h-4" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Deactivate<br/>Hub</span>
+                  </div>
+                </button>
+              </BentoCard>
+            </div>
+          </section>
+          )}
+
+        </div>
+      )}
+
+      {/* Spacing for bottom floating search bar so content doesn't get obscured */}
+          <div className="h-32" />
+
+          {/* Floating Quick Actions & Results panel expanding UPWARDS from bottom search */}
+          {settingsSearchQuery && (
+            <div className="fixed bottom-40 left-4 right-4 z-50 max-w-md mx-auto">
+              <div className="bg-zinc-950/95 backdrop-blur-md border border-zinc-800 rounded-2xl p-4 shadow-2xl space-y-3 max-h-[50vh] overflow-y-auto">
+                <span className="text-[9px] font-black tracking-widest text-[#f59e0b] uppercase block">Quick Actions</span>
+                
+                <div className="space-y-2">
+                  {/* Battery / Eco Mode Quick Action */}
+                  {fuzzyMatch(settingsSearchQuery, "battery saver mode eco energy") && (
+                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
+                      <div className="flex items-center gap-3">
+                        <Zap className={cn("w-4 h-4", isEcoMode ? "text-amber-500 animate-pulse" : "text-zinc-500")} />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-white">Battery Saver Mode</span>
+                          <span className="text-[9px] text-zinc-500 font-sans">Enable power protocol</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={onToggleEcoMode}
+                        className={cn(
+                          "w-12 h-6 rounded-full relative transition-colors shrink-0",
+                          isEcoMode ? "bg-amber-500" : "bg-zinc-800"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-5 h-5 rounded-full absolute top-0.5 transition-all bg-white shadow-md",
+                          isEcoMode ? "left-6.5" : "left-0.5"
+                        )} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* High Contrast Quick Action */}
+                  {fuzzyMatch(settingsSearchQuery, "high contrast day mode screen") && (
+                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
+                      <div className="flex items-center gap-3">
+                        <Sun className={cn("w-4 h-4", isHighContrastMode ? "text-yellow-400" : "text-zinc-500")} />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-white">High Contrast Day Mode</span>
+                          <span className="text-[9px] text-zinc-500 font-sans">Enhanced outdoor visibility</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={onToggleHighContrastMode}
+                        className={cn(
+                          "w-12 h-6 rounded-full relative transition-colors shrink-0",
+                          isHighContrastMode ? "bg-yellow-400" : "bg-zinc-800"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-5 h-5 rounded-full absolute top-0.5 transition-all bg-white shadow-md",
+                          isHighContrastMode ? "left-6.5" : "left-0.5"
+                        )} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Language Display Quick Action */}
+                  {fuzzyMatch(settingsSearchQuery, "language display local localization xhosa zulu afrikaans") && (
+                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
+                      <div className="flex items-center gap-3">
+                        <Globe className="w-4 h-4 text-blue-400" />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-white">Language Display</span>
+                          <span className="text-[9px] text-zinc-500 font-sans">App localization</span>
+                        </div>
+                      </div>
+                      <select 
+                        className="bg-zinc-850 border border-zinc-750 text-xs font-bold text-white rounded-lg px-2 py-1 outline-none max-w-[120px]"
+                        value={localStorage.getItem('localeats_lang') || 'en'}
+                        onChange={(e) => {
+                          localStorage.setItem('localeats_lang', e.target.value);
+                          toast.success("Language updated", {
+                            description: "Changes will apply on next app launch.",
+                          });
+                          window.dispatchEvent(new Event('storage'));
+                        }}
+                      >
+                        <option value="en">English (US)</option>
+                        <option value="es">Español</option>
+                        <option value="fr">Français</option>
+                        <option value="de">Deutsch</option>
+                        <option value="zu">isiZulu</option>
+                        <option value="xh">isiXhosa</option>
+                        <option value="af">Afrikaans</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Push Notifications Quick Action */}
+                  {fuzzyMatch(settingsSearchQuery, "push notifications alerts orders") && (
+                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
+                      <div className="flex items-center gap-3">
+                        <BellRing className="w-4 h-4 text-rose-400" />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-white">Push Notifications</span>
+                          <span className="text-[9px] text-zinc-500 font-sans">Alerts for new orders</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const isEnabled = localStorage.getItem('localeats_push_enabled') !== 'false';
+                          localStorage.setItem('localeats_push_enabled', (!isEnabled).toString());
+                          toast.success(!isEnabled ? "Push notifications enabled" : "Push notifications paused");
+                          window.dispatchEvent(new Event('storage'));
+                        }}
+                        className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
+                      >
+                        <div className={cn(
+                          "w-5 h-5 rounded-full absolute top-0.5 transition-all shadow-md",
+                          localStorage.getItem('localeats_push_enabled') !== 'false' ? "left-6.5 bg-rose-400" : "left-0.5 bg-zinc-400"
+                        )} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Biometric Quick Action */}
+                  {fuzzyMatch(settingsSearchQuery, "biometric access faceid touchid") && (
+                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
+                      <div className="flex items-center gap-3">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-white">Biometric Access</span>
+                          <span className="text-[9px] text-zinc-500 font-sans">FaceID/TouchID security</span>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={() => {
+                          const isEnabled = localStorage.getItem('localeats_bio_enabled') === 'true';
+                          if (!isEnabled) {
+                            localStorage.setItem('localeats_bio_enabled', 'true');
+                            toast.success("Biometric security activated");
+                          } else {
+                            localStorage.setItem('localeats_bio_enabled', 'false');
+                            toast.success("Biometric security disabled");
+                          }
+                          window.dispatchEvent(new Event('storage'));
+                        }}
+                        className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
+                      >
+                        <div className={cn(
+                          "w-5 h-5 rounded-full absolute top-0.5 transition-all shadow-md",
+                          localStorage.getItem('localeats_bio_enabled') === 'true' ? "left-6.5 bg-emerald-400" : "left-0.5 bg-zinc-400"
+                        )} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Offline Cache Sync / Purge Quick Action */}
+                  {fuzzyMatch(settingsSearchQuery, "offline maps roadmap cache download pre-download") && (
+                    <div className="flex flex-col gap-2 p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <MapPin className="w-4 h-4 text-orange-400" />
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold text-white">Offline Roadmap Cache</span>
+                            <span className="text-[9px] text-zinc-500 font-sans">{cachedTileCount} tiles ({cachedSizeStr}) cached</span>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={clearMapCache}
+                          className="px-2.5 py-1 bg-red-500/15 hover:bg-red-500/20 text-red-400 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
+                        >
+                          Purge
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Pinned Search Input at bottom (above bottom nav bar) */}
+          <div className="fixed bottom-24 left-4 right-4 z-50 max-w-md mx-auto">
+            <div className="relative bg-zinc-950/95 backdrop-blur-md p-1 border border-zinc-850 rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.8)]">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#f59e0b]" />
+              <input 
+                type="text"
+                placeholder="Search settings (e.g. Battery, Language)..."
+                value={settingsSearchQuery}
+                onChange={(e) => setSettingsSearchQuery(e.target.value)}
+                className="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl pl-11 pr-4 py-3.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#f59e0b] transition-colors font-sans"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="text-center pt-8">
         <p className="text-[8px] font-mono text-zinc-700 uppercase tracking-widest">v2.4.0 • Build ID-LX7</p>
@@ -5784,8 +4816,6 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
 
 // --- App Hub ---
 
-type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'tracking' | 'merchant';
-
 // Fallback UI for fatal React rendering exceptions
 function FallbackComponent({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) {
   return (
@@ -5832,6 +4862,51 @@ export function App() {
   const [view, setView] = useState<AppView>(() => {
     return (localStorage.getItem('localeats_view') as AppView) || 'dash';
   });
+
+  // Minimum Viable Trip Filter: Commit pending route if navigation (view === 'move') remains active for > 2 minutes (120 seconds)
+  useEffect(() => {
+    if (view !== 'move') return;
+
+    const interval = setInterval(() => {
+      try {
+        const pendingStr = localStorage.getItem('localeats_pending_route');
+        if (!pendingStr) return;
+
+        const pending = JSON.parse(pendingStr);
+        if (pending && !pending.committed) {
+          const elapsedMs = Date.now() - pending.timestamp;
+          if (elapsedMs >= 120000) { // 2 minutes
+            // Commit to recent routes!
+            const recent = JSON.parse(localStorage.getItem('localeats_recent_routes') || '[]');
+            const newRoute = {
+              id: Date.now().toString(),
+              name: pending.name,
+              lat: pending.lat,
+              lng: pending.lng,
+              timestamp: Date.now()
+            };
+            const filtered = recent.filter((r: {lat: number, lng: number}) => !(r.lat === pending.lat && r.lng === pending.lng));
+            const updated = [newRoute, ...filtered].slice(0, 5);
+            localStorage.setItem('localeats_recent_routes', JSON.stringify(updated));
+            
+            // Mark pending as committed
+            pending.committed = true;
+            localStorage.setItem('localeats_pending_route', JSON.stringify(pending));
+            
+            toast.success("Route cached offline", {
+              description: `"${pending.name}" added to Recent Routes (minimum trip duration met).`
+            });
+            window.dispatchEvent(new Event('storage'));
+          }
+        }
+      } catch (err) {
+        console.error("Error processing pending route", err);
+      }
+    }, 5000); // Check every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [view]);
+
   const [isEcoMode, setIsEcoMode] = useState(() => localStorage.getItem('localeats_eco') === 'true');
   const [weather, setWeather] = useState<WeatherData | null>(() => {
     try {
@@ -5872,7 +4947,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    updateCacheMetricsInApp();
+    setTimeout(() => updateCacheMetricsInApp(), 0);
     const interval = setInterval(updateCacheMetricsInApp, 5000);
     return () => clearInterval(interval);
   }, [updateCacheMetricsInApp]);
@@ -5904,7 +4979,7 @@ export function App() {
     };
   }, []);
 
-  const handleToggleForceOffline = useCallback(() => {
+  const handleToggleForceOffline = () => {
     setForceOffline(prev => {
       const newVal = !prev;
       localStorage.setItem('localeats_force_offline', newVal.toString());
@@ -5917,9 +4992,9 @@ export function App() {
       window.dispatchEvent(new Event('storage'));
       return newVal;
     });
-  }, []);
+  };
 
-  const toggleEcoMode = useCallback(() => {
+  const toggleEcoMode = () => {
     setIsEcoMode(prev => {
       const newVal = !prev;
       localStorage.setItem('localeats_eco', newVal.toString());
@@ -5927,9 +5002,9 @@ export function App() {
       window.dispatchEvent(new Event('storage'));
       return newVal;
     });
-  }, []);
+  };
 
-  const toggleHighContrastMode = useCallback(() => {
+  const toggleHighContrastMode = () => {
     setIsHighContrastMode(prev => {
       const newVal = !prev;
       localStorage.setItem('localeats_contrast', newVal.toString());
@@ -5937,7 +5012,7 @@ export function App() {
       window.dispatchEvent(new Event('storage'));
       return newVal;
     });
-  }, []);
+  };
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
   const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
   
@@ -6022,20 +5097,24 @@ export function App() {
       if (currentStatus === 'ready_for_pickup' && prevStatus !== 'ready_for_pickup') {
         const triggerAlert = async () => {
           try {
-            // 1. Audio Alert (Psychological sound synthesis)
-            await audioSynth.playOrderAssigned();
+            const isMuted = localStorage.getItem('localeats_muted') === 'true';
+            
+            if (!isMuted) {
+              // 1. Audio Alert (Psychological sound synthesis)
+              await audioSynth.playOrderAssigned();
 
-            // 2. Haptic Feedback
-            if ('vibrate' in navigator) {
-              navigator.vibrate([200, 100, 200]);
+              // 2. Voice Announcement
+              if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(`Order is ready at ${order.restaurant_name || 'the store'}`);
+                utterance.rate = 0.9;
+                utterance.pitch = 1.1;
+                window.speechSynthesis.speak(utterance);
+              }
             }
 
-            // 3. Voice Announcement
-            if ('speechSynthesis' in window) {
-              const utterance = new SpeechSynthesisUtterance(`Order is ready at ${order.restaurant_name || 'the store'}`);
-              utterance.rate = 0.9;
-              utterance.pitch = 1.1;
-              window.speechSynthesis.speak(utterance);
+            // 3. Haptic Feedback
+            if ('vibrate' in navigator) {
+              navigator.vibrate([200, 100, 200]);
             }
 
             toast.success(`Order is ready: ${order.restaurant_name}`, {
@@ -6576,7 +5655,7 @@ export function App() {
     } finally {
       isFetchingConnRef.current = false;
     }
-  }, [user, profile, merchantAllowExternal, merchantCashTrust, merchantAutoLook, dispatchToMarketplace, notificationTitle, notificationBody]);
+  }, [user, profile, merchantAllowExternal, merchantCashTrust, merchantAutoLook, dispatchToMarketplace, notificationTitle, notificationBody, setAvailableOrders, setSurgeMultiplier]);
 
   const fetchActiveOrdersAndHistory = useCallback(async () => {
     if (!user) return;
@@ -6678,7 +5757,7 @@ export function App() {
     } catch (e) {
       console.warn('Quietly tolerating active orders or history sync timeout', e);
     }
-  }, [user]);
+  }, [user, setActiveOrders, setHistory]);
 
   // Granular Notifications Protocol
   useEffect(() => {
@@ -6736,6 +5815,45 @@ export function App() {
   }
 
   // Robust Network-Agnostic Transactional Queue Replay System
+  
+  const syncLocationQueue = useCallback(async () => {
+    if (!navigator.onLine || isSupabaseMocked() || !user) return;
+    interface LocSyncItem {
+      lat: number;
+      lng: number;
+      heading: number;
+      speed: number;
+      captured_at: string;
+      is_mocked: boolean;
+      suspicious: boolean;
+      orders: string[];
+    }
+    try {
+       const queueStr = localStorage.getItem('loc_sync_queue');
+       if (!queueStr) return;
+       const queue = safeJsonParse<LocSyncItem[]>(queueStr, []);
+       if (!Array.isArray(queue) || queue.length === 0) return;
+       
+       const latest = queue[queue.length - 1];
+       await getSupabase().from('rider_profiles').update({ current_latitude: latest.lat, current_longitude: latest.lng, updated_at: new Date().toISOString() }).eq('id', user.id);
+       
+       const locationPushes = [];
+       for (const item of queue) {
+          for (const orderId of item.orders || []) {
+             locationPushes.push(getSupabase().from('rider_locations').insert({
+                rider_id: user.id, order_id: orderId, latitude: item.lat, longitude: item.lng,
+                heading: Math.round(item.heading), speed: item.speed, timestamp: item.captured_at,
+                is_mocked: item.is_mocked, suspicious: item.suspicious
+             }));
+          }
+       }
+       await Promise.all(locationPushes);
+       localStorage.removeItem('loc_sync_queue');
+    } catch (e) {
+       console.error('Failed to sync location queue', e);
+    }
+  }, [user]);
+
   const syncOrderStateQueue = useCallback(async () => {
     if (!navigator.onLine || isSupabaseMocked()) return;
     const queueStr = localStorage.getItem('order_sync_queue');
@@ -6962,44 +6080,7 @@ export function App() {
       }
     };
 
-    const syncLocationQueue = async () => {
-      if (!navigator.onLine || isSupabaseMocked()) return;
-      interface LocSyncItem {
-        lat: number;
-        lng: number;
-        heading: number;
-        speed: number;
-        captured_at: string;
-        is_mocked: boolean;
-        suspicious: boolean;
-        orders: string[];
-      }
-      try {
-         const queueStr = localStorage.getItem('loc_sync_queue');
-         if (!queueStr) return;
-         const queue = safeJsonParse<LocSyncItem[]>(queueStr, []);
-         if (!Array.isArray(queue) || queue.length === 0) return;
-         
-         const latest = queue[queue.length - 1];
-         await getSupabase().from('rider_profiles').update({ current_latitude: latest.lat, current_longitude: latest.lng, updated_at: new Date().toISOString() }).eq('id', user.id);
-         
-         const locationPushes = [];
-         for (const item of queue) {
-            for (const orderId of item.orders || []) {
-               locationPushes.push(getSupabase().from('rider_locations').insert({
-                  rider_id: user.id, order_id: orderId, latitude: item.lat, longitude: item.lng,
-                  heading: Math.round(item.heading), speed: item.speed, timestamp: item.captured_at,
-                  is_mocked: item.is_mocked, suspicious: item.suspicious
-               }));
-            }
-         }
-         await Promise.all(locationPushes);
-         localStorage.removeItem('loc_sync_queue');
-         addBootLog('SYNC_RESTORED: UPLINK_QUEUE_CLEARED');
-      } catch (e) {
-         console.error('Failed to sync location queue', e);
-      }
-    };
+
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {

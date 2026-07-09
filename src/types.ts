@@ -82,3 +82,22 @@ export enum OperationType {
   GET = 'get',
   RPC = 'rpc'
 }
+
+export interface WeatherForecastHour {
+  time: string;
+  temp: number;
+}
+
+export interface WeatherData {
+  temp: number;
+  feelsLike: number;
+  precipitation: number;
+  windSpeed: number;
+  code: number;
+  timestamp: number;
+  hourlyForecast: WeatherForecastHour[];
+}
+
+export type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'tracking' | 'merchant';
+
+

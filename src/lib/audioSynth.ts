@@ -15,10 +15,19 @@ class PsychologicalAudioEngine {
     return this.ctx!;
   }
 
+  private isMuted(): boolean {
+    try {
+      return localStorage.getItem('localeats_muted') === 'true';
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Resumes the AudioContext if it is suspended due to browser autoplay policies.
    */
   private async ensureResume(): Promise<void> {
+    if (this.isMuted()) return;
     try {
       const context = this.getContext();
       if (context.state === 'suspended') {
@@ -35,6 +44,7 @@ class PsychologicalAudioEngine {
    * Sine wave starting at 220Hz sweeping smoothly to 440Hz over 0.6 seconds.
    */
   public async playOrderAssigned(): Promise<void> {
+    if (this.isMuted()) return;
     await this.ensureResume();
     try {
       const context = this.getContext();
@@ -70,6 +80,7 @@ class PsychologicalAudioEngine {
    * Sequential arpeggiated C-major warm triad: C4, E4, G4, C5 sustaining together.
    */
   public async playArrivedDestination(): Promise<void> {
+    if (this.isMuted()) return;
     await this.ensureResume();
     try {
       const context = this.getContext();
@@ -111,6 +122,7 @@ class PsychologicalAudioEngine {
    * Deep low-band pass pulses warning the driver gracefully (140Hz) without inciting panic.
    */
   public async playWrongTurnWarning(): Promise<void> {
+    if (this.isMuted()) return;
     await this.ensureResume();
     try {
       const context = this.getContext();
@@ -155,6 +167,7 @@ class PsychologicalAudioEngine {
    * High frequency shimmer + rising victory sweep to validate rewarding efforts.
    */
   public async playOrderDelivered(): Promise<void> {
+    if (this.isMuted()) return;
     await this.ensureResume();
     try {
       const context = this.getContext();

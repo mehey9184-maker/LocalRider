@@ -123,6 +123,29 @@ export const MerchantPortal = React.memo(({
         </div>
       </header>
 
+      {/* Merchant Dashboard External Link Banner */}
+      <div className="bg-zinc-900/50 border border-amber-500/20 rounded-[2rem] p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-[#f59e0b] shrink-0 mt-0.5">
+            <Store className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+            <h4 className="text-xs font-black uppercase tracking-widest text-[#f59e0b] font-mono">Production Merchant Terminal</h4>
+            <p className="text-[11px] text-zinc-400 leading-relaxed font-semibold">
+              Ready to manage live storefront dispatches? Connect and configure your storefront directly on the live dashboard.
+            </p>
+          </div>
+        </div>
+        <a 
+          href="https://dashboard.localeatssa.co.za" 
+          target="_blank" 
+          rel="noopener noreferrer" 
+          className="w-full md:w-auto px-5 py-3 bg-[#f59e0b] hover:bg-amber-600 text-black text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-md shrink-0 flex items-center justify-center gap-1.5"
+        >
+          Open dashboard.localeatssa.co.za <ArrowRight className="w-3.5 h-3.5" />
+        </a>
+      </div>
+
       {/* Manual Storefront Coordination Protocol Banner */}
       <div className="bg-zinc-900/40 border border-zinc-850 rounded-[2rem] p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex items-start gap-4">

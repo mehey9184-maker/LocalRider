@@ -83,7 +83,8 @@ import {
   PhoneCall,
   CloudLightning,
   Package,
-  Volume2
+  Volume2,
+  Calendar
 } from 'lucide-react';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -209,6 +210,56 @@ const subscribeToPushNotifications = async (userId: string) => {
 };
 
 // --- Auth Views ---
+
+// --- UI Helpers ---
+const HorizontalScrollHint = ({ children, className, noPadding = false }: { children: React.ReactNode, className?: string, noPadding?: boolean }) => {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showRight, setShowRight] = useState(true);
+  const [showLeft, setShowLeft] = useState(false);
+
+  const checkScroll = () => {
+    if (!scrollRef.current) return;
+    const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
+    setShowLeft(scrollLeft > 5);
+    setShowRight(scrollLeft < scrollWidth - clientWidth - 5);
+  };
+
+  useEffect(() => {
+    checkScroll();
+    window.addEventListener('resize', checkScroll);
+    return () => window.removeEventListener('resize', checkScroll);
+  }, []);
+
+  return (
+    <div className={cn("relative group w-full", className)}>
+      <div 
+        className={cn(
+          "absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-zinc-950 to-transparent pointer-events-none z-10 flex items-center justify-start transition-opacity duration-300",
+          showLeft ? "opacity-100" : "opacity-0"
+        )}
+      >
+        <ChevronLeft className="w-3 h-3 text-white/40 ml-1" />
+      </div>
+      
+      <div 
+        ref={scrollRef}
+        onScroll={checkScroll}
+        className={cn("overflow-x-auto no-scrollbar flex items-center gap-2", noPadding ? "" : "pb-1 sm:pb-0")}
+      >
+        {children}
+      </div>
+
+      <div 
+        className={cn(
+          "absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-zinc-950 via-zinc-950/80 to-transparent pointer-events-none z-10 flex items-center justify-end transition-opacity duration-300",
+          showRight ? "opacity-100" : "opacity-0"
+        )}
+      >
+        <ChevronRight className="w-4 h-4 text-white/50 mr-1 animate-pulse" />
+      </div>
+    </div>
+  );
+};
 
 const AuthView = ({ 
   onMockLogin 
@@ -832,7 +883,7 @@ const OrdersFeed = React.memo(({
                 </button>
               )}
             </div>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 no-scrollbar">
+            <HorizontalScrollHint>
               <button 
                 onClick={() => setSortMethod('optimal')}
                 className={cn(
@@ -846,7 +897,7 @@ const OrdersFeed = React.memo(({
               <button 
                 onClick={() => setSortMethod('distance')}
                 className={cn(
-                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border",
+                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border shrink-0",
                   sortMethod === 'distance' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900 border-zinc-800 text-zinc-500"
                 )}
               >
@@ -855,7 +906,7 @@ const OrdersFeed = React.memo(({
               <button 
                 onClick={() => setSortMethod('fee')}
                 className={cn(
-                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border",
+                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border shrink-0",
                   sortMethod === 'fee' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900 border-zinc-800 text-zinc-500"
                 )}
               >
@@ -864,21 +915,21 @@ const OrdersFeed = React.memo(({
               <button 
                 onClick={() => setSortMethod('eta')}
                 className={cn(
-                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border",
+                  "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border shrink-0",
                   sortMethod === 'eta' ? "bg-[#f59e0b] text-black border-[#f59e0b]" : "bg-zinc-900 border-zinc-800 text-zinc-500"
                 )}
               >
                 ETA (Ascending)
               </button>
-            </div>
+            </HorizontalScrollHint>
           </div>
           
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mr-2">Filter Status:</span>
+          <HorizontalScrollHint>
+            <span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mr-2 shrink-0">Filter Status:</span>
             <button 
               onClick={() => setStatusFilter('all')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border shrink-0",
                 statusFilter === 'all' ? "bg-zinc-700 text-white border-zinc-600" : "bg-zinc-900 border-zinc-800 text-zinc-500"
               )}
             >
@@ -887,7 +938,7 @@ const OrdersFeed = React.memo(({
             <button 
               onClick={() => setStatusFilter('available')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border shrink-0",
                 statusFilter === 'available' ? "bg-[#f59e0b]/20 text-[#f59e0b] border-[#f59e0b]/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
               )}
             >
@@ -896,7 +947,7 @@ const OrdersFeed = React.memo(({
             <button 
               onClick={() => setStatusFilter('accepted')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border shrink-0",
                 statusFilter === 'accepted' ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
               )}
             >
@@ -905,13 +956,13 @@ const OrdersFeed = React.memo(({
             <button 
               onClick={() => setStatusFilter('picked_up')}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border",
+                "px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all border shrink-0",
                 statusFilter === 'picked_up' ? "bg-blue-500/20 text-blue-400 border-blue-500/40" : "bg-zinc-900 border-zinc-800 text-zinc-500"
               )}
             >
               Picked Up
             </button>
-          </div>
+          </HorizontalScrollHint>
         </div>
 
         <div className="flex items-center justify-between">
@@ -1314,22 +1365,22 @@ const OrdersFeed = React.memo(({
 
                     <div className="grid grid-cols-2 gap-4 mb-6">
                       <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
-                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Cargo Details</span>
+                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Order Items</span>
                         {order.items && order.items.length > 0 ? (
                           <div className="space-y-1">
                             {order.items.slice(0, 2).map((item, idx) => (
                               <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{item}</span>
                             ))}
                             {order.items.length > 2 && (
-                              <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more packets</span>
+                              <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more items</span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Cargo"}</span>
+                          <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Food Items"}</span>
                         )}
                       </div>
                       <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
-                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Sector Value</span>
+                        <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest block mb-2 italic">Order Total</span>
                         <span className="text-lg font-headline font-black italic text-[#f59e0b] tracking-tight">R{Number(order.total_price || 0).toFixed(2)}</span>
                       </div>
                     </div>
@@ -1715,7 +1766,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           if (!isPickedUp) {
             onUpdateStatus(currentOrder.id, 'picked_up');
             audioSynth.playArrivedDestination();
-            toast.success("SIMULATOR: Arrived at Merchant. Packet collected successfully!");
+            toast.success("SIMULATOR: Arrived at Merchant. Order picked up successfully!");
           } else {
             toast.info("SIMULATOR: Already picked up from merchant.");
           }
@@ -2084,7 +2135,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           >
           {/* Order Sequence & Controls */}
           <div className="flex items-center justify-between gap-3">
-            <div className="flex gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+            <HorizontalScrollHint noPadding className="flex-1">
               {displayOrders.map((o, idx) => (
                 <button
                   key={o.id}
@@ -2100,13 +2151,14 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
                 </button>
               ))}
-            </div>
+            </HorizontalScrollHint>
             
             <button 
               onClick={optimizeRoute}
-              className="text-[8px] font-black uppercase tracking-[0.2em] text-zinc-600 hover:text-white transition-colors bg-zinc-900 px-3 py-1.5 rounded-lg border border-zinc-800 shrink-0"
+              className="text-[8px] font-black uppercase tracking-[0.2em] text-[#f59e0b] hover:text-white transition-colors bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-850 shrink-0"
+              title="Automatically sort orders in the best sequence"
             >
-              OPT
+              AUTO-SORT
             </button>
           </div>
 
@@ -2195,9 +2247,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
             {/* Delivery Workflow Steps */}
             <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-3 flex flex-col gap-2.5">
               <div className="flex items-center justify-between px-2">
-                <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Delivery Protocol Steps</span>
+                <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Delivery Progress Steps</span>
                 <span className="text-[9px] font-mono text-[#f59e0b] px-1.5 py-0.5 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded uppercase">
-                  {!isPickedUp ? "Step 2/4: Collect Packets" : (arrivedAtCustomer[currentOrder.id] ? "Step 4/4: Finalize Payment" : "Step 3/4: Present Food")}
+                  {!isPickedUp ? "Step 2/4: Pick Up Food Items" : (arrivedAtCustomer[currentOrder.id] ? "Step 4/4: Finalize Payment" : "Step 3/4: Hand Over Order")}
                 </span>
               </div>
               <div className="flex items-center justify-between relative px-4 py-2">
@@ -2350,9 +2402,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
             <SwipeButton 
               label={
                 !isPickedUp 
-                  ? "ARRIVED AT MERCHANT & COLLECT PACKET" 
+                  ? "ARRIVED AT MERCHANT & COLLECT ORDER" 
                   : (!arrivedAtCustomer[currentOrder.id] 
-                      ? "ARRIVED AT CUSTOMER (PRESENT FOOD)" 
+                      ? "ARRIVED AT CUSTOMER (HAND OVER ORDER)" 
                       : (currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]
                           ? "CONFIRM PAYMENT FIRST" 
                           : "COMPLETE DELIVERY"
@@ -2364,11 +2416,11 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                 if (!isPickedUp) {
                   onUpdateStatus(currentOrder.id, 'picked_up');
                   audioSynth.playArrivedDestination();
-                  toast.success("Status: Food packet collected cleanly. Heading to dropoff destination.");
+                  toast.success("Status: Food order collected successfully. Heading to delivery address.");
                 } else if (!arrivedAtCustomer[currentOrder.id]) {
                   setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
                   audioSynth.playArrivedDestination();
-                  toast.success("Status: Arrived at Customer storefront. Connect and finalize payment.");
+                  toast.success("Status: Arrived at Customer address. Hand over food items and finalize payment.");
                 } else {
                   setShowSuccessOverlay(true);
                   audioSynth.playOrderDelivered();
@@ -2424,7 +2476,8 @@ const StarRating = ({ rating }: { rating: number }) => (
 const HistoryView = React.memo(({ history, isHighContrastMode }: { history: DeliveryOrder[], isHighContrastMode?: boolean }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'all' | 'completed' | 'cancelled'>('all');
-  const [period, setPeriod] = useState<'7d' | '30d' | 'all'>('7d');
+  const [period, setPeriod] = useState<'7d' | '30d' | 'all' | 'custom'>('7d');
+  const [customDateRange, setCustomDateRange] = useState({ start: '', end: '' });
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   
   const [customGoal, setCustomGoal] = useState<number>(() => {
@@ -2481,8 +2534,28 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
 
   const filteredByPeriod = useMemo(() => {
     const nowMs = initialNow;
+    
+    let startMs = 0;
+    let endMs = Number.MAX_SAFE_INTEGER;
+    
+    if (period === 'custom') {
+      if (customDateRange.start) {
+        startMs = new Date(customDateRange.start).getTime();
+      }
+      if (customDateRange.end) {
+        const d = new Date(customDateRange.end);
+        d.setHours(23, 59, 59, 999);
+        endMs = d.getTime();
+      }
+    }
+
     return history.filter(order => {
       const orderMs = new Date(order.updated_at).getTime();
+      
+      if (period === 'custom') {
+         return orderMs >= startMs && orderMs <= endMs;
+      }
+
       const diffMs = nowMs - orderMs;
       const diffDays = diffMs / (1000 * 60 * 60 * 24);
       
@@ -2490,7 +2563,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
       if (period === '30d') return diffDays <= 30;
       return true;
     });
-  }, [history, period, initialNow]);
+  }, [history, period, initialNow, customDateRange]);
 
   const totals = useMemo(() => {
     let baseTotal = 0;
@@ -2611,28 +2684,47 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
         </div>
 
         {/* Time Period Filter Tabs */}
-        <div className="bg-zinc-950 border border-zinc-850 p-1 rounded-2xl flex items-center gap-1 self-start shrink-0">
-          {(['7d', '30d', 'all'] as const).map(p => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={cn(
-                "px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all",
-                period === p 
-                  ? "bg-[#f59e0b] text-black shadow-md font-bold" 
-                  : "text-zinc-500 hover:text-white"
-              )}
-            >
-              {p === '7d' ? 'Last 7 Days' : p === '30d' ? 'Last Month' : 'All Ledger'}
-            </button>
-          ))}
+        <div className="flex flex-col md:flex-row items-end md:items-center gap-3">
+          <div className="bg-zinc-950 border border-zinc-850 p-1 rounded-2xl flex items-center gap-1 self-start shrink-0">
+            {(['7d', '30d', 'all', 'custom'] as const).map(p => (
+              <button
+                key={p}
+                onClick={() => setPeriod(p)}
+                className={cn(
+                  "px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all",
+                  period === p 
+                    ? "bg-[#f59e0b] text-black shadow-md font-bold" 
+                    : "text-zinc-500 hover:text-white"
+                )}
+              >
+                {p === '7d' ? 'Last 7 Days' : p === '30d' ? 'Last Month' : p === 'all' ? 'All Ledger' : 'Custom Dates'}
+              </button>
+            ))}
+          </div>
+          {period === 'custom' && (
+            <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-850 p-1.5 rounded-2xl animate-in fade-in zoom-in-95 duration-200">
+              <input 
+                type="date" 
+                value={customDateRange.start}
+                onChange={e => setCustomDateRange(prev => ({ ...prev, start: e.target.value }))}
+                className="bg-black border border-zinc-800 rounded-lg text-[10px] p-1.5 text-zinc-300 outline-none w-28 uppercase font-bold"
+              />
+              <span className="text-[10px] text-zinc-500 font-bold uppercase">To</span>
+              <input 
+                type="date" 
+                value={customDateRange.end}
+                onChange={e => setCustomDateRange(prev => ({ ...prev, end: e.target.value }))}
+                className="bg-black border border-zinc-800 rounded-lg text-[10px] p-1.5 text-zinc-300 outline-none w-28 uppercase font-bold"
+              />
+            </div>
+          )}
         </div>
       </header>
 
       {/* Grid Summary Stats Row */}
-      <section className="grid grid-cols-2 xl:grid-cols-5 gap-4">
+      <section className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
-          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2">Aggregate Payout</span>
+          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2 font-sans">Aggregate Payout</span>
           <div>
             <span className="text-2xl font-headline font-black italic text-white">R{totals.totalEarned.toFixed(2)}</span>
             <div className="flex items-center gap-1.5 mt-1 text-[8px] font-bold text-[#f59e0b] bg-[#f59e0b]/5 border border-[#f59e0b]/10 rounded-lg px-2 py-0.5 w-fit">
@@ -2653,7 +2745,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
             !editingExpenses ? "hover:border-zinc-750 cursor-pointer" : ""
           )}
         >
-          <div className="flex justify-between items-center w-full mb-1">
+          <div className="flex justify-between items-center w-full mb-2">
             <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block font-sans">Fuel & Expenses</span>
           </div>
           {editingExpenses ? (
@@ -2689,11 +2781,11 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
             }
           }}
           className={cn(
-            "bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between text-left transition-colors",
+            "bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between text-left transition-colors col-span-2 lg:col-span-2 xl:col-span-1",
             !editingGoal ? "hover:border-zinc-750 cursor-pointer" : ""
           )}
         >
-          <div className="flex justify-between items-center w-full mb-1">
+          <div className="flex justify-between items-center w-full mb-2">
             <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block font-sans">Milestone Progress</span>
             <span className="text-[8px] text-[#f59e0b] font-black uppercase tracking-widest font-sans">Goal R{customGoal}</span>
           </div>
@@ -2713,130 +2805,192 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
               </div>
             </div>
           ) : (
-            <div>
-              <div className="flex items-baseline gap-2">
-                <span className="text-2xl font-headline font-black italic text-emerald-450">{goalProgressPercent}%</span>
-                <span className="text-[8.5px] font-bold text-zinc-500 uppercase tracking-tighter">to milestone</span>
+            <div className="flex items-center gap-4">
+              <div className="relative w-14 h-14 shrink-0">
+                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 64 64">
+                  <circle cx="32" cy="32" r="28" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-zinc-850" />
+                  <circle 
+                    cx="32" cy="32" r="28" 
+                    stroke="currentColor" strokeWidth="6" fill="transparent"
+                    strokeDasharray={2 * Math.PI * 28}
+                    strokeDashoffset={2 * Math.PI * 28 * (1 - goalProgressPercent / 100)}
+                    strokeLinecap="round"
+                    className="text-emerald-500 transition-all duration-700 ease-out drop-shadow-[0_0_8px_rgba(16,185,129,0.4)]" 
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-[10px] font-black text-white">{goalProgressPercent}%</span>
+                </div>
               </div>
-              <div className="w-full bg-zinc-950 rounded-full h-1 mt-2.5 overflow-hidden border border-zinc-900">
-                <div 
-                  className="bg-emerald-500 max-w-full h-full rounded-full shadow-[0_0_10px_rgba(16,185,129,0.3)] duration-500 transition-all"
-                  style={{ width: `${goalProgressPercent}%` }}
-                />
+              <div className="flex flex-col">
+                <span className="text-xs font-black text-zinc-300 uppercase tracking-widest">Progress</span>
+                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mt-0.5">{goalProgressPercent >= 100 ? 'Goal Reached' : 'To Milestone'}</span>
               </div>
             </div>
           )}
         </div>
 
         <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
-          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2 font-sans">Successful Flights</span>
+          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2 font-sans">Completed Deliveries</span>
           <div>
             <span className="text-2xl font-headline font-black italic text-cyan-400">{totals.completedCount}</span>
-            <span className="text-[8px] text-zinc-500 uppercase tracking-widest block mt-1 font-black">Secure Cargo Units</span>
+            <span className="text-[8px] text-zinc-500 uppercase tracking-widest block mt-1 font-black">Secure Orders Delivered</span>
           </div>
         </div>
 
         <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
-          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1 font-sans">Loss Ratio</span>
+          <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-2 font-sans">Cancelled Deliveries</span>
           <div>
             <span className="text-2xl font-headline font-black italic text-red-500">{totals.cancelledCount}</span>
             <div className="flex items-center gap-1 text-[8px] font-black text-zinc-500 uppercase tracking-wider mt-1">
-              Abort Protocols
+              Cancelled Orders
             </div>
           </div>
         </div>
       </section>
 
-      {/* Yield Performance Area Chart */}
-      <BentoCard className="h-72 border-zinc-850/60 bg-zinc-950/20 p-6" glow>
-        <div className="flex items-center justify-between mb-6">
-           <div className="flex flex-col text-left">
-             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Yield Performance Chart</span>
-             <span className="text-[8.5px] font-black uppercase text-[#f59e0b] tracking-widest mt-0.5">Earnings over active slots</span>
-           </div>
-           <Activity className="w-4 h-4 text-[#f59e0b] opacity-60" />
-        </div>
-        <div className="h-44 w-full min-w-0">
-          <ResponsiveContainer width="99%" height={176}>
-          <AreaChart data={chartData}>
-            <defs>
-              <linearGradient id="colorYield" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.45}/>
-                <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1b1b1f" strokeOpacity={0.4} />
-            <XAxis 
-              dataKey="name" 
-              axisLine={false} 
-              tickLine={false} 
-              tick={{ fill: '#666', fontSize: 10, fontWeight: 'bold' }} 
-            />
-            <Tooltip 
-              contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '16px', fontSize: '10px' }}
-              itemStyle={{ color: '#f59e0b', fontWeight: 'black' }}
-            />
-            <Area 
-              type="monotone" 
-              dataKey="yield" 
-              stroke="#f59e0b" 
-              strokeWidth={3}
-              fillOpacity={1} 
-              fill="url(#colorYield)" 
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-    </BentoCard>
+      {/* Analytics Charts Area */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Yield Performance Area Chart */}
+        <BentoCard className="h-72 border-zinc-850/60 bg-zinc-950/20 p-6 flex flex-col" glow>
+          <div className="flex items-center justify-between mb-6 shrink-0">
+             <div className="flex flex-col text-left">
+               <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Yield Performance Chart</span>
+               <span className="text-[8.5px] font-black uppercase text-[#f59e0b] tracking-widest mt-0.5">Earnings over active slots</span>
+             </div>
+             <Activity className="w-4 h-4 text-[#f59e0b] opacity-60" />
+          </div>
+          <div className="flex-1 w-full min-w-0 min-h-0">
+            <ResponsiveContainer width="99%" height="100%">
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="colorYield" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.45}/>
+                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1b1b1f" strokeOpacity={0.4} />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#666', fontSize: 10, fontWeight: 'bold' }} 
+                />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '16px', fontSize: '10px' }}
+                  itemStyle={{ color: '#f59e0b', fontWeight: 'black' }}
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="yield" 
+                  stroke="#f59e0b" 
+                  strokeWidth={3}
+                  fillOpacity={1} 
+                  fill="url(#colorYield)" 
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </BentoCard>
+  
+        {/* Deliveries Performance Bar Chart */}
+        <BentoCard className="h-72 border-zinc-850/60 bg-zinc-950/20 p-6 flex flex-col" glow>
+          <div className="flex items-center justify-between mb-6 shrink-0">
+             <div className="flex flex-col text-left">
+               <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Mission Velocity</span>
+               <span className="text-[8.5px] font-black uppercase text-blue-500 tracking-widest mt-0.5">Completed deliveries per day</span>
+             </div>
+             <Package className="w-4 h-4 text-blue-500 opacity-60" />
+          </div>
+          <div className="flex-1 w-full min-w-0 min-h-0">
+            <ResponsiveContainer width="99%" height="100%">
+              <BarChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1b1b1f" strokeOpacity={0.4} />
+                <XAxis 
+                  dataKey="name" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: '#666', fontSize: 10, fontWeight: 'bold' }} 
+                />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#666', fontSize: 10, fontWeight: 'bold' }}
+                  allowDecimals={false}
+                  width={30}
+                />
+                <Tooltip 
+                  cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
+                  contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '16px', fontSize: '10px' }}
+                  itemStyle={{ color: '#3b82f6', fontWeight: 'black' }}
+                />
+                <Bar 
+                  dataKey="deliveries" 
+                  fill="#3b82f6" 
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={40}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </BentoCard>
 
-    {/* Deliveries Performance Bar Chart */}
-    <BentoCard className="h-72 border-zinc-850/60 bg-zinc-950/20 p-6" glow>
-      <div className="flex items-center justify-between mb-6">
-         <div className="flex flex-col text-left">
-           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Mission Velocity</span>
-           <span className="text-[8.5px] font-black uppercase text-blue-500 tracking-widest mt-0.5">Completed deliveries per day</span>
-         </div>
-         <Package className="w-4 h-4 text-blue-500 opacity-60" />
+        {/* Weekly Profitability Heatmap */}
+        <BentoCard className="h-72 border-zinc-850/60 bg-zinc-950/20 p-6 flex flex-col" glow>
+          <div className="flex items-center justify-between mb-6 shrink-0">
+             <div className="flex flex-col text-left">
+               <span className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em]">Profitability Heatmap</span>
+               <span className="text-[8.5px] font-black uppercase text-emerald-400 tracking-widest mt-0.5">Most lucrative days</span>
+             </div>
+             <Calendar className="w-4 h-4 text-emerald-400 opacity-60" />
+          </div>
+          <div className="flex-1 w-full min-w-0 min-h-0 flex flex-col justify-center gap-3">
+             <div className="flex justify-between items-end gap-1 px-2 h-full pb-4 pt-8">
+               {chartData.map((d) => {
+                 const maxYield = Math.max(...chartData.map(c => c.yield), 1);
+                 const intensity = d.yield / maxYield; // 0 to 1
+                 
+                 let bgClass = "bg-emerald-950";
+                 if (intensity > 0.8) bgClass = "bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.4)]";
+                 else if (intensity > 0.6) bgClass = "bg-emerald-500";
+                 else if (intensity > 0.4) bgClass = "bg-emerald-600";
+                 else if (intensity > 0.2) bgClass = "bg-emerald-800";
+                 
+                 return (
+                   <div key={d.name} className="flex flex-col items-center gap-2 group w-full relative">
+                     <div className="absolute -top-8 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[8px] font-black text-emerald-400 uppercase opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
+                       R{d.yield}
+                     </div>
+                     <div 
+                       className={cn("w-full max-w-[28px] rounded-sm transition-all duration-500", bgClass)} 
+                       style={{ height: `${Math.max(20, intensity * 100)}%` }}
+                     />
+                     <span className="text-[9px] font-bold text-zinc-500 uppercase">{d.name}</span>
+                   </div>
+                 );
+               })}
+             </div>
+             <div className="flex items-center justify-between px-4 mt-auto">
+               <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Less</span>
+               <div className="flex gap-1">
+                 <div className="w-3 h-3 rounded-sm bg-emerald-950" />
+                 <div className="w-3 h-3 rounded-sm bg-emerald-800" />
+                 <div className="w-3 h-3 rounded-sm bg-emerald-600" />
+                 <div className="w-3 h-3 rounded-sm bg-emerald-500" />
+                 <div className="w-3 h-3 rounded-sm bg-emerald-400" />
+               </div>
+               <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest">More</span>
+             </div>
+          </div>
+        </BentoCard>
       </div>
-      <div className="h-44 w-full min-w-0">
-        <ResponsiveContainer width="99%" height={176}>
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1b1b1f" strokeOpacity={0.4} />
-            <XAxis 
-              dataKey="name" 
-              axisLine={false} 
-              tickLine={false} 
-              tick={{ fill: '#666', fontSize: 10, fontWeight: 'bold' }} 
-            />
-            <YAxis
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: '#666', fontSize: 10, fontWeight: 'bold' }}
-              allowDecimals={false}
-              width={30}
-            />
-            <Tooltip 
-              cursor={{ fill: 'rgba(59, 130, 246, 0.1)' }}
-              contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '16px', fontSize: '10px' }}
-              itemStyle={{ color: '#3b82f6', fontWeight: 'black' }}
-            />
-            <Bar 
-              dataKey="deliveries" 
-              fill="#3b82f6" 
-              radius={[4, 4, 0, 0]}
-              maxBarSize={40}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-    </BentoCard>
 
       {/* Live Search and Filters */}
       <div className="space-y-4">
         <div className="flex flex-col md:flex-row gap-4 items-center justify-between border-b border-zinc-900 pb-4">
           
           {/* Filters Switch Tabs */}
-          <div className="flex gap-2 p-1 bg-zinc-950 border border-zinc-850 rounded-2xl w-full md:w-auto self-stretch md:self-auto overflow-x-auto justify-start shrink-0">
+          <HorizontalScrollHint noPadding className="w-full md:w-auto self-stretch md:self-auto shrink-0 bg-zinc-950 border border-zinc-850 rounded-2xl p-1">
             {(['all', 'completed', 'cancelled'] as const).map(tab => (
               <button
                 key={tab}
@@ -2856,7 +3010,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
                 {tab === 'cancelled' && '❌ Cancelled'}
               </button>
             ))}
-          </div>
+          </HorizontalScrollHint>
 
           <div className="flex items-center gap-3 w-full md:w-auto self-stretch md:self-auto shrink-0 md:justify-end">
             {/* Search inputs */}
@@ -3025,9 +3179,9 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
                             </div>
                           </div>
 
-                          {/* Cargo Items Checklist */}
+                          {/* Order Items Checklist */}
                           <div className="space-y-2 text-left">
-                            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Cargo Pack List</span>
+                            <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans">Order Items Pack List</span>
                             <div className="flex flex-wrap gap-1.5">
                               {customItemsList.map((itm, index) => (
                                 <span 
@@ -3044,7 +3198,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
                           <div className="space-y-2 text-left">
                             <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block font-sans border-b border-zinc-900 pb-1 w-full">GPS Track Logs</span>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {/* Flight Map routing */}
+                              {/* Route Map routing */}
                               <div className="h-44 rounded-[1.5rem] border border-zinc-850 overflow-hidden relative">
                                 <HistoryMap order={item} highContrast={isHighContrastMode} />
                               </div>
@@ -3071,7 +3225,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
                                 </div>
                                 <div className="flex items-center justify-between text-[8px] font-mono text-zinc-550 border-t border-zinc-950 pt-2 shrink-0">
                                    <span>DISTANCE: {item.distance_km?.toFixed(2) || '2.40'} KM</span>
-                                   <span>STATUS: SECURE CARGO DEPLOYED</span>
+                                   <span>STATUS: SECURE ORDER DELIVERED</span>
                                 </div>
                               </div>
                             </div>
@@ -3117,6 +3271,110 @@ const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingC
 );
 
 // --- Settings View Helpers (Imported) ---
+
+interface SettingToggleProps {
+  icon: React.ElementType;
+  iconColor?: string;
+  title: string;
+  description: string;
+  isActive: boolean;
+  onToggle: () => void;
+  activeColorClass?: string;
+}
+
+const SettingToggle = React.memo(({ 
+  icon: Icon, 
+  iconColor, 
+  title, 
+  description, 
+  isActive, 
+  onToggle, 
+  activeColorClass = "bg-[#f59e0b]" 
+}: SettingToggleProps) => (
+  <div className="flex items-center justify-between">
+    <div className="flex items-center gap-3">
+      <div className="p-2 bg-zinc-800 rounded-xl">
+        <Icon className={cn("w-5 h-5", iconColor)} />
+      </div>
+      <div className="flex flex-col">
+        <span className="text-xs font-bold text-white font-sans">{title}</span>
+        <span className="text-[10px] text-zinc-500 font-sans mt-0.5">{description}</span>
+      </div>
+    </div>
+    <button 
+      onClick={onToggle}
+      className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
+    >
+      <div className={cn(
+        "w-5 h-5 rounded-full absolute top-0.5 transition-all shadow-md",
+        isActive ? `left-6.5 ${activeColorClass}` : "left-0.5 bg-zinc-400"
+      )} />
+    </button>
+  </div>
+));
+
+interface PortalLinkCardProps {
+  icon: React.ElementType;
+  iconColorClass?: string;
+  iconBgClass?: string;
+  badgeText: string;
+  badgeBgClass?: string;
+  badgeTextClass?: string;
+  title: string;
+  description: string;
+  linkText: string;
+  linkUrl?: string;
+  isActiveCurrent?: boolean;
+  cardBorderClass?: string;
+}
+
+const PortalLinkCard = ({
+  icon: Icon,
+  iconColorClass,
+  iconBgClass,
+  badgeText,
+  badgeBgClass,
+  badgeTextClass,
+  title,
+  description,
+  linkText,
+  linkUrl,
+  isActiveCurrent = false,
+  cardBorderClass = "border-zinc-850 hover:border-zinc-700"
+}: PortalLinkCardProps) => (
+  <div className={cn("bg-zinc-950/80 border rounded-2xl p-4 flex flex-col justify-between transition-all relative overflow-hidden", cardBorderClass)}>
+    {isActiveCurrent && <div className="absolute top-0 right-0 w-16 h-16 bg-[#f59e0b]/5 blur-[20px] rounded-full pointer-events-none" />}
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className={cn("w-8 h-8 rounded-xl border flex items-center justify-center", iconBgClass, iconColorClass)}>
+          <Icon className={cn("w-4 h-4", isActiveCurrent ? "animate-pulse" : "")} />
+        </div>
+        <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest", badgeBgClass, badgeTextClass)}>{badgeText}</span>
+      </div>
+      <div className="text-left">
+        <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">{title}</h4>
+        <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">{description}</p>
+      </div>
+    </div>
+    {linkUrl ? (
+      <a 
+        href={linkUrl}
+        target="_blank" 
+        rel="noopener noreferrer" 
+        className={cn(
+          "mt-4 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl transition-all text-[9px] font-black uppercase tracking-widest",
+          isActiveCurrent ? "bg-[#f59e0b]/10 border border-[#f59e0b]/20 text-[#f59e0b]" : "bg-zinc-900 hover:bg-zinc-850 hover:text-white border border-zinc-800 text-zinc-400"
+        )}
+      >
+        {linkText} <ExternalLink className="w-3 h-3" />
+      </a>
+    ) : (
+      <div className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-xl text-[9px] font-black uppercase tracking-widest text-zinc-300">
+        {linkText}
+      </div>
+    )}
+  </div>
+);
 
 const ProfileView = React.memo(({ 
   profile, 
@@ -3494,7 +3752,7 @@ const ProfileView = React.memo(({
         <div className="space-y-6 animate-fade-in">
           {/* Grid Performance Diagnostics (Opaque ratings and stats solved!) */}
           <section className="space-y-4">
-            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Grid Performance Diagnostics</h3>
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Performance Stats</h3>
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
                 <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Orders Accepted</span>
@@ -3502,26 +3760,26 @@ const ProfileView = React.memo(({
                 <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Acceptance</span>
               </div>
               <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Cargo Security</span>
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Order Safety</span>
                 <span className="text-xl font-headline font-black italic text-[#f59e0b]">100%</span>
                 <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Integrity</span>
               </div>
               <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Flight On-Time</span>
+                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">On-Time Delivery</span>
                 <span className="text-xl font-headline font-black italic text-cyan-400">98.4%</span>
                 <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Arrival Index</span>
               </div>
             </div>
 
-            {/* Tactical Kudos Badges */}
+            {/* Rider Kudos Badges */}
             <div className="bg-zinc-900/65 border border-zinc-900 p-4 rounded-3xl space-y-3">
               <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block border-b border-zinc-900 pb-1.5">Merchant Community Accolades</span>
               <div className="flex flex-wrap gap-2 text-zinc-300">
                 <span className="px-3 py-1.5 bg-cyan-950/40 text-cyan-455 text-[10px] font-black uppercase tracking-widest rounded-xl border border-cyan-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(34,211,238,0.05)]">
-                  🏎️ Fast Pilot <span className="text-xs font-mono text-cyan-500 font-bold">x32</span>
+                  🏎️ Quick Rider <span className="text-xs font-mono text-cyan-500 font-bold">x32</span>
                 </span>
                 <span className="px-3 py-1.5 bg-amber-950/40 text-[#f59e0b] text-[10px] font-black uppercase tracking-widest rounded-xl border border-amber-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.05)]">
-                  📦 Secure Cargo <span className="text-xs font-mono text-amber-500 font-bold">x24</span>
+                  📦 Secure Packages <span className="text-xs font-mono text-amber-500 font-bold">x24</span>
                 </span>
                 <span className="px-3 py-1.5 bg-emerald-950/40 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl border border-emerald-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
                   🤝 Polite Rider <span className="text-xs font-mono text-emerald-500 font-bold">x45</span>
@@ -3793,81 +4051,83 @@ const ProfileView = React.memo(({
           </p>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Customer App */}
-            <div className="bg-zinc-950/80 border border-zinc-850 rounded-2xl p-4 flex flex-col justify-between hover:border-zinc-700 transition-all">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                    <Globe className="w-4 h-4" />
-                  </div>
-                  <span className="text-[8px] font-black text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded uppercase tracking-widest">Active</span>
-                </div>
-                <div className="text-left">
-                  <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Customer Portal</h4>
-                  <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">
-                    Place orders, view restaurant menus, and track live rider locations.
-                  </p>
-                </div>
-              </div>
-              <a 
-                href="https://localeatssa.co.za" 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-zinc-900 hover:bg-zinc-850 hover:text-white border border-zinc-800 rounded-xl transition-all text-[9px] font-black uppercase tracking-widest text-zinc-400"
-              >
-                localeatssa.co.za <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
+            <PortalLinkCard
+              icon={Globe}
+              iconColorClass="text-emerald-400"
+              iconBgClass="bg-emerald-500/10 border-emerald-500/20"
+              badgeText="Active"
+              badgeBgClass="bg-emerald-400/10"
+              badgeTextClass="text-emerald-400"
+              title="Customer Portal"
+              description="Place orders, view restaurant menus, and track live rider locations."
+              linkText="localeatssa.co.za"
+              linkUrl="https://localeatssa.co.za"
+            />
+            
+            <PortalLinkCard
+              icon={ShoppingBag}
+              iconColorClass="text-[#f59e0b]"
+              iconBgClass="bg-amber-500/10 border-amber-500/20"
+              badgeText="Active"
+              badgeBgClass="bg-amber-500/10"
+              badgeTextClass="text-amber-500"
+              title="Merchant Dashboard"
+              description="Storefront dispatch management for restaurants to list menus and assign orders."
+              linkText="dashboard.localeatssa.co.za"
+              linkUrl="https://dashboard.localeatssa.co.za"
+            />
+            
+            <PortalLinkCard
+              icon={Smartphone}
+              iconColorClass="text-[#f59e0b]"
+              iconBgClass="bg-[#f59e0b]/10 border-[#f59e0b]/20"
+              badgeText="Current"
+              badgeBgClass="bg-[#f59e0b]"
+              badgeTextClass="text-white"
+              title="Rider Portal"
+              description="Dispatch logistics, live navigation routing, and safety assist tools."
+              linkText="rider.localeatssa.co.za"
+              isActiveCurrent={true}
+              cardBorderClass="border-[#f59e0b]/30 ring-2 ring-[#f59e0b]/5"
+            />
+          </div>
+        </div>
+      </section>
 
-            {/* Merchant App */}
-            <div className="bg-zinc-950/80 border border-zinc-850 rounded-2xl p-4 flex flex-col justify-between hover:border-zinc-700 transition-all">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-[#f59e0b]">
-                    <ShoppingBag className="w-4 h-4" />
-                  </div>
-                  <span className="text-[8px] font-black text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded uppercase tracking-widest">Active</span>
-                </div>
-                <div className="text-left">
-                  <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Merchant Dashboard</h4>
-                  <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">
-                    Storefront dispatch management for restaurants to list menus and assign orders.
-                  </p>
-                </div>
+      {/* Advantages & Recommendations */}
+      <section className="space-y-4 pt-2">
+        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Tips & Advantages</h3>
+        <HorizontalScrollHint noPadding>
+          <div className="flex items-stretch gap-3 pb-1">
+            <div className="w-[240px] shrink-0 bg-zinc-950/80 border border-[#f59e0b]/20 rounded-2xl p-4 flex flex-col justify-between">
+              <div className="w-8 h-8 rounded-xl bg-[#f59e0b]/10 border border-[#f59e0b]/20 flex items-center justify-center text-[#f59e0b] mb-3">
+                <Link2 className="w-4 h-4" />
               </div>
-              <a 
-                href="https://dashboard.localeatssa.co.za" 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-zinc-900 hover:bg-zinc-850 hover:text-white border border-zinc-800 rounded-xl transition-all text-[9px] font-black uppercase tracking-widest text-[#f59e0b]"
-              >
-                dashboard.localeatssa.co.za <ExternalLink className="w-3 h-3" />
-              </a>
+              <div>
+                <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Sync with Merchants</h4>
+                <p className="text-[9px] text-zinc-400 mt-1.5 leading-relaxed font-sans">Connecting with merchants instantly alerts you to high-reward orders in their queue, giving you priority access before they hit the general feed.</p>
+              </div>
             </div>
-
-            {/* Rider App */}
-            <div className="bg-zinc-950/80 border border-[#f59e0b]/30 rounded-2xl p-4 flex flex-col justify-between ring-2 ring-[#f59e0b]/5 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-16 h-16 bg-[#f59e0b]/5 blur-[20px] rounded-full pointer-events-none" />
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="w-8 h-8 rounded-xl bg-[#f59e0b]/10 border border-[#f59e0b]/20 flex items-center justify-center text-[#f59e0b]">
-                    <Smartphone className="w-4 h-4 animate-pulse" />
-                  </div>
-                  <span className="text-[8px] font-black text-white bg-[#f59e0b] px-1.5 py-0.5 rounded uppercase tracking-widest">Current</span>
-                </div>
-                <div className="text-left">
-                  <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Rider Portal</h4>
-                  <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">
-                    Dispatch logistics, live navigation routing, and safety assist tools.
-                  </p>
-                </div>
+            <div className="w-[240px] shrink-0 bg-zinc-950/80 border border-emerald-500/20 rounded-2xl p-4 flex flex-col justify-between">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-3">
+                <TrendingUp className="w-4 h-4" />
               </div>
-              <div className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-xl text-[9px] font-black uppercase tracking-widest text-zinc-300">
-                rider.localeatssa.co.za
+              <div>
+                <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Maximize Earnings</h4>
+                <p className="text-[9px] text-zinc-400 mt-1.5 leading-relaxed font-sans">Track your performance via the Weekly Profitability Heatmap to discover your most lucrative times and optimize your active schedule.</p>
+              </div>
+            </div>
+            <div className="w-[240px] shrink-0 bg-zinc-950/80 border border-sky-500/20 rounded-2xl p-4 flex flex-col justify-between">
+              <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-3">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Security Setup</h4>
+                <p className="text-[9px] text-zinc-400 mt-1.5 leading-relaxed font-sans">Enter your Vehicle Make and License Plate in the Security Gate Identification section above to speed up estate entry clearances.</p>
               </div>
             </div>
           </div>
-        </div>
+        </HorizontalScrollHint>
       </section>
       </div>
       )}
@@ -3880,77 +4140,44 @@ const ProfileView = React.memo(({
       <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Device Settings</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-zinc-800 rounded-xl">
-                <Battery className="w-5 h-5 text-emerald-500" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-white font-sans">Battery Saver Mode</span>
-                <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Dims screen & limits background updates</span>
-              </div>
-            </div>
-            <button 
-              onClick={onToggleEcoMode}
-              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
-            >
-              <div className={cn(
-                "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
-                isEcoMode ? "left-6.5 bg-emerald-500" : "left-0.5 bg-zinc-400"
-              )} />
-            </button>
-          </div>
+          <SettingToggle 
+            icon={Battery} 
+            iconColor="text-emerald-500"
+            title="Battery Saver Mode"
+            description="Dims screen & limits background updates"
+            isActive={isEcoMode}
+            onToggle={onToggleEcoMode}
+            activeColorClass="bg-emerald-500"
+          />
 
           <div className="h-px bg-zinc-800 w-full" />
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-zinc-800 rounded-xl">
-                <Sun className="w-5 h-5 text-amber-500" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-white font-sans">High Contrast Day Mode</span>
-                <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Increases map visibility under sunlight</span>
-              </div>
-            </div>
-            <button 
-              onClick={onToggleHighContrastMode}
-              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
-            >
-              <div className={cn(
-                "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
-                isHighContrastMode ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
-              )} />
-            </button>
-          </div>
+          <SettingToggle 
+            icon={Sun} 
+            iconColor="text-amber-500"
+            title="High Contrast Day Mode"
+            description="Increases map visibility under sunlight"
+            isActive={isHighContrastMode}
+            onToggle={onToggleHighContrastMode}
+            activeColorClass="bg-[#f59e0b]"
+          />
           
           <div className="h-px bg-zinc-800 w-full" />
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-zinc-800 rounded-xl">
-                <Volume2 className="w-5 h-5 text-cyan-400" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-white font-sans">Alert Sounds & Voice</span>
-                <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Audio feedback and vocal announcements</span>
-              </div>
-            </div>
-            <button 
-              onClick={() => {
-                const isMuted = localStorage.getItem('localeats_muted') === 'true';
-                localStorage.setItem('localeats_muted', (!isMuted).toString());
-                toast.success(isMuted ? "Sound and Voice enabled" : "Sound muted");
-                window.dispatchEvent(new Event('storage'));
-              }}
-              className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
-            >
-              <div className={cn(
-                "w-5 h-5 bg-[#f59e0b] rounded-full absolute top-0.5 transition-all shadow-md",
-                localStorage.getItem('localeats_muted') !== 'true' ? "left-6.5 bg-[#f59e0b]" : "left-0.5 bg-zinc-400"
-              )} />
-            </button>
-          </div>
+          <SettingToggle 
+            icon={Volume2} 
+            iconColor="text-cyan-400"
+            title="Alert Sounds & Voice"
+            description="Audio feedback and vocal announcements"
+            isActive={localStorage.getItem('localeats_muted') !== 'true'}
+            onToggle={() => {
+              const isMuted = localStorage.getItem('localeats_muted') === 'true';
+              localStorage.setItem('localeats_muted', (!isMuted).toString());
+              toast.success(isMuted ? "Sound and Voice enabled" : "Sound muted");
+              window.dispatchEvent(new Event('storage'));
+            }}
+            activeColorClass="bg-[#f59e0b]"
+          />
 
           <div className="h-px bg-zinc-800 w-full" />
 
@@ -7350,9 +7577,9 @@ export function App() {
                       <Zap className="w-8 h-8 text-black" />
                     </div>
                     <div>
-                      <h3 className="text-[10px] font-black uppercase text-[#f59e0b] tracking-[0.4em] mb-1">Drop-Off Protocol</h3>
+                      <h3 className="text-[10px] font-black uppercase text-[#f59e0b] tracking-[0.4em] mb-1">Drop-Off Details</h3>
                       <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter truncate max-w-[200px]">
-                        {visibleAvailableOrders[0].customer_name || visibleAvailableOrders[0].product_name || 'Client'}
+                        {visibleAvailableOrders[0].customer_name || visibleAvailableOrders[0].product_name || 'Customer'}
                       </p>
                       <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{visibleAvailableOrders[0].restaurant_name}</p>
                     </div>
@@ -7367,11 +7594,11 @@ export function App() {
                 
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
-                    <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">ETA Vector</span>
-                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor(Number(visibleAvailableOrders[0].distance_km || 0) * 3))}:00 M</span>
+                    <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">Travel Time</span>
+                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor(Number(visibleAvailableOrders[0].distance_km || 0) * 3))}:00 MIN</span>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
-                    <span className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-1">Range</span>
+                    <span className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-1">Distance</span>
                     <span className="text-xl font-mono font-bold text-white">{Number(visibleAvailableOrders[0].distance_km || 0).toFixed(1)} KM</span>
                   </div>
                 </div>
@@ -7427,8 +7654,8 @@ export function App() {
                       <BentoCard glow className="bg-black/95 border-[#f59e0b] p-5 shadow-[0_0_50px_rgba(57,255,20,0.2)]">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex flex-col">
-                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1 animate-pulse">Drop-Off Protocol</span>
-                            <h2 className="text-xl font-headline font-black italic uppercase text-white">Target Sync Active</h2>
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1 animate-pulse">Drop-Off Details</span>
+                            <h2 className="text-xl font-headline font-black italic uppercase text-white">Delivery Route Live</h2>
                           </div>
                           <div className="p-3 bg-[#f59e0b]/10 rounded-2xl">
                             <Radar className="w-6 h-6 text-[#f59e0b] animate-spin" />
@@ -7449,7 +7676,7 @@ export function App() {
                   )}
                 </AnimatePresence>
                 
-                {/* Telemetry Health Protocol */}
+                {/* App & Server Sync Status */}
                 <BentoCard className="bg-zinc-900/40 border-zinc-800/60 p-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -7457,9 +7684,9 @@ export function App() {
                          <Radar className="w-5 h-5 text-orange-500" />
                       </div>
                       <div>
-                        <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-500 uppercase">System Integrity</h4>
+                        <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-500 uppercase">GPS & Connection</h4>
                         <div className="flex items-center gap-2">
-                           <span className="text-xs font-bold text-white uppercase italic">Active Order Connection</span>
+                           <span className="text-xs font-bold text-white uppercase italic">Live Sync Status</span>
                            <div className="flex items-center gap-0.5">
                               {[1,2,3,4].map(b => (
                                 <div key={b} className={cn("w-1 h-3 rounded-full bg-zinc-800", b <= 3 && "bg-orange-500")} />
@@ -7473,11 +7700,11 @@ export function App() {
                          addBootLog('MANUAL_SYNC_INIT');
                          fetchProfile();
                          fetchConnectionsAndOrders();
-                         toast.success('System recalibrated.', { icon: <Zap className="w-4 h-4" /> });
+                         toast.success('App connection refreshed successfully.', { icon: <Zap className="w-4 h-4" /> });
                        }}
                        className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-black uppercase px-3 py-2 rounded-lg transition-colors border border-zinc-700"
                     >
-                      Recalibrate
+                      Refresh Sync
                     </button>
                   </div>
                 </BentoCard>
@@ -7512,8 +7739,8 @@ export function App() {
                       <BentoCard glow className="bg-black/95 border-[#f59e0b] p-5 shadow-[0_0_50px_rgba(245,158,11,0.2)]">
                         <div className="flex items-center justify-between mb-4">
                           <div className="flex flex-col">
-                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1 animate-pulse">Active Deployment</span>
-                            <h2 className="text-xl font-headline font-black italic uppercase text-white">Tracking Signal</h2>
+                            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#f59e0b] mb-1 animate-pulse">Active Order</span>
+                            <h2 className="text-xl font-headline font-black italic uppercase text-white">Live Location</h2>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="text-right">
@@ -7528,15 +7755,15 @@ export function App() {
                           </div>
                         </div>
                         <div className="flex items-center gap-6">
-                           <TelemetryData label="Carrier" value={profile?.name || 'Unit-1'} />
-                           <TelemetryData label="Objective" value={(activeOrders[0]?.delivery_status || '').replace('_', ' ').toUpperCase()} />
-                           <TelemetryData label="Payload" value={`R${Number(activeOrders[0]?.delivery_fee || 0).toFixed(0)}`} />
+                           <TelemetryData label="Rider" value={profile?.name || 'Rider-1'} />
+                           <TelemetryData label="Next Step" value={(activeOrders[0]?.delivery_status || '').replace('_', ' ').toUpperCase()} />
+                           <TelemetryData label="Earnings" value={`R${Number(activeOrders[0]?.delivery_fee || 0).toFixed(0)}`} />
                         </div>
                         <button 
                           onClick={() => setView('move')}
                           className="mt-5 w-full py-3.5 bg-zinc-900 border border-zinc-800 text-[#f59e0b] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 hover:bg-zinc-800"
                         >
-                          OPEN TACTICAL HUD <ArrowRight className="w-4 h-4" />
+                          OPEN LIVE NAVIGATION <ArrowRight className="w-4 h-4" />
                         </button>
                       </BentoCard>
                     </motion.div>
@@ -7589,10 +7816,20 @@ export function App() {
                   />
                 </div>
               ) : (
-                <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center opacity-40">
-                  <Navigation className="w-16 h-16 mb-4 text-zinc-600" />
-                  <p className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">No active orders</p>
-                  <button onClick={() => setView('feed')} className="mt-6 text-[10px] font-black uppercase text-[#f59e0b] underline">Open Delivery Feed</button>
+                <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+                  <div className="w-24 h-24 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-6 relative">
+                    <div className="absolute inset-0 rounded-full border border-zinc-700 animate-[ping_3s_ease-in-out_infinite]" />
+                    <Navigation className="w-8 h-8 text-zinc-500" />
+                  </div>
+                  <h3 className="text-xl font-headline font-black italic uppercase text-white mb-2 tracking-tight">Mission Board Empty</h3>
+                  <p className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-8 max-w-[250px] leading-relaxed">You have no active deliveries. Scanning for new opportunities.</p>
+                  <button 
+                    onClick={() => setView('feed')} 
+                    className="px-6 py-3 bg-[#f59e0b]/10 text-[#f59e0b] border border-[#f59e0b]/30 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all active:scale-95 flex items-center gap-2 shadow-[0_0_20px_rgba(245,158,11,0.15)]"
+                  >
+                    <List size={14} />
+                    Open Dispatch Feed
+                  </button>
                 </div>
               )
             )}

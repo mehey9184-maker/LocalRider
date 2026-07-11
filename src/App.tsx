@@ -1003,11 +1003,13 @@ const OrdersFeed = React.memo(({
       combined = [...combined, ...activeOrders.filter(ao => !orders.some(o => o.id === ao.id))];
     }
 
-    let result = combined.filter(o => 
-      o.restaurant_name?.toLowerCase().includes(deferredSearchQuery.toLowerCase()) ||
-      o.customer_name?.toLowerCase().includes(deferredSearchQuery.toLowerCase()) ||
-      o.product_name?.toLowerCase().includes(deferredSearchQuery.toLowerCase())
-    );
+    let result = combined.filter(o => {
+      if (!deferredSearchQuery) return true;
+      const query = deferredSearchQuery.toLowerCase();
+      return o.restaurant_name?.toLowerCase().includes(query) ||
+             o.customer_name?.toLowerCase().includes(query) ||
+             o.product_name?.toLowerCase().includes(query);
+    });
 
     if (statusFilter === 'available') {
       result = result.filter(o => (o.delivery_status === 'none' || o.delivery_status === 'finding_rider') && !o.rider_id);
@@ -5464,6 +5466,8 @@ export function App() {
     return (localStorage.getItem('localeats_view') as AppView) || 'dash';
   });
 
+  const channelsRef = useRef<Record<string, import('@supabase/supabase-js').RealtimeChannel>>({});
+
   // Save profile to saved accounts for Facebook-style recollection
   useEffect(() => {
     if (user && profile) {
@@ -6150,10 +6154,8 @@ export function App() {
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return rawMocks.filter((o: any) => {
-              const isFindingRider = o.delivery_status === 'finding_rider';
-              const isAllowedExternal = o.allow_external_riders === true;
-              const isConnected = activeConnections.some(c => c.shop_id === o.shop_id);
-              return isFindingRider && (isAllowedExternal || isConnected);
+               // Directly ingest open-pool unassigned orders
+               return o.delivery_status === 'finding_rider' && !o.rider_id;
             }) as unknown as DeliveryOrder[];
           });
         }
@@ -6268,11 +6270,8 @@ export function App() {
           })
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .filter((order: any) => {
-            // Apply strict merchant access rule requested:
-            const isFindingRider = order.delivery_status === 'finding_rider';
-            const isAllowedExternal = order.allow_external_riders === true;
-            const isConnected = activeConnections.some(c => c.shop_id === order.shop_id);
-            return isFindingRider && (isAllowedExternal || isConnected);
+             // Directly ingest open-pool unassigned orders
+             return order.delivery_status === 'finding_rider' && !order.rider_id;
           });
         
         const sorted = [...formatted].map(order => {
@@ -6288,7 +6287,13 @@ export function App() {
         setSurgeMultiplier(Math.max(1.0, Math.min(2.5, 1.0 + (sorted.length / 8))));
 
         setAvailableOrders(prev => {
-           if (sorted.length > prev.length) {
+           // Merge: preserve items from `prev` that are not in `sorted` (to protect real-time socket inserts from read-replica lag)
+           const sortedIds = new Set(sorted.map(o => o.id));
+           const optimisticallyAdded = prev.filter(o => !sortedIds.has(o.id) && o.delivery_status === 'finding_rider');
+           
+           const merged = [...optimisticallyAdded, ...sorted].sort((a, b) => (b.match_score || 0) - (a.match_score || 0));
+
+           if (merged.length > prev.length) {
               toast(notificationTitle, { 
                 description: notificationBody,
                 duration: 5000,
@@ -6296,7 +6301,7 @@ export function App() {
                 style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
               });
            }
-           return sorted as DeliveryOrder[];
+           return merged as DeliveryOrder[];
         });
       } else {
         setAvailableOrders([]);
@@ -6439,11 +6444,26 @@ export function App() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         addBootLog('SYS_RESUME: RE-ESTABLISHING Frequencies');
-        // Trigger manual sync of critical data
+        // Hardware-level socket recovery
+        let socketsRebuilt = false;
+        Object.entries(channelsRef.current).forEach(([key, ch]) => {
+           const channel = ch as import('@supabase/supabase-js').RealtimeChannel;
+           // @ts-expect-error: RealtimeChannel state internal
+           if (channel.state !== 'joined' && channel.state !== 'SUBSCRIBED') {
+             addBootLog(`SYS_RESUME: Zombie socket detected on ${key}. Rebinding...`);
+             channel.unsubscribe();
+             channelsRef.current[key] = channel.subscribe();
+             socketsRebuilt = true;
+           }
+        });
+        
+        // Trigger manual sync of critical data as an async fallback
         if (user) {
           fetchProfile();
-          fetchConnectionsAndOrders();
-          fetchActiveOrdersAndHistory();
+          if (socketsRebuilt || Object.keys(channelsRef.current).length === 0) {
+            fetchConnectionsAndOrders();
+            fetchActiveOrdersAndHistory();
+          }
           // Trigger a state update to force re-evaluation.
           setNow(Date.now());
         }
@@ -6452,7 +6472,7 @@ export function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, fetchActiveOrdersAndHistory]);
+  }, [user, fetchActiveOrdersAndHistory, fetchConnectionsAndOrders]);
 
   const lastLocationUpdateRef = useRef<{lat: number, lng: number, time: number} | null>(null);
   const isMockedRef = useRef<boolean>(false);
@@ -7012,96 +7032,153 @@ export function App() {
   }, []);
 
   // --- REAL-TIME FLEET ORCHESTRATOR ---
-  useEffect(() => {
+  const establishRealtimeChannels = useCallback(() => {
     if (!user || isSupabaseMocked()) return;
 
-    const channels: import('@supabase/supabase-js').RealtimeChannel[] = [];
-
     // Protocol: Profile Synchronization
-    const profileChannel = getSupabase()
-      .channel(`profile:${user.id}_${Math.random()}`)
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'rider_profiles', 
-        filter: `id=eq.${user.id}` 
-      }, (payload) => {
-        if (payload.new && typeof payload.new === 'object' && 'id' in payload.new) {
-          setProfile(payload.new as RiderProfile);
-        }
-      })
-      .subscribe();
-    channels.push(profileChannel);
+    if (!channelsRef.current['profile']) {
+      channelsRef.current['profile'] = getSupabase()
+        .channel(`profile:${user.id}`)
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'rider_profiles', 
+          filter: `id=eq.${user.id}` 
+        }, (payload) => {
+          if (payload.new && typeof payload.new === 'object' && 'id' in payload.new) {
+            setProfile(payload.new as RiderProfile);
+          }
+        })
+        .subscribe();
+    }
 
-    // Protocol: Sector Missions (Public)
-    const publicOrdersChannel = getSupabase()
-      .channel(`public_orders_${Math.random()}`)
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'orders', 
-        filter: 'order_type=eq.delivery' 
-      }, () => {
-        fetchConnectionsAndOrders();
-      })
-      .subscribe();
-    channels.push(publicOrdersChannel);
+    // Protocol: Sector Missions (Public open-pool orders)
+    if (!channelsRef.current['public_orders']) {
+      channelsRef.current['public_orders'] = getSupabase()
+        .channel(`rider_dispatch_pool:${user.id}`)
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'orders', 
+          filter: 'delivery_status=eq.finding_rider' 
+        }, (payload) => {
+           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+             const newOrder = payload.new as DeliveryOrder;
+             console.log('REALTIME PAYLOAD (public_orders):', {
+               eventType: payload.eventType,
+               id: newOrder.id,
+               delivery_status: newOrder.delivery_status,
+               rider_id: newOrder.rider_id,
+               fullPayload: newOrder
+             });
+             
+             // Directly inject unassigned open-pool orders into available local state pool
+             if (!newOrder.rider_id && newOrder.delivery_status === 'finding_rider') {
+                setAvailableOrders(prev => {
+                   const exists = prev.findIndex(o => o.id === newOrder.id);
+                   const orderWithOverrides = { ...newOrder };
+                   
+                   if (exists >= 0) {
+                      const copy = [...prev];
+                      copy[exists] = { ...copy[exists], ...orderWithOverrides };
+                      return copy;
+                   } else {
+                      audioSynth.playOrderAssigned();
+                      toast.success(`NEW MISSION DETECTED: Tap to view details.`, {
+                        duration: 5000,
+                        icon: <Zap className="w-5 h-5 text-[#f59e0b] animate-pulse" />,
+                        style: { background: '#050505', color: '#f59e0b', border: '2px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900, boxShadow: '0 0 20px rgba(245, 158, 11, 0.4)' }
+                      });
+                      return [orderWithOverrides, ...prev];
+                   }
+                });
+             } else {
+                // If it no longer qualifies as an open-pool order, remove it from the pool
+                setAvailableOrders(prev => prev.filter(o => o.id !== newOrder.id));
+             }
+           } else if (payload.eventType === 'DELETE') {
+             setAvailableOrders(prev => prev.filter(o => o.id !== payload.old.id));
+           }
+        })
+        .subscribe();
+    }
 
     // Protocol: Relay Connections
-    const connChannel = getSupabase()
-      .channel(`rider_connections:${user.id}_${Math.random()}`)
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'rider_connections', 
-        filter: `rider_id=eq.${user.id}` 
-      }, () => {
-        fetchConnectionsAndOrders();
-      })
-      .subscribe();
-    channels.push(connChannel);
+    if (!channelsRef.current['connections']) {
+      channelsRef.current['connections'] = getSupabase()
+        .channel(`rider_connections:${user.id}`)
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'rider_connections', 
+          filter: `rider_id=eq.${user.id}` 
+        }, () => {
+          fetchConnectionsAndOrders();
+        })
+        .subscribe();
+    }
 
     // Protocol: Active Mission Directives
-    const missionChannel = getSupabase()
-      .channel(`rider_orders:${user.id}_${Math.random()}`)
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'orders', 
-        filter: `rider_id=eq.${user.id}` 
-      }, () => {
-        // Full refresh on mission state change
-        fetchConnectionsAndOrders();
-        fetchActiveOrdersAndHistory();
-      })
-      .subscribe();
-    channels.push(missionChannel);
+    if (!channelsRef.current['active_orders']) {
+      channelsRef.current['active_orders'] = getSupabase()
+        .channel(`rider_active_orders:${user.id}`)
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'orders', 
+          filter: `rider_id=eq.${user.id}` 
+        }, (payload) => {
+           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+             const updatedOrder = payload.new as DeliveryOrder;
+             setActiveOrders(prev => {
+                const exists = prev.findIndex(o => o.id === updatedOrder.id);
+                if (exists >= 0) {
+                   const copy = [...prev];
+                   copy[exists] = { ...copy[exists], ...updatedOrder };
+                   return copy;
+                }
+                return prev;
+             });
+             // Also remove from available open pool if accepted by us
+             setAvailableOrders(prev => prev.filter(o => o.id !== updatedOrder.id));
+           } else if (payload.eventType === 'DELETE') {
+             setActiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
+             fetchActiveOrdersAndHistory(); // Refresh history
+           }
+        })
+        .subscribe();
+    }
 
     // Protocol: Relay Nudge Directives
-    const nudgeChannel = getSupabase()
-      .channel(`nudges:${user.id}_${Math.random()}`)
-      .on('postgres_changes', { 
-        event: 'INSERT', 
-        schema: 'public', 
-        table: 'rider_notifications',
-        filter: `rider_id=eq.${user.id}` 
-      }, payload => {
-        toast.info(`Update from store: ${payload.new.message}`, {
-          duration: 6000,
-          description: 'Store requires your attention.',
-          icon: <Activity className="w-5 h-5 text-[#f59e0b]" />
-        });
-      })
-      .subscribe();
-    channels.push(nudgeChannel);
+    if (!channelsRef.current['nudges']) {
+      channelsRef.current['nudges'] = getSupabase()
+        .channel(`nudges:${user.id}`)
+        .on('postgres_changes', { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'rider_notifications',
+          filter: `rider_id=eq.${user.id}` 
+        }, payload => {
+          toast.info(`Update from store: ${payload.new.message}`, {
+            duration: 6000,
+            description: 'Store requires your attention.',
+            icon: <Activity className="w-5 h-5 text-[#f59e0b]" />
+          });
+        })
+        .subscribe();
+    }
+  }, [user, fetchActiveOrdersAndHistory, fetchConnectionsAndOrders, setActiveOrders, setAvailableOrders]);
+
+  useEffect(() => {
+    establishRealtimeChannels();
 
     return () => {
-      channels.forEach(ch => {
-        getSupabase().removeChannel(ch);
+      Object.values(channelsRef.current).forEach(ch => {
+        getSupabase().removeChannel(ch as import('@supabase/supabase-js').RealtimeChannel);
       });
+      channelsRef.current = {};
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, fetchActiveOrdersAndHistory]);
+  }, [establishRealtimeChannels]);
 
   // Initial Fetches
   useEffect(() => {

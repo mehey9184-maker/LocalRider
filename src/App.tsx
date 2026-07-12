@@ -3695,7 +3695,8 @@ const ProfileView = React.memo(({
   notificationBody,
   onUpdateNotificationBody,
   onShowOnboarding,
-  onShowLegal
+  onShowLegal,
+  onDisconnect
 }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
@@ -3715,7 +3716,8 @@ const ProfileView = React.memo(({
   notificationBody: string,
   onUpdateNotificationBody: (body: string) => void,
   onShowOnboarding?: () => void,
-  onShowLegal?: () => void
+  onShowLegal?: () => void,
+  onDisconnect?: (connectionId: string) => Promise<void>
 }) => {
   const [localAvatar, setLocalAvatar] = useState(() => localStorage.getItem(`localeats_avatar_${profile.id}`) || profile.photo_url || '');
   const [editingAvatar, setEditingAvatar] = useState(false);
@@ -4375,13 +4377,29 @@ const ProfileView = React.memo(({
                       </div>
                     </div>
                   </div>
-                  <div className="text-right flex flex-col items-end leading-[1.2] pl-3 shrink-0">
-                    <span className={cn(
-                      "text-[14px] font-sans font-medium tracking-normal",
-                      isExpired ? "text-red-500/50" : "text-zinc-400"
-                    )}>
-                      {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
-                    </span>
+                  <div className="text-right flex items-center gap-3 pl-3 shrink-0">
+                    <div className="flex flex-col items-end leading-[1.2]">
+                      <span className={cn(
+                        "text-[14px] font-sans font-medium tracking-normal",
+                        isExpired ? "text-red-500/50" : "text-zinc-400"
+                      )}>
+                        {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (window.confirm("Are you sure you want to disconnect from this store?")) {
+                          if (onDisconnect) {
+                            await onDisconnect(conn.id);
+                          }
+                        }
+                      }}
+                      className="p-1 hover:bg-red-500/10 text-red-500/70 hover:text-red-500 rounded-lg transition-colors"
+                      title="Disconnect Store"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               );
@@ -5323,7 +5341,19 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
 
   return (
     <>
-      <div className="p-6 h-full min-h-[100dvh] pb-32 flex flex-col bg-black text-white overflow-y-auto no-scrollbar">
+      <div className="p-6 h-full min-h-[100dvh] pb-32 flex flex-col bg-black text-white overflow-y-auto no-scrollbar relative">
+        {loading && (
+          <div className="absolute inset-0 bg-black/95 backdrop-blur-md z-[100] flex flex-col items-center justify-center p-6 text-center">
+            <div className="w-16 h-16 rounded-full bg-[#f59e0b]/10 border border-[#f59e0b]/30 flex items-center justify-center text-[#f59e0b] mb-6 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
+              <RefreshCw className="w-8 h-8 animate-spin" />
+            </div>
+            <h3 className="text-xl font-black italic uppercase text-white mb-2 tracking-wider">Verification Pending</h3>
+            <p className="text-[10px] text-[#f59e0b] font-black uppercase tracking-[0.2em] mb-4">Securing Handshake Link...</p>
+            <p className="text-xs text-zinc-400 max-w-xs leading-relaxed">
+              Establishing a secure connection with the merchant. This ensures data segregation and prevents cross-merchant contamination. Please wait...
+            </p>
+          </div>
+        )}
         <button onClick={onBack} disabled={loading} className="text-zinc-500 flex items-center gap-2 mb-8">
           <ArrowRight className="w-4 h-4 rotate-180" />
           <span className="text-xs font-black uppercase tracking-widest">Return to Hub</span>
@@ -5453,6 +5483,11 @@ function AvatarThumbnail({ profile }: AvatarThumbnailProps) {
   );
 }
 
+const refHolder = {
+  fetchConnectionsAndOrders: () => Promise.resolve(),
+  fetchActiveOrdersAndHistory: () => Promise.resolve()
+};
+
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<RiderProfile | null>(null);
@@ -5460,6 +5495,7 @@ export function App() {
   const [showRiderTour, setShowRiderTour] = useState(false);
   const [showLegalModal, setShowLegalModal] = useState(false);
   const [connections, setConnections] = useState<ShopConnection[]>([]);
+  const [handshakeVerificationState, setHandshakeVerificationState] = useState<'idle' | 'pending' | 'verified' | 'failed'>('idle');
   const [now, setNow] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<AppView>(() => {
@@ -6270,8 +6306,13 @@ export function App() {
           })
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .filter((order: any) => {
-             // Directly ingest open-pool unassigned orders
-             return order.delivery_status === 'finding_rider' && !order.rider_id;
+             // 1 & 2. Database-Level Isolation & Pairing Protocol
+             const isPaired = activeConnections.some(c => c.shop_id === order.shop_id && new Date(c.expires_at) > new Date());
+             
+             // 5. External Fleet Escape Hatch
+             const isExternalFleetAllowed = order.allow_external_riders === true && order.delivery_status === 'finding_rider' && !order.rider_id;
+             
+             return isPaired || isExternalFleetAllowed;
           });
         
         const sorted = [...formatted].map(order => {
@@ -6287,11 +6328,25 @@ export function App() {
         setSurgeMultiplier(Math.max(1.0, Math.min(2.5, 1.0 + (sorted.length / 8))));
 
         setAvailableOrders(prev => {
-           // Merge: preserve items from `prev` that are not in `sorted` (to protect real-time socket inserts from read-replica lag)
-           const sortedIds = new Set(sorted.map(o => o.id));
-           const optimisticallyAdded = prev.filter(o => !sortedIds.has(o.id) && o.delivery_status === 'finding_rider');
+           // Defensive State Reconciliation Layer
+           const mergedMap = new Map<string, DeliveryOrder>();
            
-           const merged = [...optimisticallyAdded, ...sorted].sort((a, b) => (b.match_score || 0) - (a.match_score || 0));
+           // 1. Cleanly apply the incoming REST snapshot
+           for (const o of sorted) {
+              mergedMap.set(o.id, o);
+           }
+
+           // 2. Scan existing state for any unassigned real-time orders 
+           // and merge them into the snapshot to protect from replication lag 
+           // or faulty backend exclusion filters
+           const unassignedRealtimeOrders = prev.filter(o => o.delivery_status === 'finding_rider' && !o.rider_id);
+           for (const o of unassignedRealtimeOrders) {
+              if (!mergedMap.has(o.id)) {
+                 mergedMap.set(o.id, o);
+              }
+           }
+             
+           const merged = (Array.from(mergedMap.values()) as DeliveryOrder[]).sort((a, b) => (b.match_score || 0) - (a.match_score || 0));
 
            if (merged.length > prev.length) {
               toast(notificationTitle, { 
@@ -6318,6 +6373,78 @@ export function App() {
       isFetchingConnRef.current = false;
     }
   }, [user, profile, merchantAllowExternal, merchantCashTrust, merchantAutoLook, dispatchToMarketplace, notificationTitle, notificationBody, setAvailableOrders, setSurgeMultiplier]);
+
+  const invalidatePairing = useCallback(async (connectionId?: string) => {
+    try {
+      if (isSupabaseMocked()) {
+        if (connectionId) {
+          setConnections(prev => prev.filter(c => c.id !== connectionId));
+        } else {
+          setConnections([]);
+        }
+        const keysToRemove = [
+          'localeats_merchant_allow_external',
+          'localeats_merchant_cash_trust',
+          'localeats_merchant_auto_look',
+          'localeats_dispatch_to_marketplace'
+        ];
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+        toast.success("Disconnected and keys purged from local storage.");
+        return;
+      }
+
+      if (connectionId) {
+        // Disconnect a specific connection
+        const { error } = await getSupabase()
+          .from('rider_connections')
+          .update({
+            rider_id: null,
+            expires_at: new Date(0).toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', connectionId)
+          .eq('rider_id', user?.id); // Pass current authenticated rider_id for RLS
+
+        if (error) {
+          console.error("Error disconnecting connection:", error);
+          toast.error("Failed to disconnect store on backend.");
+          return;
+        }
+      } else {
+        // Disconnect all connections for this rider
+        if (user?.id) {
+          const { error } = await getSupabase()
+            .from('rider_connections')
+            .update({
+              rider_id: null,
+              expires_at: new Date(0).toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('rider_id', user.id); // Pass current authenticated rider_id for RLS
+
+          if (error) {
+            console.error("Error disconnecting all connections:", error);
+          }
+        }
+      }
+
+      // Nuke cached keys/tokens from localStorage
+      const keysToRemove = [
+        'localeats_merchant_allow_external',
+        'localeats_merchant_cash_trust',
+        'localeats_merchant_auto_look',
+        'localeats_dispatch_to_marketplace'
+      ];
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+
+      // Refresh connections and orders
+      await fetchConnectionsAndOrders();
+      toast.success("Disconnected successfully.");
+    } catch (e) {
+      console.error("Error in invalidatePairing:", e);
+      toast.error("An error occurred while unpairing.");
+    }
+  }, [user, fetchConnectionsAndOrders]);
 
   const fetchActiveOrdersAndHistory = useCallback(async () => {
     if (!user) return;
@@ -6461,8 +6588,8 @@ export function App() {
         if (user) {
           fetchProfile();
           if (socketsRebuilt || Object.keys(channelsRef.current).length === 0) {
-            fetchConnectionsAndOrders();
-            fetchActiveOrdersAndHistory();
+            refHolder.fetchConnectionsAndOrders();
+            refHolder.fetchActiveOrdersAndHistory();
           }
           // Trigger a state update to force re-evaluation.
           setNow(Date.now());
@@ -6472,7 +6599,7 @@ export function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, fetchActiveOrdersAndHistory, fetchConnectionsAndOrders]);
+  }, [user]);
 
   const lastLocationUpdateRef = useRef<{lat: number, lng: number, time: number} | null>(null);
   const isMockedRef = useRef<boolean>(false);
@@ -6897,29 +7024,20 @@ export function App() {
 
           // Establish a high-fidelity real-time simulation interval to continuously supply movement vectors
           if (!fallbackIntervalId) {
-            let curLat = startLat;
-            let curLng = startLng;
-            let angle = Math.random() * Math.PI * 2;
+            const curLat = startLat;
+            const curLng = startLng;
+            const angle = Math.random() * Math.PI * 2;
             
             fallbackIntervalId = setInterval(() => {
-              angle += (Math.random() - 0.5) * 0.9;
-              const speed = 0.00009 + Math.random() * 0.00004; // Simulate realistic riding drift (approx 10-15 meters per tick)
-              curLat += Math.sin(angle) * speed;
-              curLng += Math.cos(angle) * speed;
-
-              // Constrain simulation strictly to the Tembisa pilot zone sector
-              if (curLat < -26.03) { curLat = -26.03; angle = Math.PI / 2; }
-              if (curLat > -25.95) { curLat = -25.95; angle = -Math.PI / 2; }
-              if (curLng < 28.18) { curLng = 28.18; angle = 0; }
-              if (curLng > 28.25) { curLng = 28.25; angle = Math.PI; }
-
+              // Drift disabled to prevent the app from "controlling itself"
+              // Only slightly jitter accuracy to simulate GPS polling
               updateLocation({
                 coords: { 
                   latitude: curLat, 
                   longitude: curLng, 
-                  accuracy: 10,
+                  accuracy: 10 + Math.random() * 5,
                   heading: (angle * 180) / Math.PI,
-                  speed: 6.2 
+                  speed: 0 
                 }, 
                 timestamp: Date.now(), 
                 isFallback: true 
@@ -7032,6 +7150,14 @@ export function App() {
   }, []);
 
   // --- REAL-TIME FLEET ORCHESTRATOR ---
+  useEffect(() => {
+    refHolder.fetchConnectionsAndOrders = fetchConnectionsAndOrders;
+  }, [fetchConnectionsAndOrders]);
+
+  useEffect(() => {
+    refHolder.fetchActiveOrdersAndHistory = fetchActiveOrdersAndHistory;
+  }, [fetchActiveOrdersAndHistory]);
+
   const establishRealtimeChannels = useCallback(() => {
     if (!user || isSupabaseMocked()) return;
 
@@ -7113,7 +7239,7 @@ export function App() {
           table: 'rider_connections', 
           filter: `rider_id=eq.${user.id}` 
         }, () => {
-          fetchConnectionsAndOrders();
+          refHolder.fetchConnectionsAndOrders();
         })
         .subscribe();
     }
@@ -7143,7 +7269,7 @@ export function App() {
              setAvailableOrders(prev => prev.filter(o => o.id !== updatedOrder.id));
            } else if (payload.eventType === 'DELETE') {
              setActiveOrders(prev => prev.filter(o => o.id !== payload.old.id));
-             fetchActiveOrdersAndHistory(); // Refresh history
+             refHolder.fetchActiveOrdersAndHistory(); // Refresh history
            }
         })
         .subscribe();
@@ -7167,7 +7293,7 @@ export function App() {
         })
         .subscribe();
     }
-  }, [user, fetchActiveOrdersAndHistory, fetchConnectionsAndOrders, setActiveOrders, setAvailableOrders]);
+  }, [user, setActiveOrders, setAvailableOrders]);
 
   useEffect(() => {
     establishRealtimeChannels();
@@ -7278,7 +7404,8 @@ export function App() {
         return await getSupabase()
           .from('orders')
           .update(updates)
-          .eq('id', orderId);
+          .eq('id', orderId)
+          .eq('rider_id', user.id); // Secure RLS enforcement: match against current authenticated rider_id
       });
 
       if (error) {
@@ -7352,7 +7479,7 @@ export function App() {
         toast.error("Could not save locally. Using temporary memory.", { id: 'status-updating' });
       }
     }
-  }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, setShowRatingPrompt]);
+  }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, setShowRatingPrompt, user]);
 
   const [isListening, setIsListening] = useState(false);
 
@@ -7571,17 +7698,23 @@ export function App() {
   const handleOrderAccept = async (orderId: string) => {
     if (!profile || !user) return;
     
-    // Pairing Protocol: Ensure rider is connected to the merchant node (Bypass for unassigned finding_rider marketplace orders)
+    // 1 & 2. Database-Level Isolation & Pairing Protocol
     const orderToAccept = availableOrders.find(o => o.id === orderId);
     if (!orderToAccept && !isSupabaseMocked()) {
       toast.error('Store connection unavailable.');
       return;
     }
 
-    if (orderToAccept && orderToAccept.delivery_status !== 'finding_rider') {
+    if (orderToAccept) {
+      // Check if the rider is explicitly paired with the merchant
       const isPaired = connections.some(c => c.shop_id === orderToAccept.shop_id && new Date(c.expires_at) > new Date());
-      if (!isPaired && !isSupabaseMocked()) {
-        toast.error('Store link expired. Please reconnect to the store.');
+      
+      // 5. External Fleet Escape Hatch
+      // If not paired, the ONLY way they can accept it is if it's an open-pool order where external riders are allowed
+      const isExternalFleetAllowed = orderToAccept.allow_external_riders === true && orderToAccept.delivery_status === 'finding_rider' && !orderToAccept.rider_id;
+
+      if (!isPaired && !isExternalFleetAllowed && !isSupabaseMocked()) {
+        toast.error('Store link expired or order is restricted to internal fleet. Please reconnect to the store.');
         return;
       }
     }
@@ -7674,13 +7807,16 @@ export function App() {
   const handlePair = async (code: string) => {
     if (!user || !profile) return;
     addBootLog(`HANDSHAKE_INIT: CODE_${code}`);
+    setHandshakeVerificationState('pending');
     
     try {
       if (isSupabaseMocked()) {
         await new Promise(resolve => setTimeout(resolve, 800));
         if (code === '000000') {
+          setHandshakeVerificationState('failed');
           throw new Error('Uplink rejected. Testing failure protocol.');
         }
+        setHandshakeVerificationState('verified');
         toast.success(`Uplink established! Successfully paired with Alpha Grid. (24h Pass)`);
         setView('hub');
         await fetchConnectionsAndOrders();
@@ -7719,7 +7855,8 @@ export function App() {
               expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               updated_at: new Date().toISOString()
             })
-            .eq('id', connection!.id);
+            .eq('id', connection!.id)
+            .or(`rider_id.is.null,rider_id.eq.${user.id}`); // Secure check: only unassigned or already paired to us
         }, 3, 1000, 10000);
         updateError = res.error;
       } catch (e) {
@@ -7737,7 +7874,8 @@ export function App() {
                 rider_id: user.id,
                 expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
               })
-              .eq('id', connection!.id);
+              .eq('id', connection!.id)
+              .or(`rider_id.is.null,rider_id.eq.${user.id}`); // Secure check: only unassigned or already paired to us
           }, 2, 1000, 10000);
           updateError = retryResult.error;
         } catch (e) {
@@ -7754,8 +7892,10 @@ export function App() {
         const res = await fetchWithRetry(async () => {
           return await getSupabase()
             .from('rider_connections')
-            .select('rider_id')
+            .select('id, shop_id, rider_id')
             .eq('id', connection!.id)
+            .eq('rider_id', user.id)
+            .eq('shop_id', connection!.shop_id)
             .single();
         }, 3, 1000, 10000);
         verification = res.data;
@@ -7764,9 +7904,11 @@ export function App() {
         verifyError = e;
       }
 
-      if (verifyError || verification?.rider_id !== user.id) {
-        throw new Error('Connection failed. Please try again.');
+      if (verifyError || !verification || verification.rider_id !== user.id || verification.shop_id !== connection!.shop_id) {
+        throw new Error('Handshake verification failed. Shop-rider link could not be securely verified.');
       }
+
+      setHandshakeVerificationState('verified');
 
       // Haptic Feedback Trigger!
       if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
@@ -7780,6 +7922,7 @@ export function App() {
       setView('hub');
       await fetchConnectionsAndOrders();
     } catch (err: unknown) {
+      setHandshakeVerificationState('failed');
       const error = err as Error & { message?: string };
       console.error('Pairing Protocol Error:', error);
       throw error;
@@ -8311,6 +8454,21 @@ export function App() {
                               ))}
                            </div>
                         </div>
+                        <div className="flex items-center gap-1.5 mt-1">
+                           <span className="text-[9px] font-black tracking-wider text-zinc-500 uppercase">Uplink:</span>
+                           <span className={cn(
+                             "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded",
+                             handshakeVerificationState === 'verified' && "text-[#10b981] bg-[#10b981]/10",
+                             handshakeVerificationState === 'pending' && "text-[#f59e0b] bg-[#f59e0b]/10 animate-pulse",
+                             handshakeVerificationState === 'failed' && "text-red-500 bg-red-500/10",
+                             handshakeVerificationState === 'idle' && "text-zinc-400 bg-zinc-400/10"
+                           )}>
+                             {handshakeVerificationState === 'verified' && "Verified Handshake"}
+                             {handshakeVerificationState === 'pending' && "Pending..."}
+                             {handshakeVerificationState === 'failed' && "Link Compromised / Failed"}
+                             {handshakeVerificationState === 'idle' && (connections.length > 0 ? "Uplink Secured" : "Not Connected")}
+                           </span>
+                        </div>
                       </div>
                     </div>
                     <button 
@@ -8505,12 +8663,16 @@ export function App() {
                   onUpdateVehicle={updateVehicle} 
                   onUpdateProfile={updateProfileFields} 
                   onLogout={async () => {
-                  try { await getSupabase().auth.signOut(); } catch (e) {
-                     console.warn("Sign out err", e);
-                     localStorage.clear();
-                     window.location.reload();
-                  }
-                }} 
+                    try {
+                      await invalidatePairing();
+                      await getSupabase().auth.signOut();
+                    } catch (e) {
+                      console.warn("Sign out err", e);
+                      localStorage.clear();
+                      window.location.reload();
+                    }
+                  }} 
+                  onDisconnect={invalidatePairing}
                   onPair={() => {
                     setView('pair');
                   }}

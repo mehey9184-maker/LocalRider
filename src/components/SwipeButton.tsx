@@ -34,28 +34,56 @@ export const SwipeButton = ({
   }, [resetToken, x]);
 
   useEffect(() => {
+    if (!containerRef.current) return;
+    
+    const container = containerRef.current;
     const updateWidth = () => {
-      if (containerRef.current) {
-        const handleWidth = 72; // aspect-square sizing inside h-20 (minus padding)
-        setMaxDrag(Math.max(100, containerRef.current.offsetWidth - handleWidth - 12));
-      }
+      const handleWidth = 72; // aspect-square sizing inside h-20 (minus padding)
+      setMaxDrag(Math.max(100, container.offsetWidth - handleWidth - 12));
     };
+
     updateWidth();
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const width = entry.contentRect.width || container.offsetWidth;
+        if (width > 0) {
+          const handleWidth = 72;
+          setMaxDrag(Math.max(100, width - handleWidth - 12));
+        }
+      }
+    });
+
+    observer.observe(container);
     window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateWidth);
+    };
   }, []);
 
   return (
-    <div 
+    <motion.div 
       ref={containerRef} 
+      onTap={() => {
+        if (disabled || isComplete) return;
+        setIsComplete(true);
+        animate(x, maxDrag, { type: "spring", stiffness: 300, damping: 30 }).then(() => {
+          onComplete();
+        });
+      }}
       className={cn(
-        "relative h-20 bg-zinc-900/60 backdrop-blur-md border border-zinc-800 rounded-2xl overflow-hidden p-1.5 select-none transition-all duration-300",
-        disabled ? "opacity-50 grayscale cursor-not-allowed" : "hover:border-zinc-700/80 shadow-[inset_0_2px_4px_rgba(0,0,0,0.4)]"
+        "relative h-20 bg-zinc-900/60 backdrop-blur-md border border-zinc-800 rounded-2xl overflow-hidden p-1.5 select-none transition-all duration-300 cursor-pointer touch-none",
+        disabled ? "opacity-50 grayscale cursor-not-allowed" : "hover:border-[#f59e0b]/30 shadow-[inset_0_2px_4px_rgba(0,0,0,0.4)]"
       )}
     >
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-4">
+      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-4">
         <span className="text-[10px] font-black uppercase tracking-[0.35em] text-zinc-400 opacity-60 text-center select-none truncate">
           {label}
+        </span>
+        <span className="text-[7.5px] font-bold text-zinc-600 uppercase tracking-widest mt-0.5">
+          (Swipe or Tap to Confirm)
         </span>
       </div>
       <motion.div
@@ -65,7 +93,8 @@ export const SwipeButton = ({
         style={{ x, backgroundColor: isComplete ? '#fff' : color, touchAction: 'none' }}
         onDragEnd={(_, info) => {
           if (disabled) return;
-          if (info.offset.x > maxDrag * 0.75) {
+          const currentX = x.get();
+          if (currentX > maxDrag * 0.6 || info.offset.x > maxDrag * 0.6) {
             setIsComplete(true);
             onComplete();
             if (navigator.vibrate) navigator.vibrate([10, 20, 10]);
@@ -75,7 +104,7 @@ export const SwipeButton = ({
         }}
         whileHover={disabled ? {} : { scale: 1.02, boxShadow: "0 4px 20px rgba(245,158,11,0.25)" }}
         whileTap={disabled ? {} : { scale: 0.98 }}
-        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_4px_15px_rgba(0,0,0,0.3)] transition-all touch-action-none"
+        className="absolute left-1.5 top-1.5 bottom-1.5 aspect-square rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing z-20 shadow-[0_4px_15px_rgba(0,0,0,0.3)] transition-all touch-none"
       >
         <ArrowRight className="w-8 h-8 text-black" strokeWidth={3} />
       </motion.div>
@@ -84,6 +113,6 @@ export const SwipeButton = ({
         style={{ width: x, opacity: 0.15, backgroundColor: color }}
         className="absolute left-0 top-0 bottom-0 pointer-events-none z-10"
       />
-    </div>
+    </motion.div>
   );
 };

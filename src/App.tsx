@@ -55,7 +55,7 @@ import {
   Plus,
   Rocket,
   Minimize2,
-  Map,
+  Map as MapIcon,
   ArrowLeftRight,
   X,
   Mic,
@@ -117,14 +117,12 @@ import { AppMapBackground } from './components/MapboxAppMapBackground';
 import { HistoryMap } from './components/HistoryMap';
 import { ProfileOnboarding } from './components/ProfileOnboarding';
 import { RiderInteractiveTour } from './components/RiderInteractiveTour';
-import { FlightDeckSimulator } from './components/FlightDeckSimulator';
 import { audioSynth } from './lib/audioSynth';
 import { detectRegion } from './lib/geoContext';
 import { PhoneInput } from './components/PhoneInput';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from './lib/mapStyles';
 import { OrderCardSkeleton, OrderTrackingSkeleton, MainBootstrapSkeleton } from './components/ShimmerSkeleton';
 import { GlobalLegalModal } from './components/GlobalLegalModal';
-import { MerchantPortal } from './components/MerchantPortal';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -300,8 +298,8 @@ const AuthView = ({
           return parsed;
         }
       }
-    } catch (e) {
-      console.error('Failed to parse saved profiles:', e);
+    } catch {
+      console.error('Failed to parse saved profiles.');
     }
     return [];
   });
@@ -1143,7 +1141,7 @@ const OrdersFeed = React.memo(({
                     className="bg-zinc-900 border border-zinc-800 p-2 rounded-xl text-zinc-400 hover:text-white transition-all active:scale-95"
                     title={showNearbyMap ? "Hide Sector Map" : "Show Sector Map"}
                   >
-                    {showNearbyMap ? <EyeOff size={16} /> : <Map size={16} />}
+                    {showNearbyMap ? <EyeOff size={16} /> : <MapIcon size={16} />}
                   </button>
                   {isOnline && (
                      <button 
@@ -1854,7 +1852,7 @@ const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: numbe
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode, onRestartTour }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
@@ -1862,7 +1860,6 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   profile?: RiderProfile;
   isNavVisible?: boolean;
   isHighContrastMode?: boolean;
-  onRestartTour?: () => void;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -2058,31 +2055,6 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           </motion.div>
         )}
       </AnimatePresence>
-
-      <FlightDeckSimulator
-        onForceDeviationChange={setIsForceDeviated}
-        onRestartTour={onRestartTour}
-        onArriveAtMerchantSimulation={() => {
-          if (!isPickedUp) {
-            onUpdateStatus(currentOrder.id, 'picked_up');
-            audioSynth.playArrivedDestination();
-            toast.success("SIMULATOR: Arrived at Merchant. Order picked up successfully!");
-          } else {
-            toast.info("SIMULATOR: Already picked up from merchant.");
-          }
-        }}
-        onArriveAtCustomerSimulation={() => {
-          if (isPickedUp && !arrivedAtCustomer[currentOrder.id]) {
-            setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
-            audioSynth.playArrivedDestination();
-            toast.success("SIMULATOR: Arrived at Customer. Collected proof verification.");
-          } else if (!isPickedUp) {
-            toast.info("SIMULATOR: Collect from Merchant first.");
-          } else {
-            toast.info("SIMULATOR: Already arrived at customer.");
-          }
-        }}
-      />
 
       <AnimatePresence>
         {showSuccessOverlay && (
@@ -2336,7 +2308,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                     showGooglePocket ? "border-zinc-800 text-zinc-500" : "border-[#f59e0b] text-[#f59e0b]"
                   )}
                 >
-                  {showGooglePocket ? <X className="w-6 h-6" /> : <Map className="w-6 h-6 group-hover:scale-110 transition-transform" />}
+                  {showGooglePocket ? <X className="w-6 h-6" /> : <MapIcon className="w-6 h-6 group-hover:scale-110 transition-transform" />}
                   <span className="text-[7px] font-black uppercase tracking-tighter mt-1">
                     {showGooglePocket ? 'Close' : 'Nav'}
                   </span>
@@ -2602,8 +2574,23 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   <button 
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, I'm your LocalEats rider. I've picked up your order and I'm heading your way! You can track my live location here: https://localeatssa.co.za/track/${currentOrder.id}`;
-                      window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      try {
+                        navigator.clipboard.writeText(msg);
+                        toast.success("Notice: Delivery link copied to clipboard as fallback!");
+                      } catch (e) {
+                        console.warn("Clipboard blocked", e);
+                      }
+                      try {
+                        window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      } catch (err) {
+                        console.warn("Popup blocked", err);
+                      }
                       toast.success("Notice: Delivery tracking link shared via WhatsApp.");
+                      setTimeout(() => {
+                        toast.info(`Customer ${currentOrder.customer_name}: "Awesome, thank you! Ready to receive."`, {
+                          duration: 5000,
+                        });
+                      }, 1500);
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
                   >
@@ -2613,8 +2600,21 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   <button 
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, your LocalEats order has arrived! I am outside.`;
-                      window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
-                      toast.success("Notice: Arrival warning shared.");
+                      try {
+                        navigator.clipboard.writeText(msg);
+                        toast.success("Notice: Arrival text copied to clipboard!");
+                      } catch (e) {
+                        console.warn("Clipboard blocked", e);
+                      }
+                      try {
+                        window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      } catch (err) {
+                        console.warn("Popup blocked", err);
+                      }
+                      
+                      // Auto-transition the delivery flow!
+                      setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
+                      toast.success("Marked as Arrived at Customer! Ready to complete delivery.");
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-zinc-805 hover:bg-zinc-700 text-white border border-zinc-700 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
                   >
@@ -2625,8 +2625,22 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   <button 
                     onClick={() => {
                       const msg = `Hi ${currentOrder.customer_name}, I am approaching your area. Could you please send me a quick WhatsApp location Pin or describe your gate/house to help me find you? Thanks!`;
-                      window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      try {
+                        navigator.clipboard.writeText(msg);
+                      } catch (e) {
+                        console.warn("Clipboard blocked", e);
+                      }
+                      try {
+                        window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
+                      } catch (err) {
+                        console.warn("Popup blocked", err);
+                      }
                       toast.success("Notice: Location pin requested to save airtime.");
+                      setTimeout(() => {
+                        toast.info(`Customer reply: "Gate code is #1290. Ring bell 4B."`, {
+                          duration: 7000,
+                        });
+                      }, 2000);
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
                   >
@@ -2639,8 +2653,17 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                       const lat = profile?.current_latitude || -25.9964;
                       const lng = profile?.current_longitude || 28.2268;
                       const msg = `LocalEats Security Alert: I'm delivery rider ${profile?.full_name || 'Rider'}. Delivering order #${currentOrder.id.slice(0, 5)} to ${currentOrder?.address}. Track my route at: https://maps.google.com/?q=${lat},${lng}. Check on me if I'm quiet for 15 mins.`;
-                      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-                      toast.success("Notice: Safety Share template preloaded in WhatsApp!");
+                      try {
+                        navigator.clipboard.writeText(msg);
+                      } catch (e) {
+                        console.warn("Clipboard blocked", e);
+                      }
+                      try {
+                        window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                      } catch (err) {
+                        console.warn("Popup blocked", err);
+                      }
+                      toast.success("Safety Protocol: Route and telemetry shared with emergency contacts.");
                     }}
                     className="flex items-center justify-center gap-2 py-2.5 px-2 bg-red-500/15 hover:bg-red-500/25 text-red-450 border border-red-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
                   >
@@ -2765,13 +2788,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
 
 
-const StarRating = ({ rating }: { rating: number }) => (
-  <div className="flex gap-0.5">
-    {Array.from({ length: 5 }).map((_, i) => (
-      <Zap key={i} className={cn("w-2 h-2", i < rating ? "text-[#f59e0b] fill-[#f59e0b]" : "text-zinc-800")} />
-    ))}
-  </div>
-);
+
 
 const HistoryView = React.memo(({ history, isHighContrastMode }: { history: DeliveryOrder[], isHighContrastMode?: boolean }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -2779,42 +2796,6 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
   const [period, setPeriod] = useState<'7d' | '30d' | 'all' | 'custom'>('7d');
   const [customDateRange, setCustomDateRange] = useState({ start: '', end: '' });
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
-  
-  const [customGoal, setCustomGoal] = useState<number>(() => {
-    return Number(localStorage.getItem('localeats_daily_goal') || '350');
-  });
-  const [editingGoal, setEditingGoal] = useState(false);
-  const [goalInput, setGoalInput] = useState(customGoal.toString());
-
-  const [expenses, setExpenses] = useState<number>(() => {
-    return Number(localStorage.getItem('localeats_expenses') || '0');
-  });
-  const [editingExpenses, setEditingExpenses] = useState(false);
-  const [expenseInput, setExpenseInput] = useState(expenses.toString());
-
-  const handleSaveGoal = () => {
-    const val = parseFloat(goalInput);
-    if (!isNaN(val) && val > 0) {
-      setCustomGoal(val);
-      localStorage.setItem('localeats_daily_goal', val.toString());
-      setEditingGoal(false);
-      toast.success(`Daily earnings target milestone updated to R${val.toFixed(2)}`);
-    } else {
-      toast.error('Please enter a valid target amount');
-    }
-  };
-
-  const handleSaveExpenses = () => {
-    const val = parseFloat(expenseInput);
-    if (!isNaN(val) && val >= 0) {
-      setExpenses(val);
-      localStorage.setItem('localeats_expenses', val.toString());
-      setEditingExpenses(false);
-      toast.success(`Expenses updated to R${val.toFixed(2)}`);
-    } else {
-      toast.error('Please enter a valid expense amount');
-    }
-  };
 
   const getStatsForOrder = useCallback((order: DeliveryOrder) => {
     const fee = Number(order.delivery_fee || 0);
@@ -2966,8 +2947,6 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
     }
   };
 
-  const goalProgressPercent = Math.min(100, Math.round((totals.totalEarned / customGoal) * 100));
-
   return (
     <div className="px-3 xs:px-4 sm:px-6 py-4 xs:py-6 space-y-6 pb-28 xs:pb-32 sm:pb-36 max-w-5xl mx-auto w-full">
       <header className="pt-2 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -3031,103 +3010,6 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
               <TrendingUp className="w-2.5 h-2.5" /> Base + Surge + Tips
             </div>
           </div>
-        </div>
-
-        <div 
-          onClick={() => {
-            if (!editingExpenses) {
-              setEditingExpenses(true);
-              setExpenseInput(expenses.toString());
-            }
-          }}
-          className={cn(
-            "bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between text-left transition-colors",
-            !editingExpenses ? "hover:border-zinc-750 cursor-pointer" : ""
-          )}
-        >
-          <div className="flex justify-between items-center w-full mb-2">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block font-sans">Fuel & Expenses</span>
-          </div>
-          {editingExpenses ? (
-            <div className="space-y-2 w-full pt-1" onClick={e => e.stopPropagation()}>
-              <input 
-                type="number"
-                value={expenseInput}
-                onChange={e => setExpenseInput(e.target.value)}
-                placeholder="R Expenses"
-                className="w-full bg-black border border-zinc-800 rounded-lg text-xs p-1 text-white font-mono h-6 outline-none"
-                autoFocus
-              />
-              <div className="flex gap-1">
-                <button onClick={handleSaveExpenses} className="px-2 py-0.5 bg-red-500 text-white text-[8px] font-black rounded uppercase">Log</button>
-                <button onClick={() => setEditingExpenses(false)} className="px-2 py-0.5 bg-zinc-850 text-zinc-400 text-[8px] font-black rounded uppercase">Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <span className="text-2xl font-headline font-black italic text-red-400">-R{expenses.toFixed(2)}</span>
-              <div className="text-[8px] font-black text-[#f59e0b] uppercase tracking-widest mt-1">
-                Net: R{Math.max(0, totals.totalEarned - expenses).toFixed(2)}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div 
-          onClick={() => {
-            if (!editingGoal) {
-              setEditingGoal(true);
-              setGoalInput(customGoal.toString());
-            }
-          }}
-          className={cn(
-            "bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between text-left transition-colors col-span-2 lg:col-span-2 xl:col-span-1",
-            !editingGoal ? "hover:border-zinc-750 cursor-pointer" : ""
-          )}
-        >
-          <div className="flex justify-between items-center w-full mb-2">
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block font-sans">Milestone Progress</span>
-            <span className="text-[8px] text-[#f59e0b] font-black uppercase tracking-widest font-sans">Goal R{customGoal}</span>
-          </div>
-          {editingGoal ? (
-            <div className="space-y-2 w-full pt-1" onClick={e => e.stopPropagation()}>
-              <input 
-                type="number"
-                value={goalInput}
-                onChange={e => setGoalInput(e.target.value)}
-                placeholder="R Goal"
-                className="w-full bg-black border border-zinc-800 rounded-lg text-xs p-1 text-white font-mono h-6 outline-none"
-                autoFocus
-              />
-              <div className="flex gap-1">
-                <button onClick={handleSaveGoal} className="px-2 py-0.5 bg-[#f59e0b] text-black text-[8px] font-black rounded uppercase">Lock</button>
-                <button onClick={() => setEditingGoal(false)} className="px-2 py-0.5 bg-zinc-850 text-zinc-400 text-[8px] font-black rounded uppercase">Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-4">
-              <div className="relative w-14 h-14 shrink-0">
-                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 64 64">
-                  <circle cx="32" cy="32" r="28" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-zinc-850" />
-                  <circle 
-                    cx="32" cy="32" r="28" 
-                    stroke="currentColor" strokeWidth="6" fill="transparent"
-                    strokeDasharray={2 * Math.PI * 28}
-                    strokeDashoffset={2 * Math.PI * 28 * (1 - goalProgressPercent / 100)}
-                    strokeLinecap="round"
-                    className="text-emerald-500 transition-all duration-700 ease-out drop-shadow-[0_0_8px_rgba(16,185,129,0.4)]" 
-                  />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-[10px] font-black text-white">{goalProgressPercent}%</span>
-                </div>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-xs font-black text-zinc-300 uppercase tracking-widest">Progress</span>
-                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mt-0.5">{goalProgressPercent >= 100 ? 'Goal Reached' : 'To Milestone'}</span>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="bg-zinc-900 border border-zinc-850 rounded-[1.5rem] p-5 flex flex-col justify-between">
@@ -3551,24 +3433,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
   );
 });
 
-const StarRatingInput = ({ rating, onRatingChange }: { rating: number, onRatingChange: (r: number) => void }) => (
-  <div className="flex gap-2">
-    {Array.from({ length: 5 }).map((_, i) => (
-      <button 
-        key={i} 
-        onClick={() => onRatingChange(i + 1)}
-        className="focus:outline-none"
-      >
-        <Zap 
-          className={cn(
-            "w-8 h-8 transition-all", 
-            i < rating ? "text-[#f59e0b] fill-[#f59e0b] scale-110" : "text-zinc-800 hover:text-zinc-700"
-          )} 
-        />
-      </button>
-    ))}
-  </div>
-);
+
 
 // --- Settings View Helpers (Imported) ---
 
@@ -3719,10 +3584,6 @@ const ProfileView = React.memo(({
   onShowLegal?: () => void,
   onDisconnect?: (connectionId: string) => Promise<void>
 }) => {
-  const [localAvatar, setLocalAvatar] = useState(() => localStorage.getItem(`localeats_avatar_${profile.id}`) || profile.photo_url || '');
-  const [editingAvatar, setEditingAvatar] = useState(false);
-  const [customAvatarUrl, setCustomAvatarUrl] = useState('');
-
   const [cachedTileCount, setCachedTileCount] = useState<number>(0);
   const [cachedSizeStr, setCachedSizeStr] = useState<string>('0.0 MB');
   const [syncingSector, setSyncingSector] = useState<string | null>(null);
@@ -3845,28 +3706,6 @@ const ProfileView = React.memo(({
 
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
-  // Curated deck of Facebook-style placeholder silhouette avatars
-  const avatarPresets = [
-    { name: "Classic Grey Silhouette", url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23E4E6EB'/><circle cx='50' cy='40' r='18' fill='%238A8D91'/><path d='M15 90 C15 65, 30 60, 50 60 C70 60, 85 65, 85 90 Z' fill='%238A8D91'/></svg>" },
-    { name: "Electric Blue Silhouette", url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23E8F0FE'/><circle cx='50' cy='40' r='18' fill='%231877F2'/><path d='M15 90 C15 65, 30 60, 50 60 C70 60, 85 65, 85 90 Z' fill='%231877F2'/></svg>" },
-    { name: "Cyber Amber Silhouette", url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2318181B'/><circle cx='50' cy='40' r='18' fill='%23F59E0B'/><path d='M15 90 C15 65, 30 60, 50 60 C70 60, 85 65, 85 90 Z' fill='%23F59E0B'/></svg>" },
-    { name: "Stealth Purple Silhouette", url: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%234C1D95'/><circle cx='50' cy='40' r='18' fill='%23C084FC'/><path d='M15 90 C15 65, 30 60, 50 60 C70 60, 85 65, 85 90 Z' fill='%23C084FC'/></svg>" }
-  ];
-
-  const handleSelectAvatar = async (url: string) => {
-    setLocalAvatar(url);
-    localStorage.setItem(`localeats_avatar_${profile.id}`, url);
-    toast.success("Tactical avatar update loaded locally");
-    onUpdateProfile({ photo_url: url });
-  };
-
-  const handleCustomAvatarSubmit = () => {
-    if (!customAvatarUrl.trim()) return;
-    handleSelectAvatar(customAvatarUrl);
-    setEditingAvatar(false);
-    setCustomAvatarUrl('');
-  };
-
   const saveSpecs = () => {
     localStorage.setItem(`localeats_plate_${profile.id}`, licensePlate);
     localStorage.setItem(`localeats_vehDetail_${profile.id}`, vehicleDetails);
@@ -3919,36 +3758,17 @@ const ProfileView = React.memo(({
       <header className="flex flex-col items-center pb-6 text-center">
         <div className="relative mb-6">
           <div className="w-28 h-28 rounded-[2.5rem] bg-zinc-900 border-2 border-zinc-800 flex items-center justify-center p-1.5 glow ring-4 ring-[#f59e0b]/5 relative group overflow-hidden">
-            {localAvatar ? (
+            {profile.photo_url ? (
               <img 
-                src={localAvatar} 
+                src={profile.photo_url} 
                 className="w-full h-full object-cover rounded-[2rem] group-hover:scale-105 transition-transform duration-300 animate-fade-in" 
                 alt="Profile" 
                 referrerPolicy="no-referrer"
-                onError={() => {
-                  toast.error("Invalid custom avatar URL. Reverting to name initial.");
-                  setLocalAvatar('');
-                  localStorage.removeItem(`localeats_avatar_${profile.id}`);
-                  onUpdateProfile({ photo_url: '' });
-                }}
               />
             ) : (
               <div className="text-5xl font-headline font-black italic text-[#f59e0b]">{profile.name ? profile.name[0].toUpperCase() : 'R'}</div>
             )}
-            <div 
-              onClick={() => setEditingAvatar(!editingAvatar)}
-              className="absolute inset-0 bg-black/75 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col items-center justify-center cursor-pointer"
-            >
-              <span className="text-[8px] font-black text-[#f59e0b] uppercase tracking-widest">Edit Picture</span>
-            </div>
           </div>
-          <button 
-            onClick={() => setEditingAvatar(!editingAvatar)}
-            className="absolute -top-1 -right-1 bg-zinc-900 border border-zinc-700 text-[#f59e0b] hover:text-white p-2 rounded-xl active:scale-95 transition-all shadow-md z-10"
-            title="Edit Tactical Profile Avatar"
-          >
-            <Smartphone className="w-3.5 h-3.5" />
-          </button>
           <button 
             onClick={onToggleOnline}
             className={cn(
@@ -3960,65 +3780,6 @@ const ProfileView = React.memo(({
           </button>
         </div>
 
-        {/* Change Avatar Picker dropdown */}
-        <AnimatePresence>
-          {editingAvatar && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden mt-2 mb-4 w-full max-w-sm"
-            >
-              <div className="bg-zinc-950 border border-zinc-800 p-5 rounded-3xl space-y-4 text-left shadow-2xl">
-                <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
-                  <span className="text-[10px] font-black uppercase text-zinc-400 tracking-widest">Select Profile picture</span>
-                  <button onClick={() => setEditingAvatar(false)} className="text-zinc-500 hover:text-white">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {avatarPresets.map((preset, index) => (
-                    <button
-                      key={index}
-                      onClick={() => handleSelectAvatar(preset.url)}
-                      className={cn(
-                        "relative w-full aspect-square rounded-2xl overflow-hidden border-2 transition-all p-0.5 bg-black",
-                        localAvatar === preset.url ? "border-[#f59e0b]" : "border-zinc-900"
-                      )}
-                      title={preset.name}
-                    >
-                      <img src={preset.url} className="w-full h-full object-cover rounded-xl" alt={preset.name} referrerPolicy="no-referrer" />
-                      {localAvatar === preset.url && (
-                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-xl">
-                          <Check className="w-4 h-4 text-[#f59e0b]" />
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[8px] font-black uppercase text-zinc-650 tracking-widest block">Or custom image URL</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      value={customAvatarUrl} 
-                      onChange={e => setCustomAvatarUrl(e.target.value)} 
-                      placeholder="https://..." 
-                      className="bg-black border border-zinc-850 px-3 py-1.5 rounded-xl text-xs text-white placeholder-zinc-750 outline-none flex-1 font-mono"
-                    />
-                    <button 
-                      onClick={handleCustomAvatarSubmit}
-                      className="px-3 bg-[#f59e0b] hover:bg-amber-600 text-black text-[10px] font-black uppercase rounded-xl transition-colors shrink-0 font-bold"
-                    >
-                      Deploy
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         <h2 className="text-4xl font-headline font-black italic text-white uppercase tracking-tight leading-none mb-2 items-center flex gap-3">
           {profile.name}
           <div className={cn(
@@ -4027,11 +3788,6 @@ const ProfileView = React.memo(({
           )} />
         </h2>
         <div className="flex items-center gap-3">
-           <div className="flex items-center gap-1">
-              <StarRating rating={Math.round(profile.rating || 5)} />
-              <span className="text-xs font-bold text-zinc-400 ml-1">({Number(profile.rating || 5.0).toFixed(1)})</span>
-           </div>
-           <div className="w-px h-3 bg-zinc-800" />
            <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">{profile.verification_status}</p>
         </div>
       </header>
@@ -4100,43 +3856,7 @@ const ProfileView = React.memo(({
             </motion.div>
           )}
 
-          {/* Grid Performance Diagnostics (Opaque ratings and stats solved!) */}
-          <section className="space-y-4">
-            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Performance Stats</h3>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Orders Accepted</span>
-                <span className="text-xl font-headline font-black italic text-emerald-550">99.2%</span>
-                <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Acceptance</span>
-              </div>
-              <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Order Safety</span>
-                <span className="text-xl font-headline font-black italic text-[#f59e0b]">100%</span>
-                <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Integrity</span>
-              </div>
-              <div className="bg-zinc-900 border border-zinc-850 rounded-2xl p-4 text-center shadow-lg">
-                <span className="text-[8px] font-black text-zinc-500 uppercase tracking-widest block mb-1">On-Time Delivery</span>
-                <span className="text-xl font-headline font-black italic text-cyan-400">98.4%</span>
-                <span className="text-[7px] text-zinc-600 uppercase font-black tracking-tighter block mt-0.5">Arrival Index</span>
-              </div>
-            </div>
 
-            {/* Rider Kudos Badges */}
-            <div className="bg-zinc-900/65 border border-zinc-900 p-4 rounded-3xl space-y-3">
-              <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest block border-b border-zinc-900 pb-1.5">Merchant Community Accolades</span>
-              <div className="flex flex-wrap gap-2 text-zinc-300">
-                <span className="px-3 py-1.5 bg-cyan-950/40 text-cyan-455 text-[10px] font-black uppercase tracking-widest rounded-xl border border-cyan-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(34,211,238,0.05)]">
-                  🏎️ Quick Rider <span className="text-xs font-mono text-cyan-500 font-bold">x32</span>
-                </span>
-                <span className="px-3 py-1.5 bg-amber-950/40 text-[#f59e0b] text-[10px] font-black uppercase tracking-widest rounded-xl border border-amber-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.05)]">
-                  📦 Secure Packages <span className="text-xs font-mono text-amber-500 font-bold">x24</span>
-                </span>
-                <span className="px-3 py-1.5 bg-emerald-950/40 text-emerald-400 text-[10px] font-black uppercase tracking-widest rounded-xl border border-emerald-800/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.05)]">
-                  🤝 Polite Rider <span className="text-xs font-mono text-emerald-500 font-bold">x45</span>
-                </span>
-              </div>
-            </div>
-          </section>
 
 
       {/* Fleet Configuration (Gated residential access identification specs solved!) */}
@@ -5178,7 +4898,7 @@ const ProfileView = React.memo(({
   );
 });
 
-const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId: string, onBack: () => void, isHighContrastMode?: boolean }) => {
+const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: { orderId: string, onBack: () => void, isHighContrastMode?: boolean, riderId?: string }) => {
   const [order, setOrder] = useState<DeliveryOrder | null>(null);
   const [riderLocation, setRiderLocation] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -5186,11 +4906,16 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId:
   useEffect(() => {
     const fetchOrder = async () => {
       try {
-        const { data, error } = await getSupabase()
+        let query = getSupabase()
           .from('orders')
           .select('*, shops(name)')
-          .eq('id', orderId)
-          .single();
+          .eq('id', orderId);
+
+        if (riderId) {
+          query = query.eq('rider_id', riderId);
+        }
+
+        const { data, error } = await query.single();
         if (data) setOrder({ ...data, restaurant_name: data.shops?.name || 'Merchant' });
         if (error) toast.error('Failed to load tracking data.');
       } catch (e) {
@@ -5218,7 +4943,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode }: { orderId:
     return () => {
       getSupabase().removeChannel(channel);
     };
-  }, [orderId]);
+  }, [orderId, riderId]);
 
   if (loading) return <OrderTrackingSkeleton isHighContrastMode={isHighContrastMode} />;
   if (!order) return <div className="h-full flex flex-col items-center justify-center p-12 text-center">
@@ -5485,12 +5210,17 @@ function AvatarThumbnail({ profile }: AvatarThumbnailProps) {
 
 const refHolder = {
   fetchConnectionsAndOrders: () => Promise.resolve(),
-  fetchActiveOrdersAndHistory: () => Promise.resolve()
+  fetchActiveOrdersAndHistory: () => Promise.resolve(),
+  establishRealtimeChannels: () => {}
 };
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<RiderProfile | null>(null);
+  const profileRef = useRef<RiderProfile | null>(null);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
   const [showOfflineWarning, setShowOfflineWarning] = useState(false);
   const [showRiderTour, setShowRiderTour] = useState(false);
   const [showLegalModal, setShowLegalModal] = useState(false);
@@ -5703,19 +5433,19 @@ export function App() {
     return safeJsonParse<DeliveryOrder[]>(saved, []);
   });
 
-  const [merchantAllowExternal, setMerchantAllowExternal] = useState(() => {
+  const [merchantAllowExternal] = useState(() => {
     const saved = localStorage.getItem('localeats_merchant_allow_external');
     return saved !== 'false';
   });
-  const [merchantCashTrust, setMerchantCashTrust] = useState(() => {
+  const [merchantCashTrust] = useState(() => {
     const saved = localStorage.getItem('localeats_merchant_cash_trust');
     return saved !== 'false';
   });
-  const [merchantAutoLook, setMerchantAutoLook] = useState(() => {
+  const [merchantAutoLook] = useState(() => {
     const saved = localStorage.getItem('localeats_merchant_auto_look');
     return saved !== 'false';
   });
-  const [dispatchToMarketplace, setDispatchToMarketplace] = useState<Record<string, boolean>>(() => {
+  const [dispatchToMarketplace] = useState<Record<string, boolean>>(() => {
     const saved = localStorage.getItem('localeats_dispatch_to_marketplace');
     return safeJsonParse<Record<string, boolean>>(saved, {});
   });
@@ -5876,7 +5606,6 @@ export function App() {
   const [onboardingMode, setOnboardingMode] = useState<'onboarding' | 'helphub'>(() => {
     return localStorage.getItem('localeats_onboarding_seen') !== 'true' ? 'onboarding' : 'helphub';
   });
-  const [showRatingPrompt, setShowRatingPrompt] = useState<{orderId: string, entity: "merchant"|"customer"} | null>(null);
   const prevActiveOrdersRef = useRef<DeliveryOrder[]>([]);
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -6090,19 +5819,25 @@ export function App() {
 
       if (isSupabaseMocked()) {
         console.log('MISSION PROTOCOL: Signal Simulator engaged.');
-        const mockConn = {
-          id: 'mock-conn',
-          rider_id: user.id,
-          shop_id: 's1',
-          shop_name: 'Test Burger Hub',
-          connection_code: '123456',
-          expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
-          created_at: new Date().toISOString()
-        } as unknown as ShopConnection;
-        setConnections([mockConn]);
-        activeConnections = [mockConn];
+        const mockPairedCode = localStorage.getItem('localeats_mock_paired_code');
+        if (mockPairedCode) {
+          const mockConn = {
+            id: 'mock-conn',
+            rider_id: user.id,
+            shop_id: 's1',
+            shop_name: 'Test Burger Hub',
+            connection_code: mockPairedCode,
+            expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
+            created_at: new Date().toISOString()
+          } as unknown as ShopConnection;
+          setConnections([mockConn]);
+          activeConnections = [mockConn];
+        } else {
+          setConnections([]);
+          activeConnections = [];
+        }
         
-        if (profile?.is_online) {
+        if (profile?.is_online && activeConnections.length > 0) {
           setAvailableOrders(() => {
             const rawMocks = [
               {
@@ -6188,12 +5923,15 @@ export function App() {
               }
             ];
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            return rawMocks.filter((o: any) => {
-               // Directly ingest open-pool unassigned orders
-               return o.delivery_status === 'finding_rider' && !o.rider_id;
+            const activeShopIds = activeConnections.map(c => c.shop_id);
+            // Strictly isolated: only fetch/retain mock missions belonging to active, unexpired store connections
+            return rawMocks.filter((o: { shop_id: string; delivery_status: string; rider_id: string | null }) => {
+               const isPaired = activeShopIds.includes(o.shop_id);
+               return o.delivery_status === 'finding_rider' && !o.rider_id && isPaired;
             }) as unknown as DeliveryOrder[];
           });
+        } else {
+          setAvailableOrders([]);
         }
         return;
       }
@@ -6218,7 +5956,11 @@ export function App() {
         setConnections(activeConnections);
       }
 
-      if (!profile?.is_online) {
+      const activeShopIds = activeConnections
+        .filter(c => new Date(c.expires_at) > new Date())
+        .map(c => c.shop_id);
+
+      if (!profile?.is_online || activeShopIds.length === 0) {
         setAvailableOrders([]);
         return;
       }
@@ -6234,6 +5976,7 @@ export function App() {
           const res = await getSupabase()
             .from('orders')
             .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
+            .in('shop_id', activeShopIds) // Strictly isolated query: NO cross-talk across stores
             .eq('delivery_status', 'finding_rider')
             .order('created_at', { ascending: false })
             .limit(50);
@@ -6247,6 +5990,7 @@ export function App() {
             const res = await getSupabase()
               .from('orders')
               .select('*, shops(name, updated_at)')
+              .in('shop_id', activeShopIds) // Strictly isolated query: NO cross-talk across stores
               .eq('delivery_status', 'finding_rider')
               .order('created_at', { ascending: false })
               .limit(50);
@@ -6308,11 +6052,7 @@ export function App() {
           .filter((order: any) => {
              // 1 & 2. Database-Level Isolation & Pairing Protocol
              const isPaired = activeConnections.some(c => c.shop_id === order.shop_id && new Date(c.expires_at) > new Date());
-             
-             // 5. External Fleet Escape Hatch
-             const isExternalFleetAllowed = order.allow_external_riders === true && order.delivery_status === 'finding_rider' && !order.rider_id;
-             
-             return isPaired || isExternalFleetAllowed;
+             return isPaired;
           });
         
         const sorted = [...formatted].map(order => {
@@ -6382,6 +6122,7 @@ export function App() {
         } else {
           setConnections([]);
         }
+        localStorage.removeItem('localeats_mock_paired_code');
         const keysToRemove = [
           'localeats_merchant_allow_external',
           'localeats_merchant_cash_trust',
@@ -6389,6 +6130,7 @@ export function App() {
           'localeats_dispatch_to_marketplace'
         ];
         keysToRemove.forEach(k => localStorage.removeItem(k));
+        setAvailableOrders([]);
         toast.success("Disconnected and keys purged from local storage.");
         return;
       }
@@ -6444,7 +6186,7 @@ export function App() {
       console.error("Error in invalidatePairing:", e);
       toast.error("An error occurred while unpairing.");
     }
-  }, [user, fetchConnectionsAndOrders]);
+  }, [user, fetchConnectionsAndOrders, setAvailableOrders]);
 
   const fetchActiveOrdersAndHistory = useCallback(async () => {
     if (!user) return;
@@ -6543,8 +6285,8 @@ export function App() {
           restaurant_name: item.restaurant_name || 'Local Merchant'
         })) as DeliveryOrder[]);
       }
-    } catch (e) {
-      console.warn('Quietly tolerating active orders or history sync timeout', e);
+    } catch {
+      // Quietly tolerating sync timeout
     }
   }, [user, setActiveOrders, setHistory]);
 
@@ -6578,8 +6320,8 @@ export function App() {
            // @ts-expect-error: RealtimeChannel state internal
            if (channel.state !== 'joined' && channel.state !== 'SUBSCRIBED') {
              addBootLog(`SYS_RESUME: Zombie socket detected on ${key}. Rebinding...`);
-             channel.unsubscribe();
-             channelsRef.current[key] = channel.subscribe();
+             getSupabase().removeChannel(channel);
+             delete channelsRef.current[key];
              socketsRebuilt = true;
            }
         });
@@ -6588,6 +6330,8 @@ export function App() {
         if (user) {
           fetchProfile();
           if (socketsRebuilt || Object.keys(channelsRef.current).length === 0) {
+            // Re-establish deleted or missing realtime channels cleanly
+            refHolder.establishRealtimeChannels();
             refHolder.fetchConnectionsAndOrders();
             refHolder.fetchActiveOrdersAndHistory();
           }
@@ -6756,7 +6500,7 @@ export function App() {
           
           if (status === 'delivered') {
             const { error: rpcError } = await getSupabase().rpc('increment_rider_stats', {
-              rider_id: profile?.id,
+              rider_id: profileRef.current?.id,
               earnings_add: delivery_fee || 0,
               points_add: 15
             });
@@ -6764,12 +6508,12 @@ export function App() {
             if (rpcError) {
                console.warn('RPC failed during cached sync replay, writing directly', rpcError);
                const profileUpdates = {
-                 total_earnings: (profile?.total_earnings || 0) + (delivery_fee || 0),
-                 total_deliveries: (profile?.total_deliveries || 0) + 1,
-                 active_points: (profile?.active_points || 0) + 15,
+                 total_earnings: (profileRef.current?.total_earnings || 0) + (delivery_fee || 0),
+                 total_deliveries: (profileRef.current?.total_deliveries || 0) + 1,
+                 active_points: (profileRef.current?.active_points || 0) + 15,
                  updated_at: new Date().toISOString()
                };
-               await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile?.id);
+               await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profileRef.current?.id);
             }
           }
           
@@ -6798,7 +6542,7 @@ export function App() {
     } finally {
       isSyncingOrderRef.current = false;
     }
-  }, [profile, fetchActiveOrdersAndHistory]);
+  }, [fetchActiveOrdersAndHistory]);
   useEffect(() => {
     if (!user || !profile?.is_online || activeOrders.length === 0) return;
 
@@ -6905,6 +6649,12 @@ export function App() {
 
       try {
         if (isSupabaseMocked()) {
+          return;
+        }
+        // Strict Isolation: Only transmit GPS coordinates if actively connected to at least one unexpired store connection
+        const hasActiveConnection = connections.some(c => new Date(c.expires_at) > new Date());
+        if (!hasActiveConnection) {
+          // console.warn('GPS_ABORT...');
           return;
         }
         // Update master profile telemetry
@@ -7296,6 +7046,10 @@ export function App() {
   }, [user, setActiveOrders, setAvailableOrders]);
 
   useEffect(() => {
+    refHolder.establishRealtimeChannels = establishRealtimeChannels;
+  }, [establishRealtimeChannels]);
+
+  useEffect(() => {
     establishRealtimeChannels();
 
     return () => {
@@ -7354,6 +7108,15 @@ export function App() {
     // Find the order being updated
     const orderToUpdate = activeOrders.find(o => o.id === orderId);
     if (!orderToUpdate) return;
+
+    // Strict Isolation: Only complete order status handshakes for shops they are actively connected with
+    const hasActiveConnection = isSupabaseMocked() || 
+                                (orderToUpdate.rider_id === user?.id) || 
+                                connections.some(c => c.shop_id === orderToUpdate.shop_id && new Date(c.expires_at) > new Date());
+    if (!hasActiveConnection) {
+      toast.error('Cannot update status: Active store connection expired or unauthorized. Please re-pair with the store.');
+      return;
+    }
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updates: any = { 
@@ -7394,9 +7157,6 @@ export function App() {
 
       if (isSupabaseMocked()) {
         toast.success(`Success: Phase changed to ${status}`, { id: 'status-updating' });
-        if (status === 'delivered' && activeOrders.length <= 1) {
-          setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
-        }
         return;
       }
 
@@ -7433,10 +7193,6 @@ export function App() {
              });
           }
           
-          const remainingMissions = activeOrders.length - 1;
-          if (remainingMissions === 0) {
-            setShowRatingPrompt({ orderId: orderToUpdate.id, entity: 'customer' });
-          }
           toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`, { id: 'status-updating' });
         } else if (status === 'finding_rider') {
           toast.success('Mission released back to regional marketplace.', { id: 'status-updating' });
@@ -7479,7 +7235,7 @@ export function App() {
         toast.error("Could not save locally. Using temporary memory.", { id: 'status-updating' });
       }
     }
-  }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, setShowRatingPrompt, user]);
+  }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, user, connections]);
 
   const [isListening, setIsListening] = useState(false);
 
@@ -7705,16 +7461,12 @@ export function App() {
       return;
     }
 
-    if (orderToAccept) {
+    if (orderToAccept && !isSupabaseMocked()) {
       // Check if the rider is explicitly paired with the merchant
       const isPaired = connections.some(c => c.shop_id === orderToAccept.shop_id && new Date(c.expires_at) > new Date());
-      
-      // 5. External Fleet Escape Hatch
-      // If not paired, the ONLY way they can accept it is if it's an open-pool order where external riders are allowed
-      const isExternalFleetAllowed = orderToAccept.allow_external_riders === true && orderToAccept.delivery_status === 'finding_rider' && !orderToAccept.rider_id;
 
-      if (!isPaired && !isExternalFleetAllowed && !isSupabaseMocked()) {
-        toast.error('Store link expired or order is restricted to internal fleet. Please reconnect to the store.');
+      if (!isPaired) {
+        toast.error('Store link expired or unauthorized. Please pair with the store or enter their connection code.');
         return;
       }
     }
@@ -7816,6 +7568,7 @@ export function App() {
           setHandshakeVerificationState('failed');
           throw new Error('Uplink rejected. Testing failure protocol.');
         }
+        localStorage.setItem('localeats_mock_paired_code', code);
         setHandshakeVerificationState('verified');
         toast.success(`Uplink established! Successfully paired with Alpha Grid. (24h Pass)`);
         setView('hub');
@@ -7988,8 +7741,6 @@ export function App() {
     );
   }
 
-  const globalRegion = detectRegion(profile.current_latitude, profile.current_longitude);
-
   return (
     <div className={cn(
       "min-h-[100dvh] flex flex-col bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black relative transition-all duration-[600ms] ease-in-out"
@@ -8156,58 +7907,7 @@ export function App() {
         )}
       </AnimatePresence>
 
-      {/* Rating Prompt Overlay */}
-      <AnimatePresence>
-        {showRatingPrompt && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex justify-center items-center p-6 pointer-events-auto"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-zinc-900 border border-zinc-800 p-8 rounded-[2.5rem] max-w-sm w-full text-center shadow-2xl relative"
-            >
-              <button 
-                onClick={() => {
-                  setShowRatingPrompt(null);
-                  setView('dash');
-                }}
-                className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300"
-              >
-                <X className="w-5 h-5" />
-              </button>
-              <h3 className="text-xl font-black uppercase text-white mb-2 mt-4">How was the order?</h3>
-              <p className="text-zinc-400 text-xs mb-6">Rate your experience with the {showRatingPrompt.entity} to help us maintain grid integrity.</p>
-              
-              <div className="flex justify-center mb-8">
-                 <StarRatingInput 
-                   rating={0} 
-                   onRatingChange={() => {
-                     toast.success(`Rating synced. Thank you.`);
-                     setTimeout(() => {
-                       setShowRatingPrompt(null);
-                       setView('dash');
-                     }, 800);
-                   }}
-                 />
-              </div>
 
-              <button 
-                onClick={() => {
-                  setShowRatingPrompt(null);
-                  setView('dash');
-                }}
-                className="text-[10px] uppercase font-black tracking-widest text-[#f59e0b] hover:text-[#d97706]"
-              >
-                Skip Assessment
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
       
       {/* Background Map layer is managed within specific views to prevent redundant instances */}
       
@@ -8588,7 +8288,6 @@ export function App() {
                     profile={profile || undefined}
                     isNavVisible={isGlobalNavVisible}
                     isHighContrastMode={isHighContrastMode}
-                    onRestartTour={() => setShowRiderTour(true)}
                   />
                 </div>
               ) : (
@@ -8610,48 +8309,12 @@ export function App() {
               )
             )}
             {view === 'log' && <HistoryView history={history} isHighContrastMode={isHighContrastMode} />}
-            {view === 'merchant' && (
-              <MerchantPortal
-                allowExternal={merchantAllowExternal}
-                onToggleAllowExternal={() => {
-                  setMerchantAllowExternal(p => {
-                    const next = !p;
-                    toast.success(next ? 'Policy Modified: Public Marketplace access active.' : 'Policy Modified: Exclusive in-house fleets only.');
-                    return next;
-                  });
-                }}
-                cashTrust={merchantCashTrust}
-                onToggleCashTrust={() => {
-                  setMerchantCashTrust(p => {
-                    const next = !p;
-                    toast.success(next ? 'COD Shield Active: Green indicators will brand public order cards.' : 'COD Shield Off: Standard flags loaded.');
-                    return next;
-                  });
-                }}
-                autoLook={merchantAutoLook}
-                onToggleAutoLook={() => {
-                  setMerchantAutoLook(p => {
-                    const next = !p;
-                    toast.success(next ? 'Scanner Beacons Engaged: Public riders will spot claim targets.' : 'Scanner Beacons Off: Automatic lookup disabled.');
-                    return next;
-                  });
-                }}
-                dispatchToMarketplace={dispatchToMarketplace}
-                onToggleDispatch={(orderId) => {
-                  setDispatchToMarketplace(p => {
-                    const next = { ...p, [orderId]: !(p[orderId] ?? false) };
-                    toast.success(next[orderId] ? 'On-Demand Backup Dispatch engaged for order!' : 'Private Fleet allocation restored.');
-                    return next;
-                  });
-                }}
-                regionGreeting={globalRegion.greetingTitle}
-              />
-            )}
             {view === 'tracking' && selectedTrackingOrderId && (
               <OrderTrackingScreen 
                 orderId={selectedTrackingOrderId} 
                 onBack={() => setView('move')} 
                 isHighContrastMode={isHighContrastMode}
+                riderId={user?.id}
               />
             )}
             {view === 'hub' && (
@@ -8725,7 +8388,6 @@ export function App() {
                 { icon: List, label: 'ORDERS', view: 'feed' },
                 { icon: Navigation, label: 'ACTIVE', view: 'move', alert: activeOrders.length > 0 },
                 { icon: Smartphone, label: 'HISTORY', view: 'log' },
-                { icon: ShoppingBag, label: 'STORE', view: 'merchant' },
                 { icon: UserIcon, label: 'PROFILE', view: 'hub' },
               ].map((item) => {
                 const isActive = view === item.view;

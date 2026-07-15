@@ -1,10 +1,38 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import Map, { Marker, Source, Layer, MapRef, NavigationControl } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { MapPin, Navigation, Compass, Map as MapIcon } from 'lucide-react';
+import { MapPin, Navigation, Compass, Map as MapIcon, CloudRain } from 'lucide-react';
 import useSupercluster from 'use-supercluster';
 import { DeliveryOrder } from '../types';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from '../lib/mapStyles';
+
+const useWeatherService = (lat: number, lng: number) => {
+  const [hasPrecipitation, setHasPrecipitation] = useState(false);
+
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`);
+        const data = await res.json();
+        // WMO code 51 and above generally indicate precipitation (drizzle, rain, snow, etc)
+        const code = data?.current_weather?.weathercode || 0;
+        if (code >= 51) {
+          setHasPrecipitation(true);
+        } else {
+          setHasPrecipitation(false);
+        }
+      } catch (err) {
+        console.error("Failed to fetch weather", err);
+      }
+    };
+    fetchWeather();
+    
+    const interval = setInterval(fetchWeather, 300000); // 5 mins
+    return () => clearInterval(interval);
+  }, [lat, lng]);
+
+  return hasPrecipitation;
+};
 
 const EMPTY_ORDERS_ARRAY: DeliveryOrder[] = [];
 
@@ -64,6 +92,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   );
 
   const [routeCoordinates, setRouteCoordinates] = useState<number[][]>([]);
+  const hasPrecipitation = useWeatherService(riderPos ? riderPos[0] : -25.9964, riderPos ? riderPos[1] : 28.2268);
   
   // Simulated GPS updater for demo
   useEffect(() => {
@@ -355,6 +384,47 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         >
           <NavigationControl position="top-right" />
         </div>
+        
+        {/* Tembisa High-Traffic Weather Impact Overlay */}
+        <Source id="high-traffic-routes" type="geojson" data={{
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: [[28.2045, -25.9922], [28.2268, -25.9964], [28.2450, -25.9850], [28.2580, -25.9995]] }
+            },
+            {
+              type: 'Feature',
+              properties: {},
+              geometry: { type: 'LineString', coordinates: [[28.2100, -25.9800], [28.2200, -25.9950], [28.2300, -26.0100]] }
+            }
+          ]
+        }}>
+          {hasPrecipitation ? (
+            <Layer 
+              id="rain-routes-glow"
+              type="line"
+              paint={{
+                'line-color': '#3b82f6',
+                'line-width': 12,
+                'line-blur': 10,
+                'line-opacity': 0.8
+              }}
+            />
+          ) : (
+            <Layer 
+              id="dry-routes"
+              type="line"
+              paint={{
+                'line-color': '#10b981',
+                'line-width': 4,
+                'line-opacity': 0.2
+              }}
+            />
+          )}
+        </Source>
+
         {/* Draw the Route Line with Glow Effect */}
         {activeOrder && routeCoordinates.length > 0 && (
           <Source id="route-source" type="geojson" data={routeGeoJSON}>

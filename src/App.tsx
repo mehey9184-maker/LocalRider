@@ -1443,20 +1443,20 @@ const OrdersFeed = React.memo(({
                 <motion.div 
                   layout
                   key={order.id}
-                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  initial={{ opacity: 0, y: 40, scale: 0.8 }}
                   animate={{ 
                     opacity: 1, 
                     y: 0, 
                     scale: 1,
                     boxShadow: isNew 
-                      ? ['0px 0px 0px rgba(245,158,11,0)', '0px 0px 25px rgba(245,158,11,0.5)', '0px 0px 0px rgba(245,158,11,0)'] 
+                      ? ['0px 0px 0px rgba(245,158,11,0)', '0px 0px 40px rgba(245,158,11,0.8)', '0px 0px 0px rgba(245,158,11,0)'] 
                       : 'none',
                   }}
                   exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
                   transition={{ 
-                    duration: 0.3, 
+                    duration: 0.5, 
                     type: "spring", 
-                    bounce: 0.3,
+                    bounce: 0.5,
                     boxShadow: { duration: 1.5, ease: "easeOut", times: [0, 0.2, 1] }
                   }}
                   className="relative overflow-hidden rounded-[2rem]"
@@ -2806,6 +2806,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               disabled={isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]}
               onComplete={() => {
                 if (!isPickedUp) {
+                  if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]); // Haptic pickup
                   onUpdateStatus(currentOrder.id, 'picked_up');
                   audioSynth.playArrivedDestination();
                   toast.success("Status: Food order collected successfully. Heading to delivery address.");
@@ -2814,6 +2815,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   audioSynth.playArrivedDestination();
                   toast.success("Status: Arrived at Customer address. Hand over food items and finalize payment.");
                 } else {
+                  if ('vibrate' in navigator) navigator.vibrate([150, 100, 150, 100, 200]); // Haptic delivery
                   setShowSuccessOverlay(true);
                   audioSynth.playOrderDelivered();
                   setTimeout(() => {
@@ -4602,7 +4604,8 @@ const ProfileView = React.memo(({
                 {[
                   { id: 'tembisa', name: 'Tembisa Hub Area', lat: -25.9964, lng: 28.2268, approx: 'Central Plaza & Retail Sector' },
                   { id: 'kaalfontein', name: 'Kaalfontein Sector B', lat: -25.9850, lng: 28.2450, approx: 'North Route Gate & Residential' },
-                  { id: 'ivory', name: 'Ivory Park Sector C', lat: -25.9995, lng: 28.2580, approx: 'East Link & Security Checks' }
+                  { id: 'ivory', name: 'Ivory Park Sector C', lat: -25.9995, lng: 28.2580, approx: 'East Link & Security Checks' },
+                  { id: 'ivory-north', name: 'Ivory Park North', lat: -25.9750, lng: 28.2500, approx: 'North-East Commercial & Transit Zone' }
                 ].map((sector) => {
                   const isSyncing = syncingSector === sector.name;
                   return (
@@ -7592,6 +7595,7 @@ export function App() {
           };
           setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
           setActiveOrders(prev => [...prev, accepted as DeliveryOrder]);
+          if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]); // Short vibration pattern for accept
           toast.success('Order accepted. Starting navigation.', {
             description: surgeMultiplier > 1 ? `Bonus active: x${surgeMultiplier.toFixed(1)}` : undefined
           });

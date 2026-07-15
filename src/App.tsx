@@ -982,7 +982,28 @@ const OrdersFeed = React.memo(({
   const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'accepted' | 'picked_up'>('available');
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [riderNotes, setRiderNotes] = useState<Record<string, string>>({});
   const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  
+  const seenOrderIds = useRef<Set<string>>(new Set(orders.map(o => o.id)));
+  const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let hasNew = false;
+    const currentNew = new Set<string>();
+    orders.forEach(o => {
+      if (!seenOrderIds.current.has(o.id)) {
+        seenOrderIds.current.add(o.id);
+        currentNew.add(o.id);
+        hasNew = true;
+      }
+    });
+    if (hasNew) {
+      setNewOrderIds(currentNew);
+      const timer = setTimeout(() => setNewOrderIds(new Set()), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [orders]);
 
   const isLimitReached = activeOrdersCount >= 2;
 
@@ -1416,15 +1437,28 @@ const OrdersFeed = React.memo(({
               const riderToShopDist = getDistanceBetween(riderLat, riderLng, order.shop_lat, order.shop_lng);
               const shopToCustomerDist = Number(order.distance_km || 0);
               const totalTripDist = riderToShopDist + shopToCustomerDist;
+              const isNew = newOrderIds.has(order.id);
 
               return (
                 <motion.div 
                   layout
                   key={order.id}
                   initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  animate={{ 
+                    opacity: 1, 
+                    y: 0, 
+                    scale: 1,
+                    boxShadow: isNew 
+                      ? ['0px 0px 0px rgba(245,158,11,0)', '0px 0px 25px rgba(245,158,11,0.5)', '0px 0px 0px rgba(245,158,11,0)'] 
+                      : 'none',
+                  }}
                   exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
-                  transition={{ duration: 0.3, type: "spring", bounce: 0.3 }}
+                  transition={{ 
+                    duration: 0.3, 
+                    type: "spring", 
+                    bounce: 0.3,
+                    boxShadow: { duration: 1.5, ease: "easeOut", times: [0, 0.2, 1] }
+                  }}
                   className="relative overflow-hidden rounded-[2rem]"
                   ref={el => scrollRefs.current[order.id] = el}
                   onClick={() => setHighlightedOrderId(order.id)}
@@ -1754,6 +1788,18 @@ const OrdersFeed = React.memo(({
                                 )}
                               </ul>
                             </div>
+                            
+                            {/* Rider Notes & Gate Codes */}
+                            <div className="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
+                              <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 border-b border-zinc-800 pb-2">Rider Notes & Access</h4>
+                              <input 
+                                type="text"
+                                placeholder="e.g., Gate code 1234, Call on arrival"
+                                value={riderNotes[order.id] || ''}
+                                onChange={(e) => setRiderNotes(prev => ({ ...prev, [order.id]: e.target.value }))}
+                                className="w-full bg-black/60 border border-zinc-700/50 rounded-lg p-2.5 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#f59e0b] transition-colors"
+                              />
+                            </div>
                           </div>
                         </motion.div>
                       )}
@@ -1870,6 +1916,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const [routeProgress, setRouteProgress] = useState(0);
   const [activeEta, setActiveEta] = useState(0);
   const [routeDistance, setRouteDistance] = useState(0);
+  const [customTipPercent, setCustomTipPercent] = useState<number>(0);
   const [arrivedAtCustomer, setArrivedAtCustomer] = useState<Record<string, boolean>>({});
   const [cashCollected, setCashCollected] = useState<Record<string, boolean>>({});
   const [isForceDeviated, setIsForceDeviated] = useState(false);
@@ -2560,6 +2607,28 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                     )}>{st.label}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Potential Earnings Calculator */}
+            <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-3 flex flex-col gap-2.5">
+              <div className="flex items-center justify-between px-2 mb-1">
+                <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Earnings Estimator</span>
+                <span className="text-[9px] font-mono text-[#f59e0b]">
+                  R{((Number(currentOrder.delivery_fee) || 0) * (1 + customTipPercent / 100)).toFixed(2)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between px-2 gap-2">
+                <span className="text-xs font-medium text-zinc-400">Add expected tip: {customTipPercent}%</span>
+                <input 
+                  type="range" 
+                  min="0" 
+                  max="50" 
+                  step="5"
+                  value={customTipPercent} 
+                  onChange={(e) => setCustomTipPercent(Number(e.target.value))}
+                  className="flex-1 accent-[#f59e0b]"
+                />
               </div>
             </div>
 
@@ -3702,6 +3771,7 @@ const ProfileView = React.memo(({
   const [showQR, setShowQR] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'identity' | 'settings'>('overview');
   const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
+  const [customSectorInput, setCustomSectorInput] = useState('');
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -4497,6 +4567,38 @@ const ProfileView = React.memo(({
               <div className="space-y-3">
                 <span className="text-[8.5px] font-black uppercase text-zinc-500 tracking-widest block text-left">Pre-download Core Sectors</span>
                 
+                {/* Custom Map Area downloader */}
+                <div className="bg-black/30 border border-zinc-850 p-4 rounded-2xl flex flex-col space-y-3 text-left">
+                  <span className="text-[11px] font-black uppercase text-zinc-200 tracking-wide">Custom Local Sector</span>
+                  <span className="text-[9px] text-zinc-500 leading-snug">Download map tiles for your current specified city/town operating sector.</span>
+                  <div className="flex items-center gap-3 mt-1">
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Midrand, Centurion..."
+                      value={customSectorInput}
+                      onChange={(e) => setCustomSectorInput(e.target.value)}
+                      className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-[#f59e0b] transition-colors"
+                    />
+                    <button
+                      onClick={() => {
+                        if (customSectorInput.trim()) {
+                          downloadSectorTiles(customSectorInput, profile.current_latitude || -25.9964, profile.current_longitude || 28.2268);
+                          setCustomSectorInput('');
+                        }
+                      }}
+                      disabled={syncingSector !== null || !customSectorInput.trim()}
+                      className={cn(
+                        "px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center shrink-0 transition-all active:scale-95",
+                        syncingSector !== null || !customSectorInput.trim()
+                          ? "bg-zinc-900 text-zinc-650 border border-zinc-850 cursor-not-allowed"
+                          : "bg-[#f59e0b] text-black border border-[#f59e0b] hover:bg-amber-600"
+                      )}
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1" /> Cache
+                    </button>
+                  </div>
+                </div>
+
                 {[
                   { id: 'tembisa', name: 'Tembisa Hub Area', lat: -25.9964, lng: 28.2268, approx: 'Central Plaza & Retail Sector' },
                   { id: 'kaalfontein', name: 'Kaalfontein Sector B', lat: -25.9850, lng: 28.2450, approx: 'North Route Gate & Residential' },

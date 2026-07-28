@@ -100,4 +100,17 @@ export interface WeatherData {
 
 export type AppView = 'dash' | 'feed' | 'move' | 'log' | 'hub' | 'pair' | 'tracking' | 'merchant';
 
+export interface OrderChatMessage {
+  id: string;
+  order_id: string;
+  sender_role: 'rider' | 'customer' | 'merchant' | 'system';
+  sender_id: string;
+  sender_name?: string;
+  message: string;
+  created_at: string;
+  is_quick_reply?: boolean;
+  is_read?: boolean;
+  is_delivered?: boolean;
+}
+
 

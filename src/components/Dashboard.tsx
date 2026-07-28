@@ -25,8 +25,6 @@ import {
 
 import { BentoCard } from './BentoCard';
 import { SOSButton } from './SOSButton';
-import { VoiceDashboardCard } from './VoiceDashboardCard';
-import { DashboardWeather } from './DashboardWeather';
 import { AnimatedCounter } from './AnimatedCounter';
 import { RiderProfile, DeliveryOrder, AppView, WeatherData } from '../types';
 import { cn } from '../lib/utils';
@@ -40,10 +38,12 @@ interface DashboardProps {
   onToggleOnline: () => void;
   setView: (view: AppView) => void;
   connectionCount: number;
-  isListening: boolean;
-  onStartListening: () => void;
-  weather: WeatherData | null;
-  setWeather: React.Dispatch<React.SetStateAction<WeatherData | null>>;
+  isListening?: boolean;
+  onStartListening?: () => void;
+  weather?: WeatherData | null;
+  setWeather?: React.Dispatch<React.SetStateAction<WeatherData | null>>;
+  cashOnHand?: number;
+  setCashOnHand?: React.Dispatch<React.SetStateAction<number>>;
 }
 
 export const Dashboard = React.memo(({ 
@@ -54,10 +54,8 @@ export const Dashboard = React.memo(({
   onToggleOnline, 
   setView, 
   connectionCount,
-  isListening,
-  onStartListening,
-  weather,
-  setWeather
+  cashOnHand,
+  setCashOnHand
 }: DashboardProps) => {
   const [shiftCount] = useState(() => {
     return parseInt(localStorage.getItem('shiftCount') || '0', 10);
@@ -172,13 +170,8 @@ export const Dashboard = React.memo(({
         </BentoCard>
       )}
 
-      {/* Safety & Performance Protocols */}
-      <div className="grid grid-cols-2 gap-4">
-        <SOSButton riderName={profile.name} />
-        <VoiceDashboardCard isListening={isListening} onStart={onStartListening} />
-      </div>
-
-      <DashboardWeather lat={profile.current_latitude} lng={profile.current_longitude} weather={weather} setWeather={setWeather} />
+      {/* Safety Protocol */}
+      <SOSButton riderName={profile.name} />
 
       {/* Power Toggle */}
       <div className="flex flex-col gap-2">
@@ -324,6 +317,86 @@ export const Dashboard = React.memo(({
                   <div className="flex items-center gap-1 mt-2 text-[8px] font-bold text-zinc-500 uppercase tracking-widest">
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#f59e0b] animate-pulse" /> Speed rating 100%
                   </div>
+                </div>
+              </BentoCard>
+
+              {/* Cash-on-Hand Limit Tracker Card */}
+              <BentoCard className="bg-gradient-to-br from-zinc-950 to-zinc-900 border-zinc-800/80 p-5 flex flex-col justify-between" glow>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className={cn(
+                      "p-1 px-1.5 rounded text-[9px] font-mono font-black tracking-widest uppercase",
+                      (cashOnHand || 0) >= 200 
+                        ? "bg-red-500/10 text-red-500 border border-red-500/20" 
+                        : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    )}>
+                      SEC // CASH-ON-HAND
+                    </div>
+                  </div>
+                  <div className={cn(
+                    "p-1.5 rounded-lg border",
+                    (cashOnHand || 0) >= 200 
+                      ? "bg-red-500/10 border-red-500/20" 
+                      : "bg-[#f59e0b]/10 border-[#f59e0b]/20"
+                  )}>
+                    <ShieldAlert className={cn("w-4 h-4", (cashOnHand || 0) >= 200 ? "text-red-500 animate-pulse" : "text-[#f59e0b]")} />
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.2em] block mb-1">Cash Held (Limit R200)</span>
+                  <div className="flex justify-between items-baseline">
+                    <p className="text-3xl font-headline font-black italic tracking-tight text-white">
+                      R{Number(cashOnHand || 0).toFixed(2)}
+                    </p>
+                    <span className="text-[10px] font-mono font-bold text-zinc-500">
+                      {Math.min(100, Math.round(((cashOnHand || 0) / 200) * 100))}% Limit
+                    </span>
+                  </div>
+
+                  {/* Limit progress bar */}
+                  <div className="h-2 w-full bg-zinc-950 rounded-full overflow-hidden p-0.5 border border-zinc-850 mt-2.5">
+                    <motion.div 
+                      initial={{ width: 0 }} 
+                      animate={{ width: `${Math.min(((cashOnHand || 0) / 200) * 100, 100)}%` }} 
+                      className={cn(
+                        "h-full rounded-full transition-all duration-300",
+                        (cashOnHand || 0) >= 200 
+                          ? "bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]" 
+                          : "bg-[#f59e0b] shadow-[0_0_15px_rgba(245,158,11,0.5)]"
+                      )} 
+                    />
+                  </div>
+
+                  {/* Warning banner inside bento */}
+                  {(cashOnHand || 0) >= 200 ? (
+                    <div className="mt-3 p-2.5 bg-red-500/10 border border-red-500/20 rounded-xl">
+                      <p className="text-[9px] text-red-400 font-sans leading-snug">
+                        ⚠️ <strong>LIMIT EXCEEDED</strong>: Depositing this cash at a linked store hub is required to unlock full system capabilities.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-[9px] text-zinc-500 font-sans mt-2.5">
+                      Riders can carry a maximum of R200 cash before requiring a hub deposit.
+                    </p>
+                  )}
+
+                  {/* Deposit button */}
+                  {(cashOnHand || 0) > 0 && (
+                    <button
+                      onClick={() => {
+                        if (setCashOnHand) {
+                          setCashOnHand(0);
+                          toast.success("Deposit success!", {
+                            description: `R${Number(cashOnHand).toFixed(2)} deposited at store hub. Cash-on-hand register cleared!`
+                          });
+                          if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                        }
+                      }}
+                      className="w-full py-2 bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-[#f59e0b] font-black uppercase tracking-widest text-[8px] rounded-xl mt-3 transition-all cursor-pointer"
+                    >
+                      Clear & Deposit Held Cash
+                    </button>
+                  )}
                 </div>
               </BentoCard>
 

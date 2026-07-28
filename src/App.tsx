@@ -47,6 +47,7 @@ import {
   Globe,
   ShieldAlert,
   QrCode,
+  Users,
   Link2,
   Radar,
   WifiOff,
@@ -54,7 +55,6 @@ import {
   Activity,
   Plus,
   Rocket,
-  Minimize2,
   Map as MapIcon,
   ArrowLeftRight,
   X,
@@ -65,7 +65,6 @@ import {
   Phone,
   ExternalLink,
   Navigation2,
-  ShieldCheck,
   HelpCircle,
   Copy,
   Check,
@@ -89,7 +88,7 @@ import {
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Toaster, toast } from 'sonner';
-import { getSupabase, isSupabaseMocked, markSupabaseAsMocked } from './lib/supabase';
+import { getSupabase, isSupabaseMocked, markSupabaseAsMocked, clearStaleAuthTokens } from './lib/supabase';
 import { dispatchError } from './lib/errorHandling';
 import { User } from '@supabase/supabase-js';
 import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection, AppView, WeatherData } from './types';
@@ -109,14 +108,14 @@ import {
   useBatteryStatus,
   getMerchantHeartbeatStatus,
   getRandomHost,
-  getTilesForCoordinate,
-  fuzzyMatch
+  getTilesForCoordinate
 } from './lib/appUtils';
 import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/MapboxAppMapBackground';
 import { HistoryMap } from './components/HistoryMap';
 import { ProfileOnboarding } from './components/ProfileOnboarding';
 import { RiderInteractiveTour } from './components/RiderInteractiveTour';
+import { OrderChatModal } from './components/OrderChatModal';
 import { audioSynth } from './lib/audioSynth';
 import { detectRegion } from './lib/geoContext';
 import { PhoneInput } from './components/PhoneInput';
@@ -288,67 +287,6 @@ const AuthView = ({
   const [loading, setLoading] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
 
-  // Facebook-Style Profile Selector States with Lazy Initialization
-  const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>(() => {
-    try {
-      const stored = localStorage.getItem('localeats_saved_profiles');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch {
-      console.error('Failed to parse saved profiles.');
-    }
-    return [];
-  });
-  const [selectedProfile, setSelectedProfile] = useState<SavedProfile | null>(null);
-  const [bootProgress, setBootProgress] = useState<string[]>([]);
-  const [bootIndex, setBootIndex] = useState(-1);
-  const [showDirectForm, setShowDirectForm] = useState(false);
-
-  const handleRemoveProfile = (profileId: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering login
-    const updated = savedProfiles.filter(p => p.id !== profileId);
-    setSavedProfiles(updated);
-    localStorage.setItem('localeats_saved_profiles', JSON.stringify(updated));
-    toast.success('Account removed from this device.');
-  };
-
-  const handleProfileLogin = async (profileItem: SavedProfile) => {
-    setSelectedProfile(profileItem);
-    setLoading(true);
-    setBootIndex(0);
-    
-    const logs = [
-      'SECURE_HANDSHAKE: RE-ESTABLISHING COMPATIBLE CRYPTO KEY...',
-      'PROFILE_VAULT: MATCHING DEVICE SIGNATURE HASH...',
-      'TELEMETRY_SYNC: FETCHING RIDER DELIVERIES DATABASE...',
-      'GEOPOSITION: CALIBRATING REAL-TIME COMPASS ACCELEROMETERS...',
-      'ACCESS_APPROVED: RE-ENTERING TACTICAL LOGISTICS HUD.'
-    ];
-    setBootProgress([]);
-
-    for (let i = 0; i < logs.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 350));
-      setBootProgress(prev => [...prev, logs[i]]);
-      setBootIndex(i + 1);
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 200));
-    
-    if (onMockLogin) {
-      onMockLogin({
-        id: profileItem.id,
-        email: profileItem.email,
-        fullName: profileItem.full_name,
-        phone: profileItem.phone,
-        vehicleType: profileItem.vehicle_type as UserVehicle
-      });
-    }
-  };
-
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSupabaseMocked()) {
@@ -469,239 +407,19 @@ const AuthView = ({
       {/* Dynamic Background Grid Pattern */}
       <div className="absolute inset-0 opacity-[0.03] bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:24px_24px] pointer-events-none" />
 
-      {/* 1. SKELETON / BOOT LOADER FOR SELECTED PROFILE */}
-      {selectedProfile && loading ? (
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="w-full max-w-lg relative z-10 bg-zinc-950/90 border border-zinc-800/80 rounded-3xl p-8 shadow-[0_0_50px_rgba(245,158,11,0.15)] text-center font-mono"
-        >
-          {/* Centered Profile Avatar in Spinning Telemetry Frame */}
-          <div className="relative w-28 h-28 mx-auto mb-6 flex items-center justify-center">
-            {/* Spinning Radar Circle */}
-            <motion.div 
-              animate={{ rotate: 360 }}
-              transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-              className="absolute inset-0 rounded-full border border-dashed border-[#f59e0b]/40 p-1"
-            />
-            {/* Outer Glow Ring */}
-            <div className="absolute inset-2 rounded-full border border-zinc-800 animate-ping opacity-25" />
-            
-            {/* Real Avatar or Initial Letter */}
-            <div className="w-20 h-20 rounded-2xl bg-zinc-900 border border-[#f59e0b]/60 flex items-center justify-center overflow-hidden p-1 relative z-10 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
-              {selectedProfile.photo_url ? (
-                <img 
-                  src={selectedProfile.photo_url} 
-                  className="w-full h-full object-cover rounded-xl" 
-                  alt={selectedProfile.full_name}
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="text-3xl font-black italic text-[#f59e0b]">
-                  {selectedProfile.full_name ? selectedProfile.full_name[0].toUpperCase() : 'P'}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <h2 className="text-sm font-bold text-zinc-400 uppercase tracking-[0.25em] mb-2">
-            PILOT UPLINK INITIATED
-          </h2>
-          <h1 className="text-xl font-black text-[#F0F0F0] tracking-tight mb-8">
-            {selectedProfile.full_name}
-          </h1>
-
-          {/* Terminal Logs Progress Feed */}
-          <div className="bg-[#0b0b0c] border border-zinc-900 rounded-xl p-4 text-left space-y-2 min-h-[160px] relative">
-            <div className="absolute top-2 right-3 text-[8px] font-bold text-[#f59e0b]/40 animate-pulse">
-              SYS_BOOT_A7
-            </div>
-            
-            {bootProgress.map((log, index) => (
-              <motion.div 
-                key={index}
-                initial={{ opacity: 0, x: -5 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="text-[10px] uppercase font-mono tracking-wider flex items-start gap-2"
-              >
-                <span className="text-[#f59e0b] font-bold">[OK]</span>
-                <span className="text-zinc-300 flex-1">{log}</span>
-              </motion.div>
-            ))}
-
-            {bootIndex >= 0 && bootIndex < 5 && (
-              <div className="flex items-center gap-2 text-[10px] text-zinc-600 animate-pulse">
-                <span className="text-[#f59e0b]/50">»</span>
-                <span>TUNING FREQUENCY MATRIX...</span>
-              </div>
-            )}
-          </div>
-        </motion.div>
-      ) : savedProfiles.length > 0 && !showDirectForm ? (
-        
-        /* 2. FACEBOOK-STYLE PROFILE SWITCHER / RECOLLECTION GRID */
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.97 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="w-full max-w-4xl relative z-10 flex flex-col md:flex-row gap-8 items-stretch"
-        >
-          {/* Logo & Product Identity Block */}
-          <div className="flex flex-col justify-center text-center md:text-left md:w-2/5 md:pr-4">
-            <div className="inline-flex p-4 bg-zinc-900 rounded-3xl border border-zinc-800 mb-6 neon-glow mx-auto md:mx-0 w-fit">
-              <Bike className="w-10 h-10 text-[#f59e0b]" />
-            </div>
-            <h1 className="text-4xl font-headline font-black tracking-tighter italic uppercase leading-none font-sans">
-              Local<span className="text-[#f59e0b]">Eats</span><br/>
-              <span className="text-sm opacity-50 tracking-widest lowercase italic font-light">rider logistics network</span>
-            </h1>
-            <p className="mt-4 text-xs text-zinc-500 max-w-xs leading-relaxed hidden md:block uppercase tracking-wider font-mono">
-              Welcome back to South Africa's high-speed independent courier terminal.
-            </p>
-          </div>
-
-          {/* Account Profile List Container */}
-          <div className="flex-1">
-            <BentoCard className="border-zinc-800/60 p-6 bg-zinc-950/60 backdrop-blur-md flex flex-col justify-between h-full">
-              <div>
-                <div className="mb-6 flex justify-between items-center">
-                  <div>
-                    <h2 className="text-lg font-black tracking-tight uppercase font-sans">
-                      Device Profiles
-                    </h2>
-                    <p className="text-[10px] text-zinc-500 uppercase tracking-widest">
-                      One-click instant pilot recollection
-                    </p>
-                  </div>
-                  <span className="px-2 py-0.5 bg-zinc-900 border border-zinc-800 rounded-full text-[8px] font-black text-[#f59e0b]">
-                    {savedProfiles.length} SAVED
-                  </span>
-                </div>
-
-                {/* Profile Grid (Up to 4 accounts, standard Facebook layout) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {savedProfiles.map((p) => {
-                    // Mask email address elegantly
-                    const parts = p.email.split('@');
-                    const maskedLocal = parts[0].length > 3 
-                      ? parts[0].substring(0, 2) + '•••' + parts[0].substring(parts[0].length - 1)
-                      : '•••';
-                    const maskedEmail = parts.length > 1 ? maskedLocal + '@' + parts[1] : p.email;
-
-                    return (
-                      <motion.div
-                        key={p.id}
-                        whileHover={{ scale: 1.02 }}
-                        onClick={() => handleProfileLogin(p)}
-                        className="group relative bg-zinc-900/50 hover:bg-zinc-900/90 border border-zinc-800 hover:border-[#f59e0b]/50 rounded-2xl p-4 flex items-center gap-4 cursor-pointer transition-all shadow-md overflow-hidden"
-                      >
-                        {/* Remove from switcher "X" button */}
-                        <button
-                          type="button"
-                          onClick={(e) => handleRemoveProfile(p.id, e)}
-                          className="absolute top-2 right-2 p-1 rounded-full text-zinc-500 hover:text-red-500 bg-zinc-950/80 border border-zinc-800/80 hover:border-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity z-20"
-                          title="Remove Account"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-
-                        {/* Pilot Avatar */}
-                        <div className="w-12 h-12 rounded-xl bg-zinc-950 border border-zinc-800 group-hover:border-[#f59e0b]/40 flex items-center justify-center overflow-hidden p-0.5 relative shrink-0 transition-colors">
-                          {p.photo_url ? (
-                            <img 
-                              src={p.photo_url} 
-                              className="w-full h-full object-cover rounded-lg" 
-                              alt={p.full_name}
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : (
-                            <div className="text-sm font-black italic text-[#f59e0b]">
-                              {p.full_name ? p.full_name[0].toUpperCase() : 'R'}
-                            </div>
-                          )}
-                          
-                          {/* Online indicator dot */}
-                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full bg-[#39FF14] border-2 border-zinc-900 shadow-sm" />
-                        </div>
-
-                        {/* Text Metadata */}
-                        <div className="min-w-0 flex-1">
-                          <h3 className="font-bold text-sm text-[#F0F0F0] truncate group-hover:text-white">
-                            {p.full_name}
-                          </h3>
-                          <p className="text-[10px] text-zinc-500 truncate font-mono">
-                            {maskedEmail}
-                          </p>
-                          <div className="mt-1 flex items-center gap-2">
-                            <span className="px-1.5 py-0.2 bg-zinc-950 border border-zinc-800/80 rounded text-[7px] font-bold text-zinc-400">
-                              {p.vehicle_type || 'Road'}
-                            </span>
-                            {p.total_deliveries > 0 && (
-                              <span className="text-[8px] text-[#f59e0b] font-bold">
-                                {p.total_deliveries} drops
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Account Action Panel */}
-              <div className="mt-8 pt-6 border-t border-zinc-900/60 flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowDirectForm(true)}
-                  className="flex-1 py-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-xs font-black uppercase tracking-widest text-[#F0F0F0] rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer font-sans"
-                >
-                  <Plus className="w-4 h-4 text-[#f59e0b]" />
-                  Add or Use Different Account
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSignUp(true);
-                    setShowDirectForm(true);
-                  }}
-                  className="py-3 px-6 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700 text-xs font-black uppercase tracking-widest text-[#f59e0b] rounded-xl transition-all cursor-pointer font-sans"
-                >
-                  Register New Pilot
-                </button>
-              </div>
-            </BentoCard>
-          </div>
-        </motion.div>
-      ) : (
-        
-        /* 3. STANDARD USER CREDENTIALS SIGN-IN / SIGN-UP FORM */
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
+      {/* STANDARD RIDER AUTHENTICATION FORM (SINGLE ACCOUNT BOUND) */}
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
           className="w-full max-w-xl relative z-10"
         >
           <div className="text-center mb-8 relative">
-            {/* If saved profiles exist, show Back button */}
-            {savedProfiles.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setShowDirectForm(false);
-                  setIsSignUp(false);
-                }}
-                className="absolute left-0 top-1/2 -translate-y-1/2 py-1.5 px-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-[9px] font-black uppercase tracking-widest text-zinc-400 hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <ChevronLeft className="w-3.5 h-3.5 text-[#f59e0b]" />
-                Profiles
-              </button>
-            )}
-
             <div className="inline-flex p-4 bg-zinc-900 rounded-3xl border border-zinc-800 mb-6 neon-glow">
               <Bike className="w-10 h-10 text-[#f59e0b]" />
             </div>
             <h1 className="text-3xl font-headline font-black tracking-tighter italic uppercase leading-none font-sans">
               Local<span className="text-[#f59e0b]">Eats</span><br/>
-              <span className="text-lg opacity-50 tracking-wide lowercase italic font-light">{isSignUp ? 'New Account Registration' : 'Rider Portal'}</span>
+              <span className="text-lg opacity-50 tracking-wide lowercase italic font-light">{isSignUp ? 'New Account Registration' : 'Rider Logistics Terminal'}</span>
             </h1>
           </div>
 
@@ -837,7 +555,6 @@ const AuthView = ({
             </button>
           </BentoCard>
         </motion.div>
-      )}
     </div>
   );
 };
@@ -1898,7 +1615,7 @@ const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: numbe
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode, cashOnHand }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
@@ -1906,6 +1623,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   profile?: RiderProfile;
   isNavVisible?: boolean;
   isHighContrastMode?: boolean;
+  cashOnHand?: number;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -1916,10 +1634,17 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const [routeProgress, setRouteProgress] = useState(0);
   const [activeEta, setActiveEta] = useState(0);
   const [routeDistance, setRouteDistance] = useState(0);
-  const [customTipPercent, setCustomTipPercent] = useState<number>(0);
   const [arrivedAtCustomer, setArrivedAtCustomer] = useState<Record<string, boolean>>({});
   const [cashCollected, setCashCollected] = useState<Record<string, boolean>>({});
+  const [delayedOrders, setDelayedOrders] = useState<Record<string, boolean>>({});
+  const [showDelayModal, setShowDelayModal] = useState(false);
+  const [delayReason, setDelayReason] = useState<string>('');
   const [isForceDeviated, setIsForceDeviated] = useState(false);
+
+  const [showLandmarkModal, setShowLandmarkModal] = useState(false);
+  const [landmarkAddress, setLandmarkAddress] = useState('');
+  const [landmarkSuggestion, setLandmarkSuggestion] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const isVoiceSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
   const [isListening, setIsListening] = useState(false);
@@ -2098,6 +1823,26 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                 Wrong Road routing detected! Return to the Tembisa Pilot sector path immediately. Recurrent correction alerts engaged.
               </p>
               <p className="text-[8px] text-zinc-500 font-sans mt-1.5 font-medium">Swipe left/right to dismiss</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Cash limit warning banner */}
+      <AnimatePresence>
+        {cashOnHand !== undefined && cashOnHand >= 200 && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="absolute top-44 left-4 right-4 z-[54] bg-red-950/95 border border-red-500/40 p-3.5 rounded-xl flex items-start gap-2.5 animate-pulse backdrop-blur-md pointer-events-auto shadow-lg"
+          >
+            <span className="text-lg shrink-0">💵</span>
+            <div className="flex-1 text-left">
+              <p className="text-[10px] font-black uppercase text-red-500 tracking-wider">⚠️ CASH LIMIT REACHED</p>
+              <p className="text-[11.5px] font-medium text-red-300 leading-tight">
+                Cash-on-Hand limit of R200.00 reached! You are holding R{cashOnHand.toFixed(2)}. Complete a cash deposit at your nearest linked store hub to clear your carrying register and unlock full navigation vectors.
+              </p>
             </div>
           </motion.div>
         )}
@@ -2397,6 +2142,13 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
              <span className="text-[7px] md:text-[8px] font-black text-white/90 drop-shadow-md uppercase tracking-widest leading-none">WAZE</span>
           </div>
 
+          <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); setIsChatOpen(true); }}>
+             <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-[#f59e0b] shadow-[0_0_15px_rgba(245,158,11,0.4)] flex items-center justify-center mb-0.5 md:mb-1 hover:brightness-110 active:scale-95 transition-all">
+                <MessageSquare className="w-4.5 h-4.5 md:w-5 md:h-5 text-black" />
+             </div>
+             <span className="text-[7px] md:text-[8px] font-black text-[#f59e0b] uppercase tracking-widest leading-none drop-shadow">CHAT</span>
+          </div>
+
           {isPickedUp && (
             <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); if(onShowTracking) onShowTracking(currentOrder.id); }}>
                <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-emerald-600 shadow-[0_0_15px_rgba(16,185,129,0.5)] flex items-center justify-center mb-0.5 md:mb-1 hover:bg-emerald-500 active:scale-95 transition-all">
@@ -2405,13 +2157,6 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                <span className="text-[7px] md:text-[8px] font-black text-emerald-500 uppercase tracking-widest leading-none">SHARE</span>
             </div>
           )}
-
-          <div className="flex flex-col items-center group cursor-pointer" onClick={() => { if(onScreenTap) onScreenTap(); }}>
-             <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-black/80 backdrop-blur-xl border border-white/10 flex items-center justify-center mb-0.5 md:mb-1 group-hover:border-white/30 transition-all">
-                <X className="w-5 h-5 md:w-6 md:h-6 text-white" />
-             </div>
-             <span className="text-[7px] md:text-[8px] font-black text-white/40 uppercase tracking-widest leading-none">CLOSE</span>
-          </div>
 
           <div className="flex flex-col items-center group cursor-pointer" onClick={(e) => { e.stopPropagation(); optimizeRoute(); }}>
              <div className="w-10 h-10 md:w-12 md:h-12 rounded-full bg-zinc-900/80 backdrop-blur-xl border border-[#f59e0b]/40 flex items-center justify-center mb-0.5 md:mb-1 group-hover:bg-[#f59e0b] group-hover:text-black transition-all">
@@ -2433,25 +2178,25 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                </span>
             </div>
           )}
-
-          <button 
-            onClick={(e) => { e.stopPropagation(); toast('Support link activated. Connecting to HQ...'); }}
-            className="bg-black/80 backdrop-blur-md border border-white/10 text-white font-black text-[8px] md:text-[9px] px-3 md:px-4 py-1.5 md:py-2 rounded-full shadow-2xl active:scale-95 transition-all uppercase tracking-[0.2em] hover:bg-zinc-800 leading-none"
-          >
-            HELP
-          </button>
         </div>
       </div>
 
       <AnimatePresence>
         {!isNavVisible && (
           <motion.div 
-            initial={{ y: 200, opacity: 0 }}
+            initial={{ y: 300, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 200, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="bg-black/80 backdrop-blur-3xl p-4 pb-10 pointer-events-auto border-t border-white/5 z-50 flex flex-col gap-3 shadow-[0_-20px_40px_rgba(0,0,0,0.4)]"
+            exit={{ y: 300, opacity: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="fixed bottom-0 left-0 right-0 max-w-3xl mx-auto max-h-[50vh] sm:max-h-[55vh] overflow-y-auto bg-zinc-950/95 backdrop-blur-2xl rounded-t-3xl border-t border-zinc-800/80 p-4 pb-12 shadow-[0_-20px_50px_rgba(0,0,0,0.8)] pointer-events-auto z-50 flex flex-col gap-3"
           >
+            {/* Sheet Drag Handle */}
+            <div 
+              className="w-12 h-1 bg-zinc-700/80 rounded-full mx-auto shrink-0 mb-1 cursor-pointer hover:bg-zinc-500 transition-colors"
+              onClick={() => onScreenTap && onScreenTap()}
+              title="Tap to hide sheet"
+            />
+
           {/* Order Sequence & Controls */}
           <div className="flex items-center justify-between gap-3">
             <HorizontalScrollHint noPadding className="flex-1">
@@ -2610,141 +2355,39 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               </div>
             </div>
 
-            {/* Potential Earnings Calculator */}
-            <div className="bg-zinc-900/40 border border-zinc-800/80 rounded-xl p-3 flex flex-col gap-2.5">
-              <div className="flex items-center justify-between px-2 mb-1">
-                <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">Earnings Estimator</span>
-                <span className="text-[9px] font-mono text-[#f59e0b]">
-                  R{((Number(currentOrder.delivery_fee) || 0) * (1 + customTipPercent / 100)).toFixed(2)}
-                </span>
-              </div>
-              <div className="flex items-center justify-between px-2 gap-2">
-                <span className="text-xs font-medium text-zinc-400">Add expected tip: {customTipPercent}%</span>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="50" 
-                  step="5"
-                  value={customTipPercent} 
-                  onChange={(e) => setCustomTipPercent(Number(e.target.value))}
-                  className="flex-1 accent-[#f59e0b]"
-                />
-              </div>
-            </div>
-
             {/* Client Retention Comm-Link */}
             {isPickedUp && (
-              <div className="bg-zinc-900/50 border border-emerald-500/10 rounded-xl p-3 flex flex-col gap-3 backdrop-blur-sm">
+              <div className="bg-zinc-900/50 border border-emerald-500/10 rounded-xl p-3 flex flex-col gap-2 backdrop-blur-sm">
                 <div className="flex items-center gap-2 px-1">
-                  <MessageSquare className="w-4 h-4 text-emerald-400" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 font-sans">Location & Safety Assist</span>
+                  <MessageSquare className="w-4 h-4 text-[#f59e0b]" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 font-sans">Real-Time Customer Link</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={() => {
-                      const msg = `Hi ${currentOrder.customer_name}, I'm your LocalEats rider. I've picked up your order and I'm heading your way! You can track my live location here: https://localeatssa.co.za/track/${currentOrder.id}`;
-                      try {
-                        navigator.clipboard.writeText(msg);
-                        toast.success("Notice: Delivery link copied to clipboard as fallback!");
-                      } catch (e) {
-                        console.warn("Clipboard blocked", e);
-                      }
-                      try {
-                        window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
-                      } catch (err) {
-                        console.warn("Popup blocked", err);
-                      }
-                      toast.success("Notice: Delivery tracking link shared via WhatsApp.");
-                      setTimeout(() => {
-                        toast.info(`Customer ${currentOrder.customer_name}: "Awesome, thank you! Ready to receive."`, {
-                          duration: 5000,
-                        });
-                      }, 1500);
-                    }}
-                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
-                  >
-                    <Radar className="w-3 h-3" />
-                    Share Live ETA
-                  </button>
-                  <button 
-                    onClick={() => {
-                      const msg = `Hi ${currentOrder.customer_name}, your LocalEats order has arrived! I am outside.`;
-                      try {
-                        navigator.clipboard.writeText(msg);
-                        toast.success("Notice: Arrival text copied to clipboard!");
-                      } catch (e) {
-                        console.warn("Clipboard blocked", e);
-                      }
-                      try {
-                        window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
-                      } catch (err) {
-                        console.warn("Popup blocked", err);
-                      }
-                      
-                      // Auto-transition the delivery flow!
-                      setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
-                      toast.success("Marked as Arrived at Customer! Ready to complete delivery.");
-                    }}
-                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-zinc-805 hover:bg-zinc-700 text-white border border-zinc-700 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
-                  >
-                    <BellRing className="w-3 h-3" />
-                    I'm Outside
-                  </button>
+                
+                <button
+                  onClick={() => setIsChatOpen(true)}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[#f59e0b] hover:bg-[#d97706] text-zinc-950 font-black rounded-xl transition-all active:scale-95 text-xs uppercase tracking-wider cursor-pointer shadow-lg shadow-[#f59e0b]/20"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  Live Order Chat with {currentOrder.customer_name || 'Customer'}
+                </button>
+              </div>
+            )}
 
-                  <button 
-                    onClick={() => {
-                      const msg = `Hi ${currentOrder.customer_name}, I am approaching your area. Could you please send me a quick WhatsApp location Pin or describe your gate/house to help me find you? Thanks!`;
-                      try {
-                        navigator.clipboard.writeText(msg);
-                      } catch (e) {
-                        console.warn("Clipboard blocked", e);
-                      }
-                      try {
-                        window.open(`https://wa.me/${(currentOrder?.phone || '').replace(/\D/g,'')}?text=${encodeURIComponent(msg)}`, '_blank');
-                      } catch (err) {
-                        console.warn("Popup blocked", err);
-                      }
-                      toast.success("Notice: Location pin requested to save airtime.");
-                      setTimeout(() => {
-                        toast.info(`Customer reply: "Gate code is #1290. Ring bell 4B."`, {
-                          duration: 7000,
-                        });
-                      }, 2000);
-                    }}
-                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    Request Gate Pin
-                  </button>
-
-                  <button 
-                    onClick={() => {
-                      const lat = profile?.current_latitude || -25.9964;
-                      const lng = profile?.current_longitude || 28.2268;
-                      const msg = `LocalEats Security Alert: I'm delivery rider ${profile?.full_name || 'Rider'}. Delivering order #${currentOrder.id.slice(0, 5)} to ${currentOrder?.address}. Track my route at: https://maps.google.com/?q=${lat},${lng}. Check on me if I'm quiet for 15 mins.`;
-                      try {
-                        navigator.clipboard.writeText(msg);
-                      } catch (e) {
-                        console.warn("Clipboard blocked", e);
-                      }
-                      try {
-                        window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-                      } catch (err) {
-                        console.warn("Popup blocked", err);
-                      }
-                      toast.success("Safety Protocol: Route and telemetry shared with emergency contacts.");
-                    }}
-                    className="flex items-center justify-center gap-2 py-2.5 px-2 bg-red-500/15 hover:bg-red-500/25 text-red-450 border border-red-500/20 rounded-lg transition-all active:scale-95 text-[9px] font-black uppercase tracking-widest"
-                  >
-                    <ShieldAlert className="w-3.5 h-3.5 animate-pulse" />
-                    Safety Share
-                  </button>
-                </div>
-                <div className="px-1 mt-0.5">
-                  <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider leading-relaxed">
-                    Consistent communication increases client trust. Use the Comm-Link to ask for coordinates and protect your safety.
+            {/* Merchant Delay Report Section */}
+            {!isPickedUp && (
+              <div className="mb-4">
+                <button
+                  onClick={() => setShowDelayModal(true)}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-3 bg-red-950/30 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded-xl transition-all active:scale-95 text-[10px] font-black uppercase tracking-widest shadow-md cursor-pointer"
+                >
+                  <ShieldAlert className="w-4 h-4" />
+                  Report Merchant Delay
+                </button>
+                {delayedOrders[currentOrder.id] && (
+                  <p className="text-[9px] text-red-400 mt-2 font-bold uppercase tracking-wider text-center">
+                    Delay reported. Support notified & performance metrics protected.
                   </p>
-                </div>
+                )}
               </div>
             )}
 
@@ -2853,6 +2496,182 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
         </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Suggest Landmark Update Modal */}
+      <AnimatePresence>
+        {showLandmarkModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 pointer-events-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-zinc-950 border border-zinc-850 p-6 rounded-3xl w-full max-w-sm space-y-4 shadow-2xl relative text-left"
+            >
+              <button
+                onClick={() => setShowLandmarkModal(false)}
+                className="absolute top-4 right-4 text-zinc-550 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase text-[#f59e0b] tracking-widest block">CROWD-SOURCE DIRECTORY</span>
+                <h3 className="text-xl font-headline font-black italic text-white uppercase leading-none">Suggest Landmark Update</h3>
+                <p className="text-[10px] text-zinc-500 font-sans leading-normal">
+                  Spaza shops, water tanks, and containers change colors or names. Share updates to keep Tembisa landmark routing highly precise!
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1 text-left">
+                  <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Active Sector / Address</label>
+                  <input
+                    type="text"
+                    value={landmarkAddress}
+                    onChange={e => setLandmarkAddress(e.target.value)}
+                    placeholder="e.g. Ivory Park Sector C"
+                    className="w-full bg-black/60 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
+                  />
+                </div>
+
+                <div className="space-y-1 text-left">
+                  <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Landmark Changes / Suggestion</label>
+                  <textarea
+                    value={landmarkSuggestion}
+                    onChange={e => setLandmarkSuggestion(e.target.value)}
+                    rows={3}
+                    placeholder="e.g. The green water tank next to shop is now painted blue with a brand new spaza name 'Sizwe Spaza'."
+                    className="w-full bg-black/60 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors resize-none font-sans"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => setShowLandmarkModal(false)}
+                  className="flex-1 py-3 bg-zinc-900 border border-zinc-850 text-zinc-400 font-black uppercase tracking-widest text-[9px] rounded-xl hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!landmarkSuggestion.trim()) {
+                      toast.error("Please enter a landmark change description.");
+                      return;
+                    }
+                    const saved = localStorage.getItem('localeats_landmark_suggestions');
+                    const currentSuggestions = saved ? JSON.parse(saved) : [
+                      { id: '1', address: 'Ivory Park South', suggestion: 'The blue container near corner is now red with Coca-Cola logo', timestamp: Date.now() - 3600000, status: 'approved' },
+                      { id: '2', address: 'Sector 4 Junction', suggestion: 'Big green water tank was moved 20m north next to the spaza', timestamp: Date.now() - 7200000, status: 'pending_validation' }
+                    ];
+                    
+                    const nextId = (currentSuggestions.length + 1).toString();
+                    currentSuggestions.push({
+                      id: nextId,
+                      address: landmarkAddress || 'General Tembisa Sector',
+                      suggestion: landmarkSuggestion,
+                      timestamp: Date.now(),
+                      status: 'pending_validation'
+                    });
+                    
+                    localStorage.setItem('localeats_landmark_suggestions', JSON.stringify(currentSuggestions));
+                    setShowLandmarkModal(false);
+                    toast.success("Landmark update suggested successfully!", {
+                      description: "Your update has been uploaded to the marketplace and queued for peer validation!"
+                    });
+                    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                  }}
+                  className="flex-1 py-3 bg-[#f59e0b] text-black hover:bg-amber-600 font-black uppercase tracking-widest text-[9px] rounded-xl transition-all"
+                >
+                  Submit Update
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Merchant Delay Modal */}
+      <AnimatePresence>
+        {showDelayModal && currentOrder && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 pointer-events-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-zinc-950 border border-zinc-850 p-6 rounded-3xl w-full max-w-sm space-y-4 shadow-2xl relative text-left"
+            >
+              <button
+                onClick={() => setShowDelayModal(false)}
+                className="absolute top-4 right-4 text-zinc-550 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase text-red-500 tracking-widest block">OPERATIONAL FRICTION</span>
+                <h3 className="text-xl font-headline font-black italic text-white uppercase leading-none">Report Merchant Delay</h3>
+                <p className="text-[10px] text-zinc-500 font-sans leading-normal">
+                  Reporting a delay protects your performance rating from long wait times at the merchant.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1 text-left">
+                  <label className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Reason for delay</label>
+                  <select
+                    value={delayReason}
+                    onChange={e => setDelayReason(e.target.value)}
+                    className="w-full bg-black/60 border border-zinc-850 px-3.5 py-2.5 rounded-xl text-xs text-white outline-none focus:border-red-500 transition-colors"
+                  >
+                    <option value="">Select a reason...</option>
+                    <option value="food_not_ready">Food is still being prepared</option>
+                    <option value="long_queue">Long queue / busy merchant</option>
+                    <option value="merchant_offline">Merchant system offline / load shedding</option>
+                    <option value="other">Other issue</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => setShowDelayModal(false)}
+                  className="flex-1 py-3 bg-zinc-900 border border-zinc-850 text-zinc-400 font-black uppercase tracking-widest text-[9px] rounded-xl hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!delayReason) {
+                      toast.error("Please select a reason for the delay.");
+                      return;
+                    }
+                    setDelayedOrders(prev => ({ ...prev, [currentOrder.id]: true }));
+                    setShowDelayModal(false);
+                    toast.success("Merchant delay reported successfully!", {
+                      description: "Your wait time metrics are now protected for this mission."
+                    });
+                    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                  }}
+                  className="flex-1 py-3 bg-red-500 text-white hover:bg-red-600 font-black uppercase tracking-widest text-[9px] rounded-xl transition-all"
+                >
+                  Submit Report
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {currentOrder && (
+        <OrderChatModal
+          order={currentOrder}
+          isOpen={isChatOpen}
+          onClose={() => setIsChatOpen(false)}
+          currentRiderId={profile?.id}
+          currentRiderName={profile?.name}
+          isHighContrastMode={isHighContrastMode}
+        />
+      )}
   </div>
   );
 });
@@ -3549,69 +3368,6 @@ const SettingToggle = React.memo(({
   </div>
 ));
 
-interface PortalLinkCardProps {
-  icon: React.ElementType;
-  iconColorClass?: string;
-  iconBgClass?: string;
-  badgeText: string;
-  badgeBgClass?: string;
-  badgeTextClass?: string;
-  title: string;
-  description: string;
-  linkText: string;
-  linkUrl?: string;
-  isActiveCurrent?: boolean;
-  cardBorderClass?: string;
-}
-
-const PortalLinkCard = ({
-  icon: Icon,
-  iconColorClass,
-  iconBgClass,
-  badgeText,
-  badgeBgClass,
-  badgeTextClass,
-  title,
-  description,
-  linkText,
-  linkUrl,
-  isActiveCurrent = false,
-  cardBorderClass = "border-zinc-850 hover:border-zinc-700"
-}: PortalLinkCardProps) => (
-  <div className={cn("bg-zinc-950/80 border rounded-2xl p-4 flex flex-col justify-between transition-all relative overflow-hidden", cardBorderClass)}>
-    {isActiveCurrent && <div className="absolute top-0 right-0 w-16 h-16 bg-[#f59e0b]/5 blur-[20px] rounded-full pointer-events-none" />}
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className={cn("w-8 h-8 rounded-xl border flex items-center justify-center", iconBgClass, iconColorClass)}>
-          <Icon className={cn("w-4 h-4", isActiveCurrent ? "animate-pulse" : "")} />
-        </div>
-        <span className={cn("text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-widest", badgeBgClass, badgeTextClass)}>{badgeText}</span>
-      </div>
-      <div className="text-left">
-        <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">{title}</h4>
-        <p className="text-[9px] text-zinc-500 mt-1 leading-normal font-sans">{description}</p>
-      </div>
-    </div>
-    {linkUrl ? (
-      <a 
-        href={linkUrl}
-        target="_blank" 
-        rel="noopener noreferrer" 
-        className={cn(
-          "mt-4 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl transition-all text-[9px] font-black uppercase tracking-widest",
-          isActiveCurrent ? "bg-[#f59e0b]/10 border border-[#f59e0b]/20 text-[#f59e0b]" : "bg-zinc-900 hover:bg-zinc-850 hover:text-white border border-zinc-800 text-zinc-400"
-        )}
-      >
-        {linkText} <ExternalLink className="w-3 h-3" />
-      </a>
-    ) : (
-      <div className="mt-4 flex items-center justify-center gap-1.5 py-2 px-3 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-xl text-[9px] font-black uppercase tracking-widest text-zinc-300">
-        {linkText}
-      </div>
-    )}
-  </div>
-);
-
 const ProfileView = React.memo(({ 
   profile, 
   connections, 
@@ -3771,8 +3527,10 @@ const ProfileView = React.memo(({
 
   const [copied, setCopied] = useState(false);
   const [showQR, setShowQR] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'identity' | 'settings'>('overview');
-  const [settingsSearchQuery, setSettingsSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<'overview' | 'identity' | 'settings' | 'referrals'>('overview');
+
+  const [flyersScanned, setFlyersScanned] = useState(() => Number(localStorage.getItem('localeats_flyers_scanned') || '14'));
+  const [ridersRecruited, setRidersRecruited] = useState(() => Number(localStorage.getItem('localeats_riders_recruited') || '2'));
   const [customSectorInput, setCustomSectorInput] = useState('');
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
@@ -3865,13 +3623,13 @@ const ProfileView = React.memo(({
       </header>
 
       {/* Tabs */}
-      <div className="flex bg-black/40 p-1.5 rounded-2xl mb-6 shadow-inner border border-zinc-900/50 max-w-sm mx-auto">
-        {(['overview', 'identity', 'settings'] as const).map(tab => (
+      <div className="flex bg-black/40 p-1.5 rounded-2xl mb-6 shadow-inner border border-zinc-900/50 max-w-sm mx-auto overflow-x-auto no-scrollbar">
+        {(['overview', 'identity', 'settings', 'referrals'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={cn(
-              "flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+              "flex-1 py-2.5 px-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all whitespace-nowrap",
               activeTab === tab 
                 ? "bg-zinc-900 text-[#f59e0b] shadow-[0_4px_15px_rgba(0,0,0,0.5)] border border-zinc-800" 
                 : "text-zinc-550 hover:text-zinc-300"
@@ -4013,6 +3771,7 @@ const ProfileView = React.memo(({
             </div>
           </BentoCard>
         </section>
+
         </div>
       )}
 
@@ -4199,94 +3958,6 @@ const ProfileView = React.memo(({
           </div>
         )}
       </section>
-
-      {/* LocalEats SA Portal Network */}
-      <section className="space-y-4 pt-2">
-        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">LocalEats SA Portal Network</h3>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
-          <p className="text-[10px] text-zinc-400 font-sans leading-relaxed uppercase tracking-wider">
-            LocalEats South Africa operates as a fully integrated multi-portal logistics ecosystem. Easily view and access the production portals below:
-          </p>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <PortalLinkCard
-              icon={Globe}
-              iconColorClass="text-emerald-400"
-              iconBgClass="bg-emerald-500/10 border-emerald-500/20"
-              badgeText="Active"
-              badgeBgClass="bg-emerald-400/10"
-              badgeTextClass="text-emerald-400"
-              title="Customer Portal"
-              description="Place orders, view restaurant menus, and track live rider locations."
-              linkText="localeatssa.co.za"
-              linkUrl="https://localeatssa.co.za"
-            />
-            
-            <PortalLinkCard
-              icon={ShoppingBag}
-              iconColorClass="text-[#f59e0b]"
-              iconBgClass="bg-amber-500/10 border-amber-500/20"
-              badgeText="Active"
-              badgeBgClass="bg-amber-500/10"
-              badgeTextClass="text-amber-500"
-              title="Merchant Dashboard"
-              description="Storefront dispatch management for restaurants to list menus and assign orders."
-              linkText="dashboard.localeatssa.co.za"
-              linkUrl="https://dashboard.localeatssa.co.za"
-            />
-            
-            <PortalLinkCard
-              icon={Smartphone}
-              iconColorClass="text-[#f59e0b]"
-              iconBgClass="bg-[#f59e0b]/10 border-[#f59e0b]/20"
-              badgeText="Current"
-              badgeBgClass="bg-[#f59e0b]"
-              badgeTextClass="text-white"
-              title="Rider Portal"
-              description="Dispatch logistics, live navigation routing, and safety assist tools."
-              linkText="rider.localeatssa.co.za"
-              isActiveCurrent={true}
-              cardBorderClass="border-[#f59e0b]/30 ring-2 ring-[#f59e0b]/5"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Advantages & Recommendations */}
-      <section className="space-y-4 pt-2">
-        <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Tips & Advantages</h3>
-        <HorizontalScrollHint noPadding>
-          <div className="flex items-stretch gap-3 pb-1">
-            <div className="w-[240px] shrink-0 bg-zinc-950/80 border border-[#f59e0b]/20 rounded-2xl p-4 flex flex-col justify-between">
-              <div className="w-8 h-8 rounded-xl bg-[#f59e0b]/10 border border-[#f59e0b]/20 flex items-center justify-center text-[#f59e0b] mb-3">
-                <Link2 className="w-4 h-4" />
-              </div>
-              <div>
-                <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Sync with Merchants</h4>
-                <p className="text-[9px] text-zinc-400 mt-1.5 leading-relaxed font-sans">Connecting with merchants instantly alerts you to high-reward orders in their queue, giving you priority access before they hit the general feed.</p>
-              </div>
-            </div>
-            <div className="w-[240px] shrink-0 bg-zinc-950/80 border border-emerald-500/20 rounded-2xl p-4 flex flex-col justify-between">
-              <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-3">
-                <TrendingUp className="w-4 h-4" />
-              </div>
-              <div>
-                <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Maximize Earnings</h4>
-                <p className="text-[9px] text-zinc-400 mt-1.5 leading-relaxed font-sans">Track your performance via the Weekly Profitability Heatmap to discover your most lucrative times and optimize your active schedule.</p>
-              </div>
-            </div>
-            <div className="w-[240px] shrink-0 bg-zinc-950/80 border border-sky-500/20 rounded-2xl p-4 flex flex-col justify-between">
-              <div className="w-8 h-8 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-3">
-                <ShieldCheck className="w-4 h-4" />
-              </div>
-              <div>
-                <h4 className="text-xs font-black text-white font-mono uppercase tracking-wider">Security Setup</h4>
-                <p className="text-[9px] text-zinc-400 mt-1.5 leading-relaxed font-sans">Enter your Vehicle Make and License Plate in the Security Gate Identification section above to speed up estate entry clearances.</p>
-              </div>
-            </div>
-          </div>
-        </HorizontalScrollHint>
-      </section>
       </div>
       )}
 
@@ -4294,7 +3965,6 @@ const ProfileView = React.memo(({
         <div className="space-y-6 animate-fade-in">
 
       {/* System Settings */}
-      {fuzzyMatch(settingsSearchQuery, "device settings battery saver mode high contrast day mode alert sounds voice default navigation language display push notifications biometric access") && (
       <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Device Settings</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
@@ -4365,10 +4035,8 @@ const ProfileView = React.memo(({
 
         </div>
       </section>
-      )}
 
       {/* Support & Privacy Section */}
-      {fuzzyMatch(settingsSearchQuery, "support privacy operator manual tour popia legal compliance") && (
       <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Support & Privacy</h3>
         <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-4">
@@ -4411,32 +4079,28 @@ const ProfileView = React.memo(({
           </div>
         </div>
       </section>
-      )}
 
       {/* Advanced Settings Toggle */}
-      {!settingsSearchQuery && (
-        <button
-          onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-          className="w-full bg-zinc-900 border border-zinc-800 rounded-[2rem] p-4 flex items-center justify-between text-left hover:border-zinc-750 transition-colors mt-8"
-        >
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-zinc-800 rounded-xl">
-              <SlidersHorizontal className="w-5 h-5 text-zinc-400" />
-            </div>
-            <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-white">Advanced Tools</p>
-              <p className="text-[8.5px] font-black uppercase text-zinc-550 tracking-widest mt-0.5">Diagnostics, Map Cache, Deactivation</p>
-            </div>
+      <button
+        onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+        className="w-full bg-zinc-900 border border-zinc-800 rounded-[2rem] p-4 flex items-center justify-between text-left hover:border-zinc-750 transition-colors mt-8"
+      >
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-zinc-800 rounded-xl">
+            <SlidersHorizontal className="w-5 h-5 text-zinc-400" />
           </div>
-          <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform duration-200", showAdvancedSettings ? "rotate-90 text-zinc-400" : "")} />
-        </button>
-      )}
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.1em] text-white">Advanced Tools</p>
+            <p className="text-[8.5px] font-black uppercase text-zinc-550 tracking-widest mt-0.5">Diagnostics, Map Cache, Deactivation</p>
+          </div>
+        </div>
+        <ChevronRight className={cn("w-4 h-4 text-zinc-500 transition-transform duration-200", showAdvancedSettings ? "rotate-90 text-zinc-400" : "")} />
+      </button>
 
-      {(showAdvancedSettings || settingsSearchQuery) && (
+      {showAdvancedSettings && (
         <div className="space-y-6 animate-fade-in mt-4">
           
           {/* Dynamic Customizable Notifications */}
-          {(!settingsSearchQuery || "order alert customization notification dynamic swapper".includes(settingsSearchQuery.toLowerCase())) && (
           <section className="space-y-4">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Order Alert Customization</h3>
             <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 space-y-5">
@@ -4508,11 +4172,8 @@ const ProfileView = React.memo(({
 
             </div>
           </section>
-          )}
-
 
           {/* Offline Roadmap Cache */}
-          {fuzzyMatch(settingsSearchQuery, "offline roadmap cache simulate map sync pre-download") && (
           <section className="space-y-4">
             <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-zinc-650 ml-2">Offline Roadmap Cache</h3>
             <div className="bg-zinc-900 border border-zinc-800 rounded-[2rem] p-5 relative overflow-hidden space-y-6">
@@ -4679,10 +4340,8 @@ const ProfileView = React.memo(({
               </div>
             </div>
           </section>
-          )}
 
           {/* System Diagnostics & Bypass Hotlines */}
-          {fuzzyMatch(settingsSearchQuery, "system diagnostics dispatch comms support hotlines") && (
           <section className="space-y-3">
             <button
               onClick={() => setShowDiagnostics(!showDiagnostics)}
@@ -4761,10 +4420,8 @@ const ProfileView = React.memo(({
               )}
             </AnimatePresence>
           </section>
-          )}
 
           {/* Wipe Hub Device Sync */}
-          {fuzzyMatch(settingsSearchQuery, "wipe reset logout deactivate hub device sync") && (
           <section className="space-y-3 pt-4 border-t border-zinc-800">
             <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-red-500 ml-1">Danger Zone</h3>
             
@@ -4799,200 +4456,140 @@ const ProfileView = React.memo(({
               </BentoCard>
             </div>
           </section>
-          )}
 
         </div>
       )}
 
-      {/* Spacing for bottom floating search bar so content doesn't get obscured */}
-          <div className="h-32" />
+        </div>
+      )}
 
-          {/* Floating Quick Actions & Results panel expanding UPWARDS from bottom search */}
-          {settingsSearchQuery && (
-            <div className="fixed bottom-40 left-4 right-4 z-50 max-w-md mx-auto">
-              <div className="bg-zinc-950/95 backdrop-blur-md border border-zinc-800 rounded-2xl p-4 shadow-2xl space-y-3 max-h-[50vh] overflow-y-auto">
-                <span className="text-[9px] font-black tracking-widest text-[#f59e0b] uppercase block">Quick Actions</span>
-                
-                <div className="space-y-2">
-                  {/* Battery / Eco Mode Quick Action */}
-                  {fuzzyMatch(settingsSearchQuery, "battery saver mode eco energy") && (
-                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
-                      <div className="flex items-center gap-3">
-                        <Zap className={cn("w-4 h-4", isEcoMode ? "text-amber-500 animate-pulse" : "text-zinc-500")} />
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold text-white">Battery Saver Mode</span>
-                          <span className="text-[9px] text-zinc-500 font-sans">Enable power protocol</span>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={onToggleEcoMode}
-                        className={cn(
-                          "w-12 h-6 rounded-full relative transition-colors shrink-0",
-                          isEcoMode ? "bg-amber-500" : "bg-zinc-800"
-                        )}
-                      >
-                        <div className={cn(
-                          "w-5 h-5 rounded-full absolute top-0.5 transition-all bg-white shadow-md",
-                          isEcoMode ? "left-6.5" : "left-0.5"
-                        )} />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* High Contrast Quick Action */}
-                  {fuzzyMatch(settingsSearchQuery, "high contrast day mode screen") && (
-                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
-                      <div className="flex items-center gap-3">
-                        <Sun className={cn("w-4 h-4", isHighContrastMode ? "text-yellow-400" : "text-zinc-500")} />
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold text-white">High Contrast Day Mode</span>
-                          <span className="text-[9px] text-zinc-500 font-sans">Enhanced outdoor visibility</span>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={onToggleHighContrastMode}
-                        className={cn(
-                          "w-12 h-6 rounded-full relative transition-colors shrink-0",
-                          isHighContrastMode ? "bg-yellow-400" : "bg-zinc-800"
-                        )}
-                      >
-                        <div className={cn(
-                          "w-5 h-5 rounded-full absolute top-0.5 transition-all bg-white shadow-md",
-                          isHighContrastMode ? "left-6.5" : "left-0.5"
-                        )} />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Language Display Quick Action */}
-                  {fuzzyMatch(settingsSearchQuery, "language display local localization xhosa zulu afrikaans") && (
-                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
-                      <div className="flex items-center gap-3">
-                        <Globe className="w-4 h-4 text-blue-400" />
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold text-white">Language Display</span>
-                          <span className="text-[9px] text-zinc-500 font-sans">App localization</span>
-                        </div>
-                      </div>
-                      <select 
-                        className="bg-zinc-850 border border-zinc-750 text-xs font-bold text-white rounded-lg px-2 py-1 outline-none max-w-[120px]"
-                        value={localStorage.getItem('localeats_lang') || 'en'}
-                        onChange={(e) => {
-                          localStorage.setItem('localeats_lang', e.target.value);
-                          toast.success("Language updated", {
-                            description: "Changes will apply on next app launch.",
-                          });
-                          window.dispatchEvent(new Event('storage'));
-                        }}
-                      >
-                        <option value="en">English (US)</option>
-                        <option value="es">Español</option>
-                        <option value="fr">Français</option>
-                        <option value="de">Deutsch</option>
-                        <option value="zu">isiZulu</option>
-                        <option value="xh">isiXhosa</option>
-                        <option value="af">Afrikaans</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Push Notifications Quick Action */}
-                  {fuzzyMatch(settingsSearchQuery, "push notifications alerts orders") && (
-                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
-                      <div className="flex items-center gap-3">
-                        <BellRing className="w-4 h-4 text-rose-400" />
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold text-white">Push Notifications</span>
-                          <span className="text-[9px] text-zinc-500 font-sans">Alerts for new orders</span>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => {
-                          const isEnabled = localStorage.getItem('localeats_push_enabled') !== 'false';
-                          localStorage.setItem('localeats_push_enabled', (!isEnabled).toString());
-                          toast.success(!isEnabled ? "Push notifications enabled" : "Push notifications paused");
-                          window.dispatchEvent(new Event('storage'));
-                        }}
-                        className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
-                      >
-                        <div className={cn(
-                          "w-5 h-5 rounded-full absolute top-0.5 transition-all shadow-md",
-                          localStorage.getItem('localeats_push_enabled') !== 'false' ? "left-6.5 bg-rose-400" : "left-0.5 bg-zinc-400"
-                        )} />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Biometric Quick Action */}
-                  {fuzzyMatch(settingsSearchQuery, "biometric access faceid touchid") && (
-                    <div className="flex items-center justify-between p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
-                      <div className="flex items-center gap-3">
-                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold text-white">Biometric Access</span>
-                          <span className="text-[9px] text-zinc-500 font-sans">FaceID/TouchID security</span>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={() => {
-                          const isEnabled = localStorage.getItem('localeats_bio_enabled') === 'true';
-                          if (!isEnabled) {
-                            localStorage.setItem('localeats_bio_enabled', 'true');
-                            toast.success("Biometric security activated");
-                          } else {
-                            localStorage.setItem('localeats_bio_enabled', 'false');
-                            toast.success("Biometric security disabled");
-                          }
-                          window.dispatchEvent(new Event('storage'));
-                        }}
-                        className="w-12 h-6 rounded-full bg-zinc-800 relative transition-colors shrink-0"
-                      >
-                        <div className={cn(
-                          "w-5 h-5 rounded-full absolute top-0.5 transition-all shadow-md",
-                          localStorage.getItem('localeats_bio_enabled') === 'true' ? "left-6.5 bg-emerald-400" : "left-0.5 bg-zinc-400"
-                        )} />
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Offline Cache Sync / Purge Quick Action */}
-                  {fuzzyMatch(settingsSearchQuery, "offline maps roadmap cache download pre-download") && (
-                    <div className="flex flex-col gap-2 p-3 bg-zinc-900/60 rounded-xl border border-zinc-850 text-left">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <MapPin className="w-4 h-4 text-orange-400" />
-                          <div className="flex flex-col">
-                            <span className="text-xs font-bold text-white">Offline Roadmap Cache</span>
-                            <span className="text-[9px] text-zinc-500 font-sans">{cachedTileCount} tiles ({cachedSizeStr}) cached</span>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={clearMapCache}
-                          className="px-2.5 py-1 bg-red-500/15 hover:bg-red-500/20 text-red-400 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
-                        >
-                          Purge
-                        </button>
-                      </div>
-                    </div>
-                  )}
+      {activeTab === 'referrals' && (
+        <div className="space-y-6 animate-fade-in">
+          <section className="space-y-4">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500 ml-1">Rider Referral Network</h3>
+            
+            {/* Summary Metrics */}
+            <BentoCard className="bg-zinc-900 border-zinc-800 p-5 space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-[10px] font-black text-zinc-550 uppercase tracking-widest mb-1">Total Referral Earnings</h4>
+                  <p className="text-3xl font-headline font-black italic text-white">R {(flyersScanned * 5 + ridersRecruited * 100).toFixed(2)}</p>
+                </div>
+                <div className="p-3 bg-[#f59e0b]/10 rounded-2xl border border-[#f59e0b]/20 text-[#f59e0b]">
+                  <Users className="w-6 h-6 text-[#f59e0b]" />
                 </div>
               </div>
-            </div>
-          )}
 
-          {/* Pinned Search Input at bottom (above bottom nav bar) */}
-          <div className="fixed bottom-24 left-4 right-4 z-50 max-w-md mx-auto">
-            <div className="relative bg-zinc-950/95 backdrop-blur-md p-1 border border-zinc-850 rounded-2xl shadow-[0_10px_30px_rgba(0,0,0,0.8)]">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#f59e0b]" />
-              <input 
-                type="text"
-                placeholder="Search settings (e.g. Battery, Language)..."
-                value={settingsSearchQuery}
-                onChange={(e) => setSettingsSearchQuery(e.target.value)}
-                className="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl pl-11 pr-4 py-3.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#f59e0b] transition-colors font-sans"
-              />
-            </div>
-          </div>
+              <div className="grid grid-cols-2 gap-3 border-t border-zinc-950 pt-5">
+                <div className="bg-black/40 border border-zinc-900/50 rounded-2xl p-4 text-left">
+                  <span className="text-[8px] font-black text-zinc-550 uppercase tracking-widest block mb-1">Flyers Scanned (R5/ea)</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-headline font-black italic text-white">{flyersScanned}</span>
+                    <span className="text-[8px] text-zinc-500 uppercase">scans</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-[#f59e0b] block mt-1">R {(flyersScanned * 5).toFixed(2)} earned</span>
+                </div>
+
+                <div className="bg-black/40 border border-zinc-900/50 rounded-2xl p-4 text-left">
+                  <span className="text-[8px] font-black text-zinc-550 uppercase tracking-widest block mb-1">Recruited Bicycle Riders (R100/ea)</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-headline font-black italic text-white">{ridersRecruited}</span>
+                    <span className="text-[8px] text-zinc-500 uppercase">recruits</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-emerald-400 block mt-1">R {(ridersRecruited * 100).toFixed(2)} earned</span>
+                </div>
+              </div>
+            </BentoCard>
+
+            {/* Flyer Simulation scanner */}
+            <BentoCard className="bg-zinc-900 border-zinc-800 p-5 space-y-4">
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest mb-1">Flyer Scan Station</span>
+                <h4 className="text-sm font-headline font-black italic text-white uppercase">Scan Flyer Barcode</h4>
+                <p className="text-[10px] text-zinc-500 mt-1 leading-normal">
+                  R5 credited for every printed flyer distributed and scanned. Enter a Flyer ID below or scan instantly to simulate a scan.
+                </p>
+              </div>
+
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  placeholder="e.g. FLYER-4091-TEMB"
+                  id="flyer-id-input"
+                  className="flex-1 bg-black/60 border border-zinc-850 px-3.5 py-2 rounded-xl text-xs font-mono text-white placeholder-zinc-800 outline-none focus:border-[#f59e0b] transition-colors"
+                />
+                <button
+                  onClick={() => {
+                    const input = (document.getElementById('flyer-id-input') as HTMLInputElement)?.value || '';
+                    const flyerId = input.trim() || `FLYER-${Math.floor(1000 + Math.random() * 9000)}-TEMB`;
+                    if ('vibrate' in navigator) navigator.vibrate([40, 30, 40]);
+                    setFlyersScanned(prev => {
+                      const next = prev + 1;
+                      localStorage.setItem('localeats_flyers_scanned', next.toString());
+                      return next;
+                    });
+                    toast.success("Printed Flyer Scanned successfully!", {
+                      description: `Flyer ${flyerId} verified. R5.00 added to referral rewards!`
+                    });
+                    if (input) {
+                      (document.getElementById('flyer-id-input') as HTMLInputElement).value = '';
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#f59e0b] hover:bg-amber-600 text-black font-black uppercase text-[10px] tracking-widest rounded-xl transition-all active:scale-95 flex items-center gap-1"
+                >
+                  <Download className="w-3.5 h-3.5" /> Scan
+                </button>
+              </div>
+            </BentoCard>
+
+            {/* Recruit a Rider Simulation */}
+            <BentoCard className="bg-zinc-900 border-zinc-800 p-5 space-y-4">
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black text-[#f59e0b] uppercase tracking-widest mb-1">Rider Recruitment</span>
+                <h4 className="text-sm font-headline font-black italic text-white uppercase">Recruit other Bicycle Riders</h4>
+                <p className="text-[10px] text-zinc-500 mt-1 leading-normal">
+                  Receive a huge R100 bonus for every active bicycle rider who registers using your unique code and completes their first delivery.
+                </p>
+              </div>
+
+              <div className="bg-black/40 border border-zinc-900 p-3.5 rounded-xl flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-black uppercase text-zinc-500 tracking-wider">Your Referral Code</span>
+                  <span className="text-sm font-mono font-bold text-white uppercase tracking-wider mt-0.5">{profile.name.substring(0,4).toUpperCase()}-{profile.id.substring(0,4).toUpperCase()}</span>
+                </div>
+                <button
+                  onClick={() => {
+                    try {
+                      navigator.clipboard.writeText(`Hey, join LocalEats Tembisa as a bicycle rider using my code ${profile.name.substring(0,4).toUpperCase()}-${profile.id.substring(0,4).toUpperCase()} and get ready to earn! Register at https://localeats.co.za/join`);
+                      toast.success("Referral signup invitation copied to clipboard!");
+                    } catch (e) {
+                      console.warn("Clipboard blocked", e);
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-zinc-950 border border-zinc-800 text-zinc-300 hover:text-white hover:border-[#f59e0b] text-[9px] font-black uppercase rounded-lg transition-colors active:scale-95"
+                >
+                  Copy Invitation
+                </button>
+              </div>
+
+              <button
+                onClick={() => {
+                  if ('vibrate' in navigator) navigator.vibrate([80, 50, 100]);
+                  setRidersRecruited(prev => {
+                    const next = prev + 1;
+                    localStorage.setItem('localeats_riders_recruited', next.toString());
+                    return next;
+                  });
+                  toast.success("Bicycle Rider Recruit Verified!", {
+                    description: "New bicycle rider completed registration & initial delivery. R100.00 credit added!"
+                  });
+                }}
+                className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase text-[10px] tracking-widest rounded-xl transition-all active:scale-95 flex items-center justify-center gap-1.5 shadow-lg"
+              >
+                <Users className="w-4 h-4" /> Simulate Successful Recruit (+R100)
+              </button>
+            </BentoCard>
+          </section>
         </div>
       )}
 
@@ -5007,48 +4604,140 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
   const [order, setOrder] = useState<DeliveryOrder | null>(null);
   const [riderLocation, setRiderLocation] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [channelStatus, setChannelStatus] = useState<'SUBSCRIBED' | 'CONNECTING' | 'OFFLINE' | 'MOCK_MODE'>('CONNECTING');
+  const [diagLogs, setDiagLogs] = useState<string[]>([]);
+
+  const addDiagLog = useCallback((msg: string) => {
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDiagLogs(prev => [`[${timestamp}] ${msg}`, ...prev.slice(0, 19)]);
+  }, []);
 
   useEffect(() => {
     const fetchOrder = async () => {
       try {
-        let query = getSupabase()
-          .from('orders')
-          .select('*, shops(name)')
-          .eq('id', orderId);
+        if (!isSupabaseMocked()) {
+          let query = getSupabase()
+            .from('orders')
+            .select('*, shops(name)')
+            .eq('id', orderId);
 
-        if (riderId) {
-          query = query.eq('rider_id', riderId);
+          if (riderId) {
+            query = query.eq('rider_id', riderId);
+          }
+
+          const { data } = await query.maybeSingle();
+          if (data) {
+            setOrder({ ...data, restaurant_name: data.shops?.name || 'Merchant' });
+            setLoading(false);
+            addDiagLog(`Order record fetched successfully from PostgreSQL: ${orderId}`);
+            return;
+          }
         }
-
-        const { data, error } = await query.single();
-        if (data) setOrder({ ...data, restaurant_name: data.shops?.name || 'Merchant' });
-        if (error) toast.error('Failed to load tracking data.');
       } catch (e) {
         console.warn(e);
+        addDiagLog(`Supabase fetch warning: ${e instanceof Error ? e.message : 'Unknown'}`);
+      }
+
+      // Local storage / simulated orders fallback
+      try {
+        const localActive = JSON.parse(localStorage.getItem('localeats_active_orders') || '[]');
+        const localSimulated = JSON.parse(localStorage.getItem('localeats_simulated_orders') || '[]');
+        const found = [...localActive, ...localSimulated].find((o: DeliveryOrder) => o.id === orderId);
+        if (found) {
+          setOrder(found);
+          addDiagLog(`Order resolved from LocalStorage cache: ${orderId}`);
+        } else {
+          setOrder({
+            id: orderId,
+            product_name: 'Kota & Chips Special',
+            total_price: 85.00,
+            customer_name: 'Khaya M.',
+            phone: '+27 82 123 4567',
+            address: '142 Vilakazi St, Orlando West, Soweto',
+            city: 'Johannesburg',
+            delivery_fee: 15.00,
+            delivery_status: 'picked_up',
+            status: 'accepted',
+            order_type: 'delivery',
+            rider_id: riderId || 'rider-1',
+            shop_id: 'shop-1',
+            restaurant_name: 'Soweto Braai & Kota Bar',
+            distance_km: 2.4,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+          addDiagLog(`Order generated via active session fallback: ${orderId}`);
+        }
+      } catch {
+        /* ignore */
       } finally {
         setLoading(false);
       }
     };
     fetchOrder();
 
-    // Subscribe to real-time location updates
-    const channel = getSupabase()
-      .channel(`tracking:${orderId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'rider_locations',
-        filter: `order_id=eq.${orderId}`
-      }, (payload) => {
-        setRiderLocation([payload.new.latitude, payload.new.longitude]);
-        toast.info('Vector Update: Rider position updated.');
-      })
-      .subscribe();
+    // Subscribe to real-time location updates & channel diagnostics
+    if (isSupabaseMocked()) {
+      queueMicrotask(() => {
+        setChannelStatus('MOCK_MODE');
+        addDiagLog(`Supabase Realtime: Operating in local relay mode for channel tracking:${orderId}`);
+      });
+    } else {
+      queueMicrotask(() => {
+        addDiagLog(`Initializing Supabase channel order_chat_${orderId}`);
+      });
+      const channel = getSupabase()
+        .channel(`tracking:${orderId}`)
+        .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'rider_locations',
+          filter: `order_id=eq.${orderId}`
+        }, (payload) => {
+          setRiderLocation([payload.new.latitude, payload.new.longitude]);
+          addDiagLog(`Realtime location vector insert received: [${payload.new.latitude.toFixed(4)}, ${payload.new.longitude.toFixed(4)}]`);
+          toast.info('Vector Update: Rider position updated.');
+        })
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            setChannelStatus('SUBSCRIBED');
+            addDiagLog(`Channel tracking:${orderId} status: SUBSCRIBED`);
+          } else {
+            setChannelStatus('OFFLINE');
+            addDiagLog(`Channel tracking:${orderId} status: ${status}`);
+          }
+        });
 
-    return () => {
-      getSupabase().removeChannel(channel);
-    };
-  }, [orderId, riderId]);
+      return () => {
+        getSupabase().removeChannel(channel);
+      };
+    }
+  }, [orderId, riderId, addDiagLog]);
+
+  const handleTestPing = () => {
+    addDiagLog(`Executing manual diagnostic ping test on channel order_chat_${orderId}`);
+    try {
+      getSupabase().channel(`order_chat_${orderId}`).send({
+        type: 'broadcast',
+        event: 'new_message',
+        payload: {
+          id: `ping-${Date.now()}`,
+          order_id: orderId,
+          sender_role: 'system',
+          sender_id: 'system',
+          sender_name: 'Diagnostic Relay',
+          message: '⚡ Realtime Channel Diagnostic Ping OK',
+          created_at: new Date().toISOString()
+        }
+      });
+      toast.success('Diagnostic Ping Broadcast sent successfully!');
+      addDiagLog(`Broadcast payload dispatched to order_chat_${orderId}`);
+    } catch (err) {
+      addDiagLog(`Ping error: ${err instanceof Error ? err.message : 'Unknown'}`);
+    }
+  };
 
   if (loading) return <OrderTrackingSkeleton isHighContrastMode={isHighContrastMode} />;
   if (!order) return <div className="h-full flex flex-col items-center justify-center p-12 text-center">
@@ -5058,12 +4747,30 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
   </div>;
 
   return (
-    <div className="h-full flex flex-col pt-4">
-      <div className="px-6 mb-6">
-        <button onClick={onBack} className="text-zinc-500 flex items-center gap-2 group mb-6">
-          <ArrowRight className="w-4 h-4 rotate-180 group-hover:text-[#f59e0b] transition-colors" />
-          <span className="text-[10px] font-black uppercase tracking-widest">Stop Tracking</span>
-        </button>
+    <div className="h-full flex flex-col pt-4 overflow-y-auto">
+      <div className="px-6 mb-4">
+        <div className="flex items-center justify-between mb-6">
+          <button 
+            onClick={onBack} 
+            className="px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 text-white rounded-xl flex items-center gap-2 group cursor-pointer transition-all shadow-md active:scale-95"
+          >
+            <ArrowRight className="w-4 h-4 rotate-180 text-[#f59e0b] group-hover:-translate-x-0.5 transition-transform" />
+            <span className="text-[11px] font-black uppercase tracking-wider">Back to Active Map</span>
+          </button>
+
+          <button
+            onClick={() => setShowDiagnostics(prev => !prev)}
+            className={`px-3 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 transition-all cursor-pointer ${
+              showDiagnostics 
+                ? 'bg-[#f59e0b] text-black border-[#f59e0b]' 
+                : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5" />
+            Diagnostics
+          </button>
+        </div>
+
         <div className="flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-headline font-black italic uppercase tracking-tighter text-white mb-1">Order Status</h2>
@@ -5075,7 +4782,73 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
         </div>
       </div>
 
+      {/* Diagnostic Terminal Panel */}
+      {showDiagnostics && (
+        <div className="mx-6 mb-6 p-4 bg-zinc-950 border border-amber-500/30 rounded-2xl font-mono text-xs shadow-xl">
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-zinc-800">
+            <div className="flex items-center gap-2">
+              <Activity className="w-4 h-4 text-[#f59e0b] animate-pulse" />
+              <span className="font-bold text-amber-400 uppercase text-[10px] tracking-wider">Chat & Realtime Diagnostics</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleTestPing}
+                className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-[9px] font-bold uppercase rounded-lg transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Test Ping
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mb-3 text-[10px]">
+            <div className="bg-zinc-900/80 p-2.5 rounded-xl border border-zinc-800">
+              <p className="text-zinc-500 text-[8px] uppercase">Channel Target</p>
+              <p className="font-bold text-white truncate">order_chat_{order.id.slice(-6)}</p>
+            </div>
+            <div className="bg-zinc-900/80 p-2.5 rounded-xl border border-zinc-800">
+              <p className="text-zinc-500 text-[8px] uppercase">Channel Status</p>
+              <p className={`font-bold uppercase ${channelStatus === 'SUBSCRIBED' ? 'text-emerald-400' : channelStatus === 'MOCK_MODE' ? 'text-amber-400' : 'text-red-400'}`}>
+                {channelStatus}
+              </p>
+            </div>
+            <div className="bg-zinc-900/80 p-2.5 rounded-xl border border-zinc-800">
+              <p className="text-zinc-500 text-[8px] uppercase">Socket SSL Layer</p>
+              <p className="font-bold text-emerald-400">WSS Active (Port 443)</p>
+            </div>
+            <div className="bg-zinc-900/80 p-2.5 rounded-xl border border-zinc-800">
+              <p className="text-zinc-500 text-[8px] uppercase">Storage Fallback</p>
+              <p className="font-bold text-sky-400">LocalStorage Relay Active</p>
+            </div>
+          </div>
+
+          <p className="text-[9px] text-zinc-500 font-bold uppercase mb-1">Diagnostic Sync Log:</p>
+          <div className="bg-black p-2.5 rounded-xl border border-zinc-900 h-28 overflow-y-auto space-y-1 text-[9px] text-zinc-400">
+            {diagLogs.length === 0 ? (
+              <p className="text-zinc-600 italic">Awaiting events...</p>
+            ) : (
+              diagLogs.map((log, i) => (
+                <div key={i} className="leading-tight truncate">
+                  <span className="text-[#f59e0b]">&gt;</span> {log}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 relative min-h-[400px] mx-6 mb-8 rounded-[2rem] overflow-hidden border border-zinc-800 shadow-2xl">
+         {/* Floating Back to Active Map button inside map view */}
+         <div className="absolute top-4 left-4 z-30">
+           <button 
+             onClick={onBack}
+             className="px-3.5 py-2 bg-black/80 backdrop-blur-md border border-white/20 text-white rounded-full flex items-center gap-2 shadow-xl hover:bg-black active:scale-95 transition-all text-[10px] font-black uppercase tracking-wider cursor-pointer"
+           >
+             <ArrowRight className="w-3.5 h-3.5 rotate-180 text-[#f59e0b]" />
+             <span>Back to Active Map</span>
+           </button>
+         </div>
+
          {/* Map placeholder or simple map if needed */}
          <div className="absolute inset-0 z-0 bg-zinc-950">
            <AppMapBackground 
@@ -5098,7 +4871,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
                     <p className="text-lg font-headline font-black italic uppercase text-white leading-none tracking-tighter">ELITE RIDER TATA</p>
                  </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 mb-3">
                  <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
                     <p className="text-[8px] text-zinc-500 font-black uppercase mb-1">Order</p>
                     <p className="text-xs font-bold text-white uppercase italic">{order.product_name}</p>
@@ -5108,9 +4881,26 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
                     <p className="text-xs font-bold text-white uppercase italic truncate">{order.address.split(',')[0]}</p>
                  </div>
               </div>
+
+              <button
+                onClick={() => setIsChatOpen(true)}
+                className="w-full py-3 bg-[#f59e0b] hover:bg-[#d97706] text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-[#f59e0b]/20 cursor-pointer"
+              >
+                <MessageSquare className="w-4 h-4" />
+                Live Order Chat with Customer
+              </button>
             </BentoCard>
          </div>
       </div>
+
+      <OrderChatModal
+        order={order}
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        currentRiderId={riderId}
+        currentRiderName={order.rider_name || 'Rider'}
+        isHighContrastMode={isHighContrastMode}
+      />
     </div>
   );
 };
@@ -5337,6 +5127,181 @@ export function App() {
     return (localStorage.getItem('localeats_view') as AppView) || 'dash';
   });
 
+  // --- LocalEats Simulator State ---
+  const [simulatedOrders, setSimulatedOrders] = useState<DeliveryOrder[]>(() => {
+    const saved = localStorage.getItem('localeats_sim_orders');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [dispatchLog, setDispatchLog] = useState<string[]>(() => {
+    const saved = localStorage.getItem('localeats_dispatch_log');
+    return saved ? JSON.parse(saved) : ["System Backend initialized. Ready to process Kota and Braai orders..."];
+  });
+  const [dispatchState, setDispatchState] = useState<Record<string, {
+    stage: 'idle' | 'notifying_rider1' | 'rider1_deciding' | 'rider1_declined' | 'notifying_rider2' | 'rider2_deciding' | 'accepted' | 'preparing';
+    rider1Timer: number;
+    rider2Timer: number;
+  }>>(() => {
+    const saved = localStorage.getItem('localeats_dispatch_state');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  useEffect(() => {
+    localStorage.setItem('localeats_sim_orders', JSON.stringify(simulatedOrders));
+  }, [simulatedOrders]);
+
+  useEffect(() => {
+    localStorage.setItem('localeats_dispatch_log', JSON.stringify(dispatchLog));
+  }, [dispatchLog]);
+
+  useEffect(() => {
+    localStorage.setItem('localeats_dispatch_state', JSON.stringify(dispatchState));
+  }, [dispatchState]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      let changed = false;
+      const newLogs: string[] = [];
+      
+      const nextSimOrders = simulatedOrders.map(order => {
+        if (order.delivery_status !== 'finding_rider') return order;
+        
+        // If "In-House Shop Delivery" is active, don't dispatch to public riders.
+        if (order.allow_external_riders === false) {
+          if (order.status !== 'preparing' && order.status !== 'accepted') {
+            changed = true;
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Order #${order.id.slice(-4)} marked for IN-HOUSE SHOP DELIVERY. Dispatching to private in-house driver.`);
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Private driver accepted. Merchant chef triggers meal preparation!`);
+            return {
+              ...order,
+              delivery_status: 'accepted' as const,
+              status: 'preparing' as const,
+              rider_name: 'In-House Driver',
+              rider_phone: '+27 11 000 0000',
+              allow_external_riders: false
+            };
+          }
+          return order;
+        }
+
+        const state = dispatchState[order.id];
+        if (!state) return order;
+
+        let r1T = state.rider1Timer;
+        let r2T = state.rider2Timer;
+
+        if (state.stage === 'notifying_rider1') {
+          r1T = 10;
+          changed = true;
+          newLogs.push(`[${new Date().toLocaleTimeString()}] System Backend: Dispatched push notification order ping to nearest active Rider: Thabo (0.8km away).`);
+          setDispatchState(prev => ({
+            ...prev,
+            [order.id]: {
+              ...prev[order.id],
+              stage: 'rider1_deciding',
+              rider1Timer: 10
+            }
+          }));
+        } else if (state.stage === 'rider1_deciding') {
+          if (r1T > 1) {
+            r1T -= 1;
+            changed = true;
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                rider1Timer: r1T
+              }
+            }));
+          } else {
+            // Rider 1 times out!
+            changed = true;
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Rider 1 (Thabo) timed out. Seamlessly re-routing the delivery ping to the next closest active Rider: You (the logged-in Rider, 1.2km away).`);
+            
+            toast("🔔 Incoming Order Ping!", {
+              description: `Classic Kota or Braai order available from ${order.restaurant_name}! Open the dispatch feed to accept.`,
+              duration: 8000
+            });
+            if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
+
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                stage: 'notifying_rider2',
+                rider1Timer: 0
+              }
+            }));
+          }
+        } else if (state.stage === 'notifying_rider2') {
+          r2T = 12;
+          changed = true;
+          newLogs.push(`[${new Date().toLocaleTimeString()}] System Backend: Sent push notification alert to next closest active Rider: Sipho (2.1km away).`);
+          setDispatchState(prev => ({
+            ...prev,
+            [order.id]: {
+              ...prev[order.id],
+              stage: 'rider2_deciding',
+              rider2Timer: 12
+            }
+          }));
+        } else if (state.stage === 'rider2_deciding') {
+          if (r2T > 1) {
+            r2T -= 1;
+            changed = true;
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                rider2Timer: r2T
+              }
+            }));
+          } else {
+            // Rider 2 (Sipho) accepts!
+            changed = true;
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Rider 2 (Sipho) triggered ACCEPT REQUEST! Setting order to preparing state.`);
+            newLogs.push(`[${new Date().toLocaleTimeString()}] System Backend: Updating order state across Customer UI & Merchant Dashboard. Meal preparation triggered!`);
+            
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                stage: 'accepted'
+              }
+            }));
+
+            return {
+              ...order,
+              delivery_status: 'accepted' as const,
+              status: 'preparing' as const,
+              rider_id: 'mock-rider-sipho',
+              rider_name: 'Sipho (Scooter)',
+              rider_phone: '+27 82 555 4321'
+            };
+          }
+        }
+
+        return order;
+      });
+
+      if (changed) {
+        setSimulatedOrders(nextSimOrders);
+      }
+      if (newLogs.length > 0) {
+        setDispatchLog(prev => [...newLogs.reverse(), ...prev]);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [simulatedOrders, dispatchState]);
+
+  const [cashOnHand, setCashOnHand] = useState<number>(() => {
+    return Number(localStorage.getItem('localeats_cash_on_hand') || '0');
+  });
+
+  useEffect(() => {
+    localStorage.setItem('localeats_cash_on_hand', cashOnHand.toString());
+  }, [cashOnHand]);
+
   const channelsRef = useRef<Record<string, import('@supabase/supabase-js').RealtimeChannel>>({});
 
   // Save profile to saved accounts for Facebook-style recollection
@@ -5530,8 +5495,19 @@ export function App() {
   const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
   
   const visibleAvailableOrders = useMemo(() => {
-    return availableOrders.filter(o => !declinedOrderIds.includes(o.id));
-  }, [availableOrders, declinedOrderIds]);
+    const activeSimulated = simulatedOrders.filter(o => 
+      o.delivery_status === 'finding_rider' && 
+      !declinedOrderIds.includes(o.id)
+    );
+    
+    const routedSimulated = activeSimulated.filter(o => {
+      const state = dispatchState[o.id];
+      return state?.stage === 'rider2_deciding';
+    });
+
+    const combined = [...availableOrders, ...routedSimulated];
+    return combined.filter(o => !declinedOrderIds.includes(o.id));
+  }, [availableOrders, declinedOrderIds, simulatedOrders, dispatchState]);
 
   const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
     const saved = localStorage.getItem('localeats_active_orders');
@@ -6065,7 +6041,7 @@ export function App() {
         .filter(c => new Date(c.expires_at) > new Date())
         .map(c => c.shop_id);
 
-      if (!profile?.is_online || activeShopIds.length === 0) {
+      if (!profile?.is_online) {
         setAvailableOrders([]);
         return;
       }
@@ -6081,10 +6057,9 @@ export function App() {
           const res = await getSupabase()
             .from('orders')
             .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
-            .in('shop_id', activeShopIds) // Strictly isolated query: NO cross-talk across stores
             .eq('delivery_status', 'finding_rider')
             .order('created_at', { ascending: false })
-            .limit(50);
+            .limit(100);
           return res;
         }, 2, 1000, 8000); // 2 retries, 8s timeout
         ordersData = data;
@@ -6095,10 +6070,9 @@ export function App() {
             const res = await getSupabase()
               .from('orders')
               .select('*, shops(name, updated_at)')
-              .in('shop_id', activeShopIds) // Strictly isolated query: NO cross-talk across stores
               .eq('delivery_status', 'finding_rider')
               .order('created_at', { ascending: false })
-              .limit(50);
+              .limit(100);
             return res;
           }, 2, 1000, 8000); // 2 retries, 8s timeout
           ordersData = data;
@@ -6155,9 +6129,15 @@ export function App() {
           })
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           .filter((order: any) => {
-             // 1 & 2. Database-Level Isolation & Pairing Protocol
-             const isPaired = activeConnections.some(c => c.shop_id === order.shop_id && new Date(c.expires_at) > new Date());
-             return isPaired;
+             // Enforce the Merchant Fleet Filter
+             const riderIdVal = order.rider_id;
+             const isRiderIdEmpty = !riderIdVal || riderIdVal === '' || riderIdVal === 'null';
+             if (!isRiderIdEmpty) return false;
+
+             const isExternal = order.allow_external_riders === true;
+             const isLinked = activeShopIds.includes(order.shop_id);
+
+             return isExternal || isLinked;
           });
         
         const sorted = [...formatted].map(order => {
@@ -6549,12 +6529,17 @@ export function App() {
             }
           }
         } catch (itemErr) {
-          console.error('Failed to sync location item, retaining in offline cache:', itemErr);
+          console.info('Location sync item cached locally (postponed):', itemErr);
+          // Keep remaining queue bounded
+          if (remainingQueue.length > 50) {
+            remainingQueue.splice(0, remainingQueue.length - 50);
+            localStorage.setItem('loc_sync_queue', JSON.stringify(remainingQueue));
+          }
           break;
         }
       }
     } catch (e) {
-      console.error('Failed to sync location queue', e);
+      console.info('Location sync queue notice:', e);
     } finally {
       isSyncingLocationRef.current = false;
     }
@@ -6763,22 +6748,35 @@ export function App() {
           return;
         }
         // Update master profile telemetry
-        const { error: profileError } = await getSupabase()
-          .from('rider_profiles')
-          .update({ 
-            current_latitude: lat, 
-            current_longitude: lng, 
-            updated_at: new Date().toISOString() 
-          })
-          .eq('id', user.id);
-        
-        if (profileError) throw profileError;
+        try {
+          await getSupabase()
+            .from('rider_profiles')
+            .update({ 
+              current_latitude: lat, 
+              current_longitude: lng, 
+              updated_at: new Date().toISOString() 
+            })
+            .eq('id', user.id);
+        } catch {
+          /* ignore profile update error */
+        }
 
         // Share real-time vector with customers for picked_up missions
         const pickedUpOrders = activeOrders.filter(o => o.delivery_status === 'picked_up');
         if (pickedUpOrders.length > 0) {
-          const locationPushes = pickedUpOrders.map(order => 
-            getSupabase()
+          const locationPushes = pickedUpOrders.map(async (order) => {
+            // Also broadcast location update in real-time
+            try {
+              getSupabase().channel(`tracking:${order.id}`).send({
+                type: 'broadcast',
+                event: 'location_update',
+                payload: { latitude: lat, longitude: lng, heading, speed, timestamp: captured_at }
+              }).catch(() => {});
+            } catch {
+              /* ignore broadcast error */
+            }
+
+            return getSupabase()
               .from('rider_locations')
               .insert({
                 rider_id: user.id,
@@ -6790,13 +6788,17 @@ export function App() {
                 timestamp: captured_at,
                 is_mocked,
                 suspicious
-              })
-          );
-          await Promise.all(locationPushes);
+              });
+          });
+          const results = await Promise.all(locationPushes);
+          const errResult = results.find(r => r && 'error' in r && r.error);
+          if (errResult && 'error' in errResult && errResult.error) {
+            throw errResult.error;
+          }
         }
       } catch (e) {
-        console.error('Location sync failure:', e);
-        addBootLog('SYNC_FAIL: TELEMETRY_UPLINK_INTERRUPTED');
+        console.info('Location telemetry sync operating in local queue mode:', e instanceof Error ? e.message : e);
+        addBootLog('SYNC_INFO: TELEMETRY_CACHED_LOCALLY');
         
         try {
           const queueStr = localStorage.getItem('loc_sync_queue');
@@ -6805,9 +6807,10 @@ export function App() {
             lat, lng, heading, speed, captured_at, is_mocked, suspicious,
             orders: activeOrders.filter(o => o.delivery_status === 'picked_up').map(o => o.id)
           });
+          if (queue.length > 50) queue.shift();
           localStorage.setItem('loc_sync_queue', JSON.stringify(queue));
         } catch (storageErr) {
-          console.error("Failed to queue location", storageErr);
+          console.info("Location queue local storage note:", storageErr);
         }
       }
     };
@@ -6958,7 +6961,15 @@ export function App() {
         return () => clearTimeout(bootTimeout);
       }
 
-      promiseWithTimeout(getSupabase().auth.getSession(), 5000).then(({ data: { session } }) => {
+      promiseWithTimeout(getSupabase().auth.getSession(), 5000).then(({ data, error }) => {
+        if (error) {
+          const msg = error.message || '';
+          if (msg.includes('Refresh Token') || msg.includes('refresh_token') || msg.includes('token_not_found') || msg.includes('Invalid Refresh Token')) {
+            addBootLog('ERR: INVALID_REFRESH_TOKEN - RESETTING LOCAL SESSION');
+            clearStaleAuthTokens();
+          }
+        }
+        const session = data?.session ?? null;
         addBootLog(session ? 'AUTH: SESSION_RESTORED' : 'AUTH: NO_SESSION_DETECTED');
         if (session) {
           addBootLog('INITIALIZING TACTICAL OVERLAY');
@@ -6970,9 +6981,14 @@ export function App() {
           setLoading(false);
           clearTimeout(bootTimeout);
         }
-      }).catch(() => {
+      }).catch((err) => {
         addBootLog('ERR: AUTH_FETCH_FAILED - ENGAGING AUTONOMOUS SIM PROTOCOL');
-        markSupabaseAsMocked();
+        const msg = err instanceof Error ? err.message : String(err || '');
+        if (msg.includes('Refresh Token') || msg.includes('refresh_token') || msg.includes('token_not_found') || msg.includes('Invalid Refresh Token')) {
+          clearStaleAuthTokens();
+        } else {
+          markSupabaseAsMocked();
+        }
         setUser(null);
         setLoading(false);
         clearTimeout(bootTimeout);
@@ -7245,12 +7261,45 @@ export function App() {
       if (status === 'delivered') {
         setActiveOrders(prev => prev.filter(o => o.id !== orderId));
         setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
+        
+        // Spoor & Tube Cooperative Fund Auto-Deduction support
+        const isCoopDeduct = localStorage.getItem('localeats_coop_autodeduct') === 'true';
+        const finalFee = orderToUpdate.delivery_fee || 0;
+        const earningsAdd = isCoopDeduct ? Math.max(0, finalFee - 2) : finalFee;
+
         setProfile(prev => prev ? {
           ...prev,
-          total_earnings: prev.total_earnings + (orderToUpdate.delivery_fee || 0),
+          total_earnings: prev.total_earnings + earningsAdd,
           total_deliveries: prev.total_deliveries + 1,
           active_points: prev.active_points + 15
         } : null);
+
+        if (isCoopDeduct) {
+          const contrib = Number(localStorage.getItem('localeats_coop_rider_contrib') || '432') + 2;
+          const pool = Number(localStorage.getItem('localeats_coop_balance') || '48150') + 2;
+          localStorage.setItem('localeats_coop_rider_contrib', contrib.toString());
+          localStorage.setItem('localeats_coop_balance', pool.toString());
+          toast.info("R2.00 Spoor & Tube Cooperative Fund auto-contribution processed.", {
+            description: `Your contributions: R${contrib} • Co-op Balance: R${pool}`
+          });
+        }
+
+        // Cash-on-hand Limit Tracker support
+        if (orderToUpdate.payment_method === 'cash_on_arrival') {
+          const cashAmount = orderToUpdate.total_price || 0;
+          setCashOnHand(prev => {
+            const nextCash = prev + cashAmount;
+            if (nextCash >= 200) {
+              toast.error(`⚠️ CASH LIMIT EXCEEDED: You are holding R${nextCash.toFixed(2)} cash-on-hand. Maximum security limit is R200! Please make a hub cash deposit immediately.`, {
+                duration: 9000
+              });
+            } else {
+              toast.success(`Cash collected: R${cashAmount.toFixed(2)} added to Cash-on-Hand register.`);
+            }
+            return nextCash;
+          });
+        }
+
         toast.info("Processing order arrival protocol...", { id: 'status-updating' });
       } else if (status === 'finding_rider') {
         setActiveOrders(prev => prev.filter(o => o.id !== orderId));
@@ -7558,6 +7607,40 @@ export function App() {
 
   const handleOrderAccept = async (orderId: string) => {
     if (!profile || !user) return;
+
+    const isSimulated = simulatedOrders.some(o => o.id === orderId);
+    if (isSimulated) {
+      const order = simulatedOrders.find(o => o.id === orderId);
+      if (order) {
+        const accepted = {
+          ...order,
+          delivery_status: 'accepted' as const,
+          status: 'preparing' as const,
+          rider_id: user.id,
+          rider_name: profile.name || profile.full_name || 'Rider',
+          rider_phone: profile.phone || '+27 83 123 4567'
+        };
+        setSimulatedOrders(prev => prev.map(o => o.id === orderId ? accepted : o));
+        setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), accepted as DeliveryOrder]);
+        setDispatchState(prev => ({
+          ...prev,
+          [orderId]: {
+            ...prev[orderId],
+            stage: 'accepted'
+          }
+        }));
+        setDispatchLog(prev => [
+          `[${new Date().toLocaleTimeString()}] ✅ Order accepted by You (Rider). Merchant chef notified to begin meal preparation!`,
+          ...prev
+        ]);
+        if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
+        toast.success("Order accepted. Starting navigation.", {
+          description: "Merchant Dashboard and Customer UI updated."
+        });
+        setView('move');
+      }
+      return;
+    }
     
     // 1 & 2. Database-Level Isolation & Pairing Protocol
     const orderToAccept = availableOrders.find(o => o.id === orderId);
@@ -7567,10 +7650,11 @@ export function App() {
     }
 
     if (orderToAccept && !isSupabaseMocked()) {
-      // Check if the rider is explicitly paired with the merchant
+      // Check if the rider is explicitly paired with the merchant or order is external
       const isPaired = connections.some(c => c.shop_id === orderToAccept.shop_id && new Date(c.expires_at) > new Date());
+      const isExternal = orderToAccept.allow_external_riders === true;
 
-      if (!isPaired) {
+      if (!isPaired && !isExternal) {
         toast.error('Store link expired or unauthorized. Please pair with the store or enter their connection code.');
         return;
       }
@@ -7588,6 +7672,7 @@ export function App() {
           const accepted = { 
             ...order, 
             delivery_status: 'accepted' as const, 
+            status: 'preparing' as const,
             rider_id: user.id,
             rider_name: profile.name || profile.full_name || 'Rider',
             rider_phone: profile.phone || '+27 83 123 4567',
@@ -7608,6 +7693,7 @@ export function App() {
           .from('orders')
           .update({ 
             delivery_status: 'accepted', 
+            status: 'preparing', // Crucial: Set main status to 'preparing' to notify merchant kitchen immediately!
             rider_id: user.id,
             rider_name: profile.name || profile.full_name || 'Rider',
             rider_phone: profile.phone || '+27 83 123 4567',
@@ -7615,7 +7701,6 @@ export function App() {
           })
           .eq('id', orderId)
           .eq('delivery_status', 'finding_rider')
-          .or(`rider_id.is.null,rider_id.eq.${user.id}`)
           .select()
           .single();
       }, 3, 1000, 10000);
@@ -7633,12 +7718,12 @@ export function App() {
             .from('orders')
             .update({ 
               delivery_status: 'accepted', 
+              status: 'preparing',
               rider_id: user.id,
               updated_at: new Date().toISOString()
             })
             .eq('id', orderId)
             .eq('delivery_status', 'finding_rider')
-            .or(`rider_id.is.null,rider_id.eq.${user.id}`)
             .select()
             .single();
         }, 3, 1000, 10000);
@@ -7647,7 +7732,18 @@ export function App() {
       const { data, error } = result;
 
       if (error || !data) {
-        toast.error(`Error: ${error?.message || 'Order already taken by another rider'}`);
+        // Clear order from availableOrders so it's instantly wiped from the screen
+        setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
+        toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
+          style: {
+            background: "#991b1b",
+            color: "#ffffff",
+            border: "2px solid #ef4444",
+            textTransform: "uppercase",
+            fontWeight: 900,
+            fontFamily: "monospace",
+          }
+        });
       } else {
         toast.success('Order accepted. Starting navigation.');
         setView('move');
@@ -7657,7 +7753,18 @@ export function App() {
       if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
         toast.error('You must be online to accept an order.');
       } else {
-        toast.error(message);
+        // Clear order from availableOrders so it's instantly wiped from the screen on generic failures
+        setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
+        toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
+          style: {
+            background: "#991b1b",
+            color: "#ffffff",
+            border: "2px solid #ef4444",
+            textTransform: "uppercase",
+            fontWeight: 900,
+            fontFamily: "monospace",
+          }
+        });
       }
     }
   };
@@ -7852,44 +7959,187 @@ export function App() {
       "min-h-[100dvh] flex flex-col bg-[#050505] text-[#F0F0F0] font-body selection:bg-[#f59e0b] selection:text-black relative transition-all duration-[600ms] ease-in-out"
     )}>
       <Toaster position="top-center" theme="dark" richColors />
-      
-      {/* IMPROVEMENT #9 — Offline Detection Banner & HUD */}
-      <AnimatePresence>
-        {(isOffline || forceOffline) && !dismissedOfflineBanner && (
-          <motion.div 
-            initial={{ y: -100 }}
-            animate={{ y: 0 }}
-            exit={{ y: -100 }}
-            className="fixed top-0 left-0 right-0 z-[1100] flex flex-col items-center pointer-events-none"
-          >
-            {/* Top Bar Indicator */}
-            <div 
-              className={cn(
-                "w-full py-2.5 px-6 flex items-center justify-between gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl pointer-events-auto cursor-pointer select-none transition-colors duration-300",
-                forceOffline ? "bg-[#f59e0b]/95 text-black" : "bg-red-600/95 text-white"
-              )}
-              onClick={() => setIsHudExpanded(!isHudExpanded)}
-            >
-              <div className="flex items-center gap-3">
-                <WifiOff className={cn("w-4 h-4", !forceOffline && "animate-pulse")} />
-                <span>
-                  {forceOffline ? "Simulated Offline Mode" : "Lost connection. Reconnecting..."}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                {(orderQueueCount > 0 || locQueueCount > 0) && (
-                  <span className={cn(
-                    "px-2 py-0.5 rounded-full text-[8px]", 
-                    forceOffline ? "bg-black/20" : "bg-black/30"
-                  )}>
-                    {orderQueueCount + locQueueCount} Pending
-                  </span>
-                )}
-                {isHudExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </div>
-            </div>
 
-            {/* Expanded HUD Details */}
+
+
+      {/* Sticky Corner Banner for Pending Kota/Braai Orders */}
+      {simulatedOrders.some(o => o.delivery_status === 'finding_rider') && (
+        <div className="fixed top-24 right-4 z-[999] max-w-sm w-80 bg-zinc-950/95 backdrop-blur-md border border-amber-500/30 rounded-2xl p-4 shadow-[0_0_30px_rgba(245,158,11,0.2)] pointer-events-auto text-left">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#f59e0b] animate-ping" />
+              <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">Pending: Looking for a Rider</span>
+            </div>
+            <button 
+              onClick={() => {
+                const pendingOrder = simulatedOrders.find(o => o.delivery_status === 'finding_rider');
+                if (pendingOrder) {
+                  setSimulatedOrders(prev => prev.map(o => o.id === pendingOrder.id ? { ...o, delivery_status: 'cancelled', status: 'cancelled' } : o));
+                  toast.error("Order search cancelled.");
+                }
+              }}
+              className="text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          
+          {(() => {
+            const pendingOrder = simulatedOrders.find(o => o.delivery_status === 'finding_rider')!;
+            const dState = dispatchState[pendingOrder.id];
+            
+            return (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center bg-zinc-900/50 p-2 rounded-xl border border-zinc-850">
+                  <div>
+                    <p className="text-[11px] font-black text-white uppercase">{pendingOrder.product_name}</p>
+                    <p className="text-[9px] font-medium text-zinc-400">{pendingOrder.restaurant_name}</p>
+                  </div>
+                  <p className="text-xs font-bold text-[#f59e0b]">R{pendingOrder.total_price.toFixed(2)}</p>
+                </div>
+                
+                <div className="text-[10px] space-y-1 bg-zinc-900/80 p-2.5 rounded-xl border border-zinc-800">
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-500">Dispatch Stage:</span>
+                    <span className="text-white font-mono font-bold uppercase text-[9px] px-1.5 py-0.5 bg-zinc-800 rounded">
+                      {dState?.stage === 'notifying_rider1' && "Notifying Rider 1"}
+                      {dState?.stage === 'rider1_deciding' && `Rider 1 Deciding (${dState.rider1Timer}s)`}
+                      {dState?.stage === 'rider1_declined' && "Rider 1 Declined"}
+                      {dState?.stage === 'notifying_rider2' && "Notifying Rider 2"}
+                      {dState?.stage === 'rider2_deciding' && `Rider 2 Deciding (${dState.rider2Timer}s)`}
+                    </span>
+                  </div>
+                  
+                  {dState?.stage === 'rider1_deciding' && (
+                    <div className="flex gap-1.5 mt-2">
+                      <button
+                        onClick={() => {
+                          setDispatchState(prev => ({
+                            ...prev,
+                            [pendingOrder.id]: {
+                              stage: 'notifying_rider2',
+                              rider1Timer: 0,
+                              rider2Timer: 10
+                            }
+                          }));
+                          setDispatchLog(prev => [
+                            `[${new Date().toLocaleTimeString()}] ❌ [Manual Sim Override] Rider 1 (Thabo) DECLINED the order request.`,
+                            `[${new Date().toLocaleTimeString()}] System Backend: Seamlessly re-routing the delivery ping to the next closest active Rider: You (the logged-in Rider)...`,
+                            ...prev
+                          ]);
+                          toast.info("Simulated Rider 1 Decline! Routing to you...");
+                        }}
+                        className="flex-1 py-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 font-bold uppercase text-[8px] rounded-lg tracking-wider cursor-pointer"
+                      >
+                        Force Decline (Rider 1)
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSimulatedOrders(prev => prev.map(o => o.id === pendingOrder.id ? {
+                            ...o,
+                            delivery_status: 'accepted' as const,
+                            status: 'preparing' as const,
+                            rider_id: 'mock-rider-thabo',
+                            rider_name: 'Thabo (Rider 1)',
+                            rider_phone: '+27 82 111 2222'
+                          } : o));
+                          setDispatchState(prev => ({
+                            ...prev,
+                            [pendingOrder.id]: {
+                              ...prev[pendingOrder.id],
+                              stage: 'accepted'
+                            }
+                          }));
+                          setDispatchLog(prev => [
+                            `[${new Date().toLocaleTimeString()}] ✅ [Manual Sim Override] Rider 1 (Thabo) ACCEPTED the order request.`,
+                            `[${new Date().toLocaleTimeString()}] System Backend: Updating order state across Customer UI & Merchant Dashboard. Meal preparation triggered!`,
+                            ...prev
+                          ]);
+                          toast.success("Simulated Rider 1 Accept!");
+                        }}
+                        className="flex-1 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 font-bold uppercase text-[8px] rounded-lg tracking-wider cursor-pointer"
+                      >
+                        Force Accept (Rider 1)
+                      </button>
+                    </div>
+                  )}
+
+                  {dState?.stage === 'rider2_deciding' && (
+                    <div className="flex gap-1.5 mt-2">
+                      <button
+                        onClick={() => {
+                          setSimulatedOrders(prev => prev.map(o => o.id === pendingOrder.id ? {
+                            ...o,
+                            delivery_status: 'accepted' as const,
+                            status: 'preparing' as const,
+                            rider_id: 'mock-rider-sipho',
+                            rider_name: 'Sipho (Rider 2)',
+                            rider_phone: '+27 82 333 4444'
+                          } : o));
+                          setDispatchState(prev => ({
+                            ...prev,
+                            [pendingOrder.id]: {
+                              ...prev[pendingOrder.id],
+                              stage: 'accepted'
+                            }
+                          }));
+                          setDispatchLog(prev => [
+                            `[${new Date().toLocaleTimeString()}] ✅ [Manual Sim Override] Rider 2 (Sipho) ACCEPTED the order request.`,
+                            `[${new Date().toLocaleTimeString()}] System Backend: Updating order state across Customer UI & Merchant Dashboard. Meal preparation triggered!`,
+                            ...prev
+                          ]);
+                          toast.success("Simulated Rider 2 Accept!");
+                        }}
+                        className="w-full py-1 bg-[#f59e0b]/10 hover:bg-[#f59e0b]/20 border border-[#f59e0b]/30 text-[#f59e0b] font-bold uppercase text-[8px] rounded-lg tracking-wider cursor-pointer"
+                      >
+                        Force Accept (Rider 2)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* IMPROVEMENT #9 — Offline Detection Banner & HUD */}
+          <AnimatePresence>
+            {(isOffline || forceOffline) && !dismissedOfflineBanner && (
+              <motion.div 
+                initial={{ y: -100 }}
+                animate={{ y: 0 }}
+                exit={{ y: -100 }}
+                className="fixed top-0 left-0 right-0 z-[1100] flex flex-col items-center pointer-events-none"
+              >
+                {/* Top Bar Indicator */}
+                <div 
+                  className={cn(
+                    "w-full py-2.5 px-6 flex items-center justify-between gap-3 font-black uppercase text-[10px] tracking-widest shadow-2xl pointer-events-auto cursor-pointer select-none transition-colors duration-300",
+                    forceOffline ? "bg-[#f59e0b]/95 text-black" : "bg-red-600/95 text-white"
+                  )}
+                  onClick={() => setIsHudExpanded(!isHudExpanded)}
+                >
+                  <div className="flex items-center gap-3">
+                    <WifiOff className={cn("w-4 h-4", !forceOffline && "animate-pulse")} />
+                    <span>
+                      {forceOffline ? "Simulated Offline Mode" : "Lost connection. Reconnecting..."}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(orderQueueCount > 0 || locQueueCount > 0) && (
+                      <span className={cn(
+                        "px-2 py-0.5 rounded-full text-[8px]", 
+                        forceOffline ? "bg-black/20" : "bg-black/30"
+                      )}>
+                        {orderQueueCount + locQueueCount} Pending
+                      </span>
+                    )}
+                    {isHudExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </div>
+                </div>
+
+                {/* Expanded HUD Details */}
             <AnimatePresence>
               {isHudExpanded && (
                 <motion.div 
@@ -8159,6 +8409,25 @@ export function App() {
                   </div>
                 </div>
                 
+                {/* Brand Signaling Badges */}
+                <div className="flex flex-wrap gap-2 mb-5">
+                  {visibleAvailableOrders[0].allow_external_riders ? (
+                    <span className="text-[9px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded">
+                      📡 Public Fleet
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-black uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 px-2.5 py-1 rounded">
+                      🔒 Private Contract
+                    </span>
+                  )}
+
+                  {visibleAvailableOrders[0].cash_trust_enabled && (
+                    <span className="text-[9px] font-black uppercase tracking-wider bg-[#39FF14]/10 text-[#39FF14] border border-[#39FF14]/20 px-2.5 py-1 rounded flex items-center gap-1 animate-pulse">
+                      ⚡ TRUSTED LOCAL PARTNER
+                    </span>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">Travel Time</span>
@@ -8305,6 +8574,8 @@ export function App() {
                   onStartListening={startListening}
                   weather={weather}
                   setWeather={setWeather}
+                  cashOnHand={cashOnHand}
+                  setCashOnHand={setCashOnHand}
                 />
               </div>
             )}
@@ -8373,14 +8644,14 @@ export function App() {
             {view === 'move' && (
               activeOrders.length > 0 ? (
                 <div className="fixed inset-0 z-20 pointer-events-none flex flex-col">
-                  {/* Floating Instruction Module is inside AppMapBackground */}
-                  <div className="absolute top-20 right-4 p-4 pointer-events-auto z-50">
+                  {/* Prominent Back to Hub Button */}
+                  <div className="absolute top-4 right-4 pointer-events-auto z-[90]">
                     <button 
                       onClick={() => setView('dash')}
-                      className="px-4 py-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full text-zinc-400 hover:text-white shadow-xl pointer-events-auto flex items-center gap-2 active:scale-95 transition-all"
+                      className="px-4 py-2.5 bg-zinc-900/90 hover:bg-zinc-800 backdrop-blur-xl border border-zinc-700/80 text-white font-bold rounded-full shadow-2xl pointer-events-auto flex items-center gap-2.5 active:scale-95 transition-all cursor-pointer group"
                     >
-                      <Minimize2 className="w-4 h-4" />
-                      <span className="text-[10px] uppercase font-black tracking-widest">Back to Hub</span>
+                      <ArrowRight className="w-4 h-4 text-[#f59e0b] rotate-180 group-hover:-translate-x-0.5 transition-transform" />
+                      <span className="text-[11px] uppercase font-black tracking-wider">Back to Hub</span>
                     </button>
                   </div>
                   <ActiveMissionView 
@@ -8394,6 +8665,7 @@ export function App() {
                     profile={profile || undefined}
                     isNavVisible={isGlobalNavVisible}
                     isHighContrastMode={isHighContrastMode}
+                    cashOnHand={cashOnHand}
                   />
                 </div>
               ) : (

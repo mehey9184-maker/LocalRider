@@ -92,7 +92,7 @@ export async function fetchWithRetry<T>(
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
     const isNetworkOrTimeoutErr = Boolean(error && (
-      /fetch|network|offline|connection|failed|changed|cors|disconnected|abort/i.test(error.message)
+      /fetch|network|offline|connection|failed|changed|cors|disconnected|abort|timeout|timed out/i.test(error.message)
     ));
     if (retries > 0 && isNetworkOrTimeoutErr) {
       const nextDelay = delay * 1.5; 

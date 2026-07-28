@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import Map, { Marker, Source, Layer, MapRef, NavigationControl } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { MapPin, Navigation, Compass, Map as MapIcon, CloudRain } from 'lucide-react';
+import { MapPin, Navigation, Compass, Map as MapIcon } from 'lucide-react';
 import useSupercluster from 'use-supercluster';
 import { DeliveryOrder } from '../types';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from '../lib/mapStyles';
@@ -97,7 +97,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   // Simulated GPS updater for demo
   useEffect(() => {
     if (riderLocation) {
-      setRiderPos(riderLocation);
+      const timer = setTimeout(() => {
+        setRiderPos(riderLocation);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [riderLocation]);
 
@@ -155,7 +158,10 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         clearTimeout(timeoutId);
       };
     } else {
-      setRouteCoordinates([]);
+      const timer = setTimeout(() => {
+        setRouteCoordinates([]);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [riderPos, targetPos, activeOrder, onDistanceUpdate, onETAUpdate, onProgressUpdate, forceOffline]);
 
@@ -173,7 +179,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   const [cameraMode, setCameraMode] = useState<'follow' | 'overview'>('follow');
 
   const speedRef = useRef<number>(0);
-  const lastUpdateRef = useRef<number>(Date.now());
+  const lastUpdateRef = useRef<number>(0);
   const prevRiderPosRef = useRef<[number, number] | null>(null);
 
   const getDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -190,7 +196,8 @@ export const AppMapBackground = React.memo(function AppMapBackground({
     if (activeOrder && riderPos && targetPos) {
        if (mapRef.current) {
           const now = Date.now();
-          const dt = (now - lastUpdateRef.current) / 1000;
+          const lastUp = lastUpdateRef.current === 0 ? now : lastUpdateRef.current;
+          const dt = (now - lastUp) / 1000;
           let speed = speedRef.current;
           
           if (prevRiderPosRef.current && dt > 0) {

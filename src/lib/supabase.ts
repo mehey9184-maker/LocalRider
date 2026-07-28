@@ -40,6 +40,41 @@ export function getSupabase(): SupabaseClient {
   return supabaseClient;
 }
 
+export function clearStaleAuthTokens() {
+  try {
+    if (supabaseClient) {
+      supabaseClient.auth.signOut({ scope: 'local' }).catch(() => {});
+    }
+    if (typeof localStorage !== 'undefined') {
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('sb-') || key.includes('supabase.auth'))) {
+          localStorage.removeItem(key);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Error clearing stale tokens:', e);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    const msg = typeof reason === 'string' ? reason : (reason?.message || reason?.error_description || '');
+    if (
+      msg.includes('Refresh Token') || 
+      msg.includes('refresh_token') || 
+      msg.includes('Invalid Refresh Token') || 
+      msg.includes('token_not_found')
+    ) {
+      console.warn('Handling invalid refresh token rejection gracefully:', msg);
+      clearStaleAuthTokens();
+      event.preventDefault();
+    }
+  });
+}
+
 export function isSupabaseMocked(): boolean {
   getSupabase(); // Ensure init
   return isMocked;

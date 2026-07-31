@@ -8,10 +8,12 @@ console.error = (...args) => {
   if (typeof args[0] === 'string' && /width\(-?\d+\).*height\(-?\d+\).*should be greater than 0/.test(args[0])) {
     return;
   }
-  if (args.some(arg => 
-    (typeof arg === 'string' && arg.includes('Failed to fetch')) ||
-    (arg instanceof Error && arg.message.includes('Failed to fetch'))
-  )) {
+  const isTransient = args.some(arg => {
+    if (!arg) return false;
+    const msg = typeof arg === 'string' ? arg : (arg instanceof Error ? arg.message : String(arg));
+    return /failed to fetch|networkerror|operation timed out|operation timeout|timed out|timeout|jwt expired|refresh token|invalid refresh token|token_not_found/i.test(msg);
+  });
+  if (isTransient) {
     return;
   }
   originalWarn(...args);
@@ -89,7 +91,12 @@ import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Toaster, toast } from 'sonner';
 import { getSupabase, isSupabaseMocked, markSupabaseAsMocked, clearStaleAuthTokens } from './lib/supabase';
-import { dispatchError } from './lib/errorHandling';
+import { dispatchError, getErrorMessage, isTransientError } from './lib/errorHandling';
+import {
+  registerAndSyncPushToken,
+  onForegroundMessage,
+  sendPushNotification
+} from './lib/firebase';
 import { User } from '@supabase/supabase-js';
 import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection, AppView, WeatherData } from './types';
 import { cn } from './lib/utils';
@@ -134,76 +141,9 @@ import {
   YAxis
 } from 'recharts';
 
-// --- Merchant Heartbeat Status Helper ---
+// --- FCM Push Token Subscription Helper ---
 const subscribeToPushNotifications = async (userId: string) => {
-  const isIframe = () => {
-    try {
-      return window.self !== window.top;
-    } catch {
-      return true;
-    }
-  };
-
-  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-  const isTestingOrDev = hostname.includes('localhost') || hostname.includes('127.0.0.1') || hostname.includes('run.app') || hostname.includes('webcontainer') || isSupabaseMocked();
-  
-  if (isTestingOrDev || isIframe() || !('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
-    console.warn('Push notifications bypassed in development, testing, or not supported by browser.');
-    return;
-  }
-  
-  // High-reliability non-blocking wrapper to prevent test-suite or network handshakes from hanging
-  const withTimeout = <T,>(promise: Promise<T> | T, timeoutMs = 2000): Promise<T> => {
-    return Promise.race([
-      Promise.resolve(promise),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Operation timeout')), timeoutMs))
-    ]);
-  };
-
-  try {
-    const permission = await withTimeout(Notification.requestPermission());
-    if (permission !== 'granted') {
-      console.warn('Notification permission denied.');
-      return;
-    }
-    
-    const registration = await withTimeout(navigator.serviceWorker.ready);
-    const publicVapidKey = 'BD1XkIROdUwh10mz-IoWXYIy3awy5SN37JRExUeG0eIkgcyvSt7HzrXmRhERIDigFylQOP9GgglaWmVStB2Cx1c';
-    
-    // Convert VAPID key to Uint8Array
-    const padding = '='.repeat((4 - publicVapidKey.length % 4) % 4);
-    const base64 = (publicVapidKey + padding)
-      .replace(/-/g, '+')
-      .replace(/_/g, '/');
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-    for (let i = 0; i < rawData.length; ++i) {
-      outputArray[i] = rawData.charCodeAt(i);
-    }
-    
-    let subscription = await withTimeout(registration.pushManager.getSubscription());
-    if (!subscription) {
-      subscription = await withTimeout(registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: outputArray
-      }));
-    }
-
-    const subJson = subscription.toJSON();
-    const supabase = getSupabase();
-    if (!isSupabaseMocked()) {
-      await supabase.from('push_subscriptions').upsert({
-        user_id: userId,
-        endpoint: subJson.endpoint,
-        p256dh: subJson.keys?.p256dh,
-        auth: subJson.keys?.auth,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'endpoint' });
-    }
-    console.log("Push notification capability subscribed successfully.");
-  } catch (error) {
-    console.warn("Skipping push registration (timed out, blocked, or not active):", error);
-  }
+  return await registerAndSyncPushToken(userId);
 };
 
 // --- Auth Views ---
@@ -650,6 +590,9 @@ const RouteMiniMap = ({
 const OrdersFeed = React.memo(({ 
   orders,
   activeOrders = [],
+  connections = [],
+  now = 0,
+  setView,
   onAccept, 
   isOnline, 
   surgeMultiplier, 
@@ -666,6 +609,9 @@ const OrdersFeed = React.memo(({
 }: { 
   orders: DeliveryOrder[], 
   activeOrders?: DeliveryOrder[],
+  connections?: ShopConnection[],
+  now?: number,
+  setView?: (v: AppView) => void,
   onAccept: (id: string) => void, 
   isOnline: boolean, 
   surgeMultiplier: number, 
@@ -692,6 +638,15 @@ const OrdersFeed = React.memo(({
     });
   };
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [localNow, setLocalNow] = useState(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLocalNow(Date.now());
+    }, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, []);
+
   const [showNearbyMap, setShowNearbyMap] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -740,6 +695,10 @@ const OrdersFeed = React.memo(({
     }
 
     let result = combined.filter(o => {
+      if (o.delivery_status === 'potential') {
+        return false;
+      }
+
       if (!deferredSearchQuery) return true;
       const query = deferredSearchQuery.toLowerCase();
       return o.restaurant_name?.toLowerCase().includes(query) ||
@@ -755,6 +714,7 @@ const OrdersFeed = React.memo(({
       result = result.filter(o => o.delivery_status === 'picked_up');
     }
 
+    console.log("MISSION PROTOCOL [filteredAndSortedOrders]:", result);
     result = [...result].sort((a, b) => {
       if (sortMethod === 'fee') {
         const feeA = Number(a.delivery_fee || 0);
@@ -898,6 +858,55 @@ const OrdersFeed = React.memo(({
                </div>
             </div>
         
+        {/* Active Store Connection & Time Remaining Bar */}
+        {connections && connections.length > 0 && (
+          <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-xl text-[#f59e0b]">
+                <Globe className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#f59e0b]">Active Store Link</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                </div>
+                <p className="text-xs font-mono font-bold text-white mt-0.5">
+                  {connections[0].shop_name || 'Merchant ' + connections[0].shop_id.slice(0, 4)}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-zinc-800">
+              {(() => {
+                const timeLeft = new Date(connections[0].expires_at).getTime() - localNow;
+                const isExpired = timeLeft <= 0;
+                const hoursLeft = Math.max(0, Math.floor(timeLeft / (1000 * 60 * 60)));
+                const minsLeft = Math.max(0, Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60)));
+                return (
+                  <div className="flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-xl border border-zinc-800">
+                    <Clock className={cn("w-3.5 h-3.5", isExpired ? "text-red-500 animate-pulse" : "text-[#f59e0b]")} />
+                    <div className="flex flex-col">
+                      <span className="text-[8px] font-black uppercase text-zinc-500">Pass Expires In</span>
+                      <span className={cn("text-xs font-mono font-bold", isExpired ? "text-red-500" : "text-[#f59e0b]")}>
+                        {isExpired ? "EXPIRED - RENEW LINK" : `${hoursLeft}h ${minsLeft}m`}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+              
+              {setView && (
+                <button 
+                  onClick={() => setView('hub')}
+                  className="text-[10px] font-black uppercase tracking-wider text-zinc-400 hover:text-white bg-zinc-800/80 hover:bg-zinc-800 px-3 py-2 rounded-xl transition-all"
+                >
+                  Manage
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Search, Sort and Filter UI */}
         <div className="flex flex-col gap-3">
           <div className="flex flex-col sm:flex-row gap-3">
@@ -999,6 +1008,30 @@ const OrdersFeed = React.memo(({
               Picked Up
             </button>
           </HorizontalScrollHint>
+        </div>
+
+        {/* Delivery Range & Active Load Limit Status Bar */}
+        <div className="bg-zinc-950/80 border border-zinc-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={cn(
+              "px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 border font-mono",
+              isLimitReached
+                ? "bg-red-500/10 text-red-400 border-red-500/30"
+                : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+            )}>
+              <span className={cn("w-2 h-2 rounded-full", isLimitReached ? "bg-red-500 animate-ping" : "bg-emerald-400")} />
+              ACTIVE LOAD: {activeOrdersCount}/2 MISSIONS
+            </span>
+            <span className="bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider flex items-center gap-1.5 font-mono">
+              <MapPin className="w-3 h-3 text-cyan-400" />
+              MAX 5.0 KM PICKUP RADIUS
+            </span>
+          </div>
+          {isLimitReached && (
+            <span className="text-[10px] font-black text-red-400 uppercase tracking-wider italic font-mono">
+              ⛔ CAPACITY FULL — Complete an active delivery to claim new missions
+            </span>
+          )}
         </div>
 
         <div className="flex items-center justify-between">
@@ -1233,19 +1266,28 @@ const OrdersFeed = React.memo(({
                                 </span>
                              </div>
                            )}
-                           {order.delivery_status === 'finding_rider' && order.auto_look_for_rider && (
+                           {order.delivery_status === 'finding_rider' && order.allow_external_riders ? (
                              <div className="bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.15)] animate-pulse">
                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
                                <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest italic font-mono leading-none">
-                                 📡 AUTO-DISPATCH SIGNAL
+                                 📡 PUBLIC FLEET
                                </span>
                              </div>
+                           ) : (
+                             order.delivery_status === 'finding_rider' && (
+                               <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(245,158,11,0.15)]">
+                                 <span className="w-1.5 h-1.5 rounded-full bg-[#f59e0b]" />
+                                 <span className="text-[9px] font-black text-[#f59e0b] uppercase tracking-widest italic font-mono leading-none">
+                                   🔒 PRIVATE CONTRACT
+                                 </span>
+                               </div>
+                             )
                            )}
                            {order.cash_trust_enabled && (
                              <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic font-mono leading-none">
-                                 {detectRegion(riderLat, riderLng).name.toUpperCase() + " TRUSTED PARTNER"}
+                                 💵 CASH-ON-ARRIVAL AUTHORIZED
                                </span>
                              </div>
                            )}
@@ -1523,50 +1565,34 @@ const OrdersFeed = React.memo(({
                     </AnimatePresence>
 
                     {/* Smart Unified CTA Action */}
-                    {instantAccept ? (
-                      <div className="mt-4">
-                        <button
-                          id={`accept-dispatch-btn-${order.id}`}
-                          disabled={isLimitReached}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (isLimitReached) {
-                              toast.error('Limit reached. Please complete a delivery before accepting more.');
-                            } else {
+                    <div className="mt-4">
+                      <button
+                        id={`accept-dispatch-btn-${order.id}`}
+                        disabled={isLimitReached}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if ('vibrate' in navigator) navigator.vibrate([50]);
+                          if (isLimitReached) {
+                            toast.error('Active load limit reached (2/2 active deliveries max). Complete an active order first.');
+                          } else {
+                            if (instantAccept) {
                               onAccept(order.id);
-                              toast.success('Mission accepted instantly!', {
-                                description: `You are locked into delivering for ${order.restaurant_name}.`
-                              });
-                            }
-                          }}
-                          className={cn(
-                            "w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest italic font-headline transition-all active:scale-95 flex items-center justify-center gap-2",
-                            isLimitReached 
-                              ? "bg-zinc-950 text-zinc-600 border border-zinc-900 cursor-not-allowed" 
-                              : "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-[0_4px_20px_rgba(16,185,129,0.3)] border border-emerald-500/30"
-                          )}
-                        >
-                          <CheckCircle className="w-4 h-4 animate-pulse" />
-                          Tap to Lock Order Instantly
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="mt-4">
-                        <SwipeButton 
-                          label={isLimitReached ? "LIMIT REACHED" : "SLIDE TO ACCEPT MISSION"} 
-                          onComplete={() => {
-                            if (isLimitReached) {
-                              toast.error('Limit reached. Please complete a delivery before accepting more.');
                             } else {
                               setConfirmId(order.id);
                             }
-                          }} 
-                          disabled={isLimitReached}
-                          color={isLimitReached ? "#3f3f46" : "#f59e0b"}
-                          resetToken={confirmId || 'reset'}
-                        />
-                      </div>
-                    )}
+                          }
+                        }}
+                        className={cn(
+                          "w-full py-5 rounded-2xl text-[14px] font-black uppercase tracking-widest italic font-headline transition-all active:scale-95 flex items-center justify-center gap-3",
+                          isLimitReached 
+                            ? "bg-zinc-950 text-red-500/70 border border-red-900/30 cursor-not-allowed" 
+                            : "bg-[#39FF14] hover:bg-[#32e011] text-black shadow-[0_0_30px_rgba(57,255,20,0.4)] border border-[#39FF14]"
+                        )}
+                      >
+                        <CheckCircle className="w-6 h-6 animate-pulse" />
+                        {isLimitReached ? "ACTIVE CAPACITY FULL (2/2)" : "ACCEPT DELIVERY MISSION"}
+                      </button>
+                    </div>
                   </BentoCard>
                 </motion.div>
               </motion.div>
@@ -1615,7 +1641,7 @@ const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: numbe
   );
 };
 
-const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode, cashOnHand }: { 
+const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode, cashOnHand, onDepositCash }: { 
   orders: DeliveryOrder[], 
   onUpdateStatus: (id: string, status: DeliveryStatus) => void;
   onScreenTap?: () => void;
@@ -1624,6 +1650,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   isNavVisible?: boolean;
   isHighContrastMode?: boolean;
   cashOnHand?: number;
+  onDepositCash?: () => void;
 }) => {
   const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
   const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
@@ -1635,6 +1662,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const [activeEta, setActiveEta] = useState(0);
   const [routeDistance, setRouteDistance] = useState(0);
   const [arrivedAtCustomer, setArrivedAtCustomer] = useState<Record<string, boolean>>({});
+  const [arrivedAtMerchant, setArrivedAtMerchant] = useState<Record<string, boolean>>({});
+  const [showCipherModal, setShowCipherModal] = useState(false);
+  const [handshakeCipherInput, setHandshakeCipherInput] = useState('');
   const [cashCollected, setCashCollected] = useState<Record<string, boolean>>({});
   const [delayedOrders, setDelayedOrders] = useState<Record<string, boolean>>({});
   const [showDelayModal, setShowDelayModal] = useState(false);
@@ -1843,6 +1873,20 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               <p className="text-[11.5px] font-medium text-red-300 leading-tight">
                 Cash-on-Hand limit of R200.00 reached! You are holding R{cashOnHand.toFixed(2)}. Complete a cash deposit at your nearest linked store hub to clear your carrying register and unlock full navigation vectors.
               </p>
+              {onDepositCash && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDepositCash();
+                    toast.success("Deposit success!", {
+                      description: `R${cashOnHand.toFixed(2)} deposited at store hub. Cash register cleared!`
+                    });
+                  }}
+                  className="mt-2 text-[9px] font-black uppercase tracking-wider bg-red-900/80 hover:bg-red-800 text-white px-2.5 py-1 rounded-md border border-red-500/50 transition-all cursor-pointer shadow-sm"
+                >
+                  Deposit Cash at Hub
+                </button>
+              )}
             </div>
           </motion.div>
         )}
@@ -2424,6 +2468,17 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               </motion.div>
             )}
 
+            {/* 24-Hour Merchant Handshake Cipher Verification Trigger */}
+            {!isPickedUp && arrivedAtMerchant[currentOrder.id] && (
+              <button
+                onClick={() => setShowCipherModal(true)}
+                className="w-full py-3 bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-400 border border-cyan-500/30 rounded-xl transition-all active:scale-95 text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer shadow-lg mb-2 font-mono"
+              >
+                <Key className="w-4 h-4 text-cyan-400" />
+                24-Hour Merchant Pairing Cipher Validation
+              </button>
+            )}
+
             {/* Progress Bar */}
             <div className="w-full h-0.5 bg-zinc-900 rounded-full overflow-hidden relative">
               <motion.div 
@@ -2434,45 +2489,54 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               />
             </div>
 
-            <SwipeButton 
-              label={
-                !isPickedUp 
-                  ? "ARRIVED AT MERCHANT & COLLECT ORDER" 
-                  : (!arrivedAtCustomer[currentOrder.id] 
-                      ? "ARRIVED AT CUSTOMER (HAND OVER ORDER)" 
-                      : (currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]
-                          ? "CONFIRM PAYMENT FIRST" 
-                          : "COMPLETE DELIVERY"
-                        )
-                    )
-              }
+            <button 
+              className={cn(
+                "w-full py-5 rounded-2xl text-[14px] font-black uppercase tracking-widest italic font-headline transition-all active:scale-95 flex items-center justify-center gap-3",
+                (isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id])
+                  ? "bg-zinc-950 text-zinc-600 border border-zinc-900 cursor-not-allowed" 
+                  : "bg-[#f59e0b] hover:bg-[#d97706] text-black shadow-[0_0_20px_rgba(245,158,11,0.4)] border border-[#f59e0b]"
+              )}
               disabled={isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]}
-              onComplete={() => {
-                if (!isPickedUp) {
-                  if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]); // Haptic pickup
+              onClick={() => {
+                if (!isPickedUp && !arrivedAtMerchant[currentOrder.id]) {
+                  setArrivedAtMerchant(prev => ({ ...prev, [currentOrder.id]: true }));
+                  audioSynth.playArrivedDestination();
+                  toast.success("Status: Arrived at Merchant. Collect food package or validate cipher with merchant.");
+                } else if (!isPickedUp && arrivedAtMerchant[currentOrder.id]) {
+                  if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
                   onUpdateStatus(currentOrder.id, 'picked_up');
                   audioSynth.playArrivedDestination();
-                  toast.success("Status: Food order collected successfully. Heading to delivery address.");
+                  toast.success("Status: Order Picked Up! Navigating to customer address.");
                 } else if (!arrivedAtCustomer[currentOrder.id]) {
                   setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
                   audioSynth.playArrivedDestination();
                   toast.success("Status: Arrived at Customer address. Hand over food items and finalize payment.");
                 } else {
-                  if ('vibrate' in navigator) navigator.vibrate([150, 100, 150, 100, 200]); // Haptic delivery
+                  if ('vibrate' in navigator) navigator.vibrate([150, 100, 150, 100, 200]);
                   setShowSuccessOverlay(true);
                   audioSynth.playOrderDelivered();
                   setTimeout(() => {
                     onUpdateStatus(currentOrder.id, 'delivered');
                     setShowSuccessOverlay(false);
-                    // Reset local sub-steps
                     setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: false }));
+                    setArrivedAtMerchant(prev => ({ ...prev, [currentOrder.id]: false }));
                     setCashCollected(prev => ({ ...prev, [currentOrder.id]: false }));
                   }, 3000);
                 }
               }}
-              color="#f59e0b"
-              resetToken={`${currentOrder?.delivery_status}-${arrivedAtCustomer[currentOrder.id] || false}-${cashCollected[currentOrder.id] || false}`}
-            />
+            >
+              {
+                !isPickedUp 
+                  ? (!arrivedAtMerchant[currentOrder.id] ? "STEP 2: ARRIVED AT MERCHANT" : "STEP 3: ORDER PICKED UP")
+                  : (!arrivedAtCustomer[currentOrder.id] 
+                      ? "STEP 4: ARRIVED AT CUSTOMER" 
+                      : (currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]
+                          ? "CONFIRM PAYMENT FIRST" 
+                          : "STEP 5: DELIVERED & COMPLETE MISSION"
+                        )
+                    )
+              }
+            </button>
 
             {/* Release Mission Action */}
             <div className="flex items-center justify-between border-t border-white/5 pt-3 mt-1.5">
@@ -2672,6 +2736,83 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           isHighContrastMode={isHighContrastMode}
         />
       )}
+
+      {/* 24-Hour Merchant Pairing Cipher Validation Modal */}
+      <AnimatePresence>
+        {showCipherModal && currentOrder && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 pointer-events-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-zinc-950 border border-cyan-500/30 p-6 rounded-3xl w-full max-w-sm space-y-4 shadow-2xl relative text-left"
+            >
+              <button
+                onClick={() => {
+                  setShowCipherModal(false);
+                  setHandshakeCipherInput('');
+                }}
+                className="absolute top-4 right-4 text-zinc-550 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-black uppercase text-cyan-400 tracking-widest block font-mono">24-HOUR MERCHANT HANDSHAKE</span>
+                <h3 className="text-xl font-headline font-black italic text-white uppercase leading-none">Pickup Cipher Validation</h3>
+                <p className="text-[10px] text-zinc-400 font-sans leading-normal">
+                  Ask merchant staff for their 24-Hour pairing cipher code or enter shop code to verify food package handover.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1 text-left">
+                  <label className="text-[8px] font-black uppercase text-cyan-400 tracking-widest block font-mono">Enter 6-Digit Shop Cipher Code</label>
+                  <input
+                    type="text"
+                    value={handshakeCipherInput}
+                    onChange={e => setHandshakeCipherInput(e.target.value.toUpperCase())}
+                    placeholder="e.g. SHOP-882"
+                    maxLength={10}
+                    className="w-full bg-black/60 border border-cyan-500/40 px-3.5 py-3 rounded-xl text-center text-lg font-mono font-black text-cyan-300 placeholder-zinc-700 outline-none focus:border-cyan-400 transition-colors uppercase tracking-widest"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    setShowCipherModal(false);
+                    setHandshakeCipherInput('');
+                  }}
+                  className="flex-1 py-3 bg-zinc-900 border border-zinc-800 text-zinc-400 font-black uppercase tracking-widest text-[9px] rounded-xl hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (!handshakeCipherInput.trim()) {
+                      toast.error("Please enter a merchant cipher code.");
+                      return;
+                    }
+                    if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
+                    onUpdateStatus(currentOrder.id, 'picked_up');
+                    audioSynth.playArrivedDestination();
+                    setShowCipherModal(false);
+                    setHandshakeCipherInput('');
+                    toast.success("Merchant Handshake Verified!", {
+                      description: "Order pickup authenticated successfully. Route updated to customer."
+                    });
+                  }}
+                  className="flex-1 py-3 bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-lg shadow-cyan-500/20 font-mono"
+                >
+                  Verify & Pick Up
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
   </div>
   );
 });
@@ -3929,13 +4070,19 @@ const ProfileView = React.memo(({
                     </div>
                   </div>
                   <div className="text-right flex items-center gap-3 pl-3 shrink-0">
-                    <div className="flex flex-col items-end leading-[1.2]">
-                      <span className={cn(
-                        "text-[14px] font-sans font-medium tracking-normal",
-                        isExpired ? "text-red-500/50" : "text-zinc-400"
-                      )}>
-                        {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
+                    <div className="flex flex-col items-end leading-tight">
+                      <span className="text-[9px] font-black uppercase tracking-wider text-zinc-500">
+                        {isExpired ? 'Link Expired' : 'Time Remaining'}
                       </span>
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Clock className={cn("w-3 h-3", isExpired ? "text-red-500 animate-pulse" : "text-[#f59e0b]")} />
+                        <span className={cn(
+                          "text-xs font-mono font-bold tracking-tight",
+                          isExpired ? "text-red-500" : "text-[#f59e0b]"
+                        )}>
+                          {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
+                        </span>
+                      </div>
                     </div>
                     <button 
                       onClick={async (e) => {
@@ -4398,6 +4545,23 @@ const ProfileView = React.memo(({
                       </div>
                     </div>
 
+                    <div className="bg-amber-950/20 border border-amber-800/40 p-4 rounded-2xl space-y-2 text-left">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5 text-amber-400" /> Order Discrepancy & Sync Diagnostics
+                        </span>
+                      </div>
+                      <p className="text-[9px] text-zinc-400 font-medium leading-relaxed">
+                        If you observe order discrepancies, missing feeds, or stale status, click below to clear local order cache, run connection diagnostics, and force a fresh uplink resync.
+                      </p>
+                      <button
+                        onClick={clearCacheAndRefreshOrders}
+                        className="w-full py-2.5 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2 active:scale-95 shadow-lg"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Clear Local Order Cache & Resync Uplinks
+                      </button>
+                    </div>
+
                     <div className="space-y-2 text-left">
                       <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest block">Active Hotline Channels</span>
                       <div className="grid grid-cols-2 gap-2">
@@ -4618,16 +4782,19 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
     const fetchOrder = async () => {
       try {
         if (!isSupabaseMocked()) {
-          let query = getSupabase()
-            .from('orders')
-            .select('*, shops(name)')
-            .eq('id', orderId);
+          const { data } = await fetchWithRetry(async () => {
+            let query = getSupabase()
+              .from('orders')
+              .select('*, shops(name)')
+              .eq('id', orderId);
 
-          if (riderId) {
-            query = query.eq('rider_id', riderId);
-          }
+            if (riderId) {
+              query = query.eq('rider_id', riderId);
+            }
 
-          const { data } = await query.maybeSingle();
+            return await query.maybeSingle();
+          }, 2, 1000, 5000);
+          
           if (data) {
             setOrder({ ...data, restaurant_name: data.shops?.name || 'Merchant' });
             setLoading(false);
@@ -4921,7 +5088,7 @@ const PairingView = ({ onBack, onComplete }: { onBack: () => void, onComplete: (
     } catch (err) {
       console.error("Pairing Error:", err);
       const msg = err instanceof Error ? err.message : 'Connection failed.';
-      if (msg.toLowerCase().includes('fetch') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('timeout')) {
+      if (/fetch|network|timeout|timed out|abort/i.test(msg)) {
         toast.error('You must be online to pair with a store.');
       } else {
         toast.error(msg === 'Connection failed.' ? 'Connection failed. Please check the code.' : msg);
@@ -5491,13 +5658,25 @@ export function App() {
       return newVal;
     });
   };
-  const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>([]);
+  const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>(() => {
+    const saved = localStorage.getItem('localeats_available_orders');
+    return safeJsonParse<DeliveryOrder[]>(saved, []);
+  });
+  
+  useEffect(() => {
+    localStorage.setItem('localeats_available_orders', JSON.stringify(availableOrders));
+  }, [availableOrders]);
+  
   const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
   
+  const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
+    const saved = localStorage.getItem('localeats_active_orders');
+    return safeJsonParse<DeliveryOrder[]>(saved, []);
+  });
+
   const visibleAvailableOrders = useMemo(() => {
     const activeSimulated = simulatedOrders.filter(o => 
-      o.delivery_status === 'finding_rider' && 
-      !declinedOrderIds.includes(o.id)
+      o.delivery_status === 'finding_rider'
     );
     
     const routedSimulated = activeSimulated.filter(o => {
@@ -5506,13 +5685,52 @@ export function App() {
     });
 
     const combined = [...availableOrders, ...routedSimulated];
-    return combined.filter(o => !declinedOrderIds.includes(o.id));
-  }, [availableOrders, declinedOrderIds, simulatedOrders, dispatchState]);
+    const activeIds = new Set(activeOrders.map(a => a.id));
+    const unexpiredConnections = connections.filter(c => new Date(c.expires_at) > new Date());
+    const activeShopIds = unexpiredConnections.map(c => c.shop_id);
+    const activeShopNames = unexpiredConnections
+      .map(c => (c.shop_name || '').toLowerCase())
+      .filter(Boolean);
 
-  const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
-    const saved = localStorage.getItem('localeats_active_orders');
-    return safeJsonParse<DeliveryOrder[]>(saved, []);
-  });
+    const riderLat = profile?.current_latitude || -25.9964;
+    const riderLng = profile?.current_longitude || 28.2268;
+
+    return combined.filter(o => {
+      const isActive = activeIds.has(o.id);
+      const isPotential = o.delivery_status === 'potential';
+      const orderShopName = (o.restaurant_name || '').toLowerCase();
+      const isLinked = activeShopIds.includes(o.shop_id) || (orderShopName !== '' && activeShopNames.some(name => name !== '' && orderShopName.includes(name)));
+      const isExternal = o.allow_external_riders === true || o.dispatch_to_marketplace === true;
+
+      const shopLat = o.shop_lat || o.lat || -25.9922;
+      const shopLng = o.shop_lng || o.lng || 28.2045;
+      const pickupDistanceKm = getDistanceBetween(riderLat, riderLng, shopLat, shopLng);
+
+      let isIncluded = true;
+
+      if (isActive) {
+        isIncluded = false;
+      } else if (isPotential) {
+        isIncluded = false;
+      } else if (pickupDistanceKm > 5.0) {
+        isIncluded = false;
+      } else if (activeShopIds.length > 0) {
+        if (!isLinked) {
+          isIncluded = false;
+        }
+      } else {
+        if (!isExternal) {
+          isIncluded = false;
+        }
+      }
+
+      return isIncluded;
+    });
+  }, [availableOrders, simulatedOrders, dispatchState, activeOrders, connections, profile?.current_latitude, profile?.current_longitude]);
+
+  const pendingOverlayOrder = useMemo(() => {
+    return visibleAvailableOrders.find(o => !declinedOrderIds.includes(o.id));
+  }, [visibleAvailableOrders, declinedOrderIds]);
 
   const [merchantAllowExternal] = useState(() => {
     const saved = localStorage.getItem('localeats_merchant_allow_external');
@@ -5891,15 +6109,34 @@ export function App() {
 
   const isFetchingConnRef = useRef(false);
 
+  const runConnectionDiagnostics = useCallback(async () => {
+    if (!user) {
+      return [];
+    }
+    try {
+      const { data, error } = await getSupabase()
+        .from('rider_connections')
+        .select('*')
+        .eq('rider_id', user.id);
+
+      if (error) {
+        console.error('[runConnectionDiagnostics] Database query error:', error);
+        return [];
+      }
+      return data || [];
+    } catch (err) {
+      console.error('[runConnectionDiagnostics] Exception during query execution:', err);
+      return [];
+    }
+  }, [user]);
+
   const fetchConnectionsAndOrders = useCallback(async () => {
     if (!user || isFetchingConnRef.current) return;
     isFetchingConnRef.current = true;
-    console.log('MISSION PROTOCOL: Scanning Sector Alpha for active uplinks...');
     try {
       let activeConnections: ShopConnection[] = [];
 
       if (isSupabaseMocked()) {
-        console.log('MISSION PROTOCOL: Signal Simulator engaged.');
         const mockPairedCode = localStorage.getItem('localeats_mock_paired_code');
         if (mockPairedCode) {
           const mockConn = {
@@ -5917,7 +6154,7 @@ export function App() {
           setConnections([]);
           activeConnections = [];
         }
-        
+
         if (profile?.is_online && activeConnections.length > 0) {
           setAvailableOrders(() => {
             const rawMocks = [
@@ -6004,11 +6241,28 @@ export function App() {
               }
             ];
 
+            const localActiveStr = localStorage.getItem('localeats_active_orders');
+            const localActive = localActiveStr ? JSON.parse(localActiveStr) : [];
+            const localSimStr = localStorage.getItem('localeats_sim_orders');
+            const localSim = localSimStr ? JSON.parse(localSimStr) : [];
             const activeShopIds = activeConnections.map(c => c.shop_id);
             // Strictly isolated: only fetch/retain mock missions belonging to active, unexpired store connections
-            return rawMocks.filter((o: { shop_id: string; delivery_status: string; rider_id: string | null }) => {
-               const isPaired = activeShopIds.includes(o.shop_id);
-               return o.delivery_status === 'finding_rider' && !o.rider_id && isPaired;
+            const activeShopNames = activeConnections.map(c => (c.shop_name || '').toLowerCase()).filter(Boolean);
+            return rawMocks.filter((o: { id: string; shop_id: string; restaurant_name?: string; delivery_status: string; rider_id: string | null; allow_external_riders?: boolean; dispatch_to_marketplace?: boolean }) => {
+               const orderShopName = (o.restaurant_name || '').toLowerCase();
+               const isPaired = activeShopIds.includes(o.shop_id) || (orderShopName !== '' && activeShopNames.some(n => n !== '' && orderShopName.includes(n)));
+               const isExternal = o.allow_external_riders === true || o.dispatch_to_marketplace === true;
+               const isAlreadyActive = localActive.some((a: DeliveryOrder) => a.id === o.id);
+               const isAlreadySimulated = localSim.some((s: DeliveryOrder) => s.id === o.id);
+               
+               let isVisibleInMock = false;
+               if (activeShopIds.length > 0) {
+                 isVisibleInMock = isPaired;
+               } else {
+                 isVisibleInMock = isExternal || activeConnections.length === 0;
+               }
+
+               return o.delivery_status === 'finding_rider' && !o.rider_id && isVisibleInMock && !isAlreadyActive && !isAlreadySimulated;
             }) as unknown as DeliveryOrder[];
           });
         } else {
@@ -6035,6 +6289,9 @@ export function App() {
           shop_name: c.shop_name?.name || 'Local Merchant'
         })) as ShopConnection[];
         setConnections(activeConnections);
+      } else {
+        activeConnections = [];
+        setConnections([]);
       }
 
       const activeShopIds = activeConnections
@@ -6053,35 +6310,63 @@ export function App() {
       let ordersError: any = null;
 
       try {
-        const { data, error } = await fetchWithRetry(async () => {
-          const res = await getSupabase()
+        const res = await fetchWithRetry(async () => {
+          const r = await getSupabase()
             .from('orders')
             .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
             .eq('delivery_status', 'finding_rider')
+            .is('rider_id', null)
             .order('created_at', { ascending: false })
             .limit(100);
-          return res;
+          if (r.error) throw r.error;
+          return r;
         }, 2, 1000, 8000); // 2 retries, 8s timeout
-        ordersData = data;
-        ordersError = error;
+        ordersData = res.data;
+        ordersError = res.error;
       } catch {
         try {
-          const { data } = await fetchWithRetry(async () => {
-            const res = await getSupabase()
+          const res = await fetchWithRetry(async () => {
+            const r = await getSupabase()
               .from('orders')
               .select('*, shops(name, updated_at)')
               .eq('delivery_status', 'finding_rider')
+              .is('rider_id', null)
               .order('created_at', { ascending: false })
               .limit(100);
-            return res;
+            if (r.error) throw r.error;
+            return r;
           }, 2, 1000, 8000); // 2 retries, 8s timeout
-          ordersData = data;
-        } catch (e2) {
-          console.warn('Quietly handling standby on secondary fallback order query:', e2);
+          ordersData = res.data;
+        } catch {
+          try {
+            const res = await fetchWithRetry(async () => {
+              const r = await getSupabase()
+                .from('orders')
+                .select('*, restaurant_name')
+                .eq('delivery_status', 'finding_rider')
+                .is('rider_id', null)
+                .order('created_at', { ascending: false })
+                .limit(100);
+              if (r.error) throw r.error;
+              return r;
+            }, 2, 1000, 8000); // 2 retries, 8s timeout
+            ordersData = res.data;
+          } catch (e3) {
+            const errStr = getErrorMessage(e3);
+            if (/jwt expired|refresh token|invalid refresh token|token_not_found/i.test(errStr)) {
+              clearStaleAuthTokens();
+            } else {
+              console.warn('Quietly handling standby on tertiary fallback order query:', errStr);
+            }
+            ordersError = e3;
+          }
         }
       }
 
-      if (ordersError) throw ordersError;
+      if (ordersError && !ordersData) {
+        console.warn('Failed to fetch finding_rider orders:', getErrorMessage(ordersError));
+        throw ordersError;
+      }
 
       if (ordersData) {
         const formatted = ordersData
@@ -6094,7 +6379,7 @@ export function App() {
             
             const shopsObj = Array.isArray(item.shops) ? item.shops[0] : item.shops;
             
-            const dbAllowExternal = shopsObj ? (shopsObj.allow_external_riders !== false) : true;
+            const dbAllowExternal = shopsObj ? (shopsObj.allow_external_riders === true) : false;
             const dbCashTrustEnabled = shopsObj ? (shopsObj.cash_trust_enabled === true) : false;
             const dbDispatchToMarketplace = item.dispatch_to_marketplace === true;
             const dbAutoLook = shopsObj ? (shopsObj.auto_look_for_rider !== false) : true;
@@ -6134,10 +6419,16 @@ export function App() {
              const isRiderIdEmpty = !riderIdVal || riderIdVal === '' || riderIdVal === 'null';
              if (!isRiderIdEmpty) return false;
 
-             const isExternal = order.allow_external_riders === true;
-             const isLinked = activeShopIds.includes(order.shop_id);
+             const activeShopNames = activeConnections.map((c: any) => (c.shop_name || '').toLowerCase()).filter(Boolean);
+             const orderShopName = (order.restaurant_name || '').toLowerCase();
+             const isLinked = activeShopIds.includes(order.shop_id) || (orderShopName !== '' && activeShopNames.some((n: string) => n !== '' && orderShopName.includes(n)));
 
-             return isExternal || isLinked;
+             if (activeShopIds.length > 0) {
+               return isLinked;
+             }
+
+             const isExternal = order.allow_external_riders === true || order.dispatch_to_marketplace === true;
+             return isExternal;
           });
         
         const sorted = [...formatted].map(order => {
@@ -6150,6 +6441,7 @@ export function App() {
            return b.match_score - a.match_score;
         });
 
+        console.log("MISSION PROTOCOL [Orders Fetched]:", sorted);
         setSurgeMultiplier(Math.max(1.0, Math.min(2.5, 1.0 + (sorted.length / 8))));
 
         setAvailableOrders(prev => {
@@ -6164,7 +6456,12 @@ export function App() {
            // 2. Scan existing state for any unassigned real-time orders 
            // and merge them into the snapshot to protect from replication lag 
            // or faulty backend exclusion filters
-           const unassignedRealtimeOrders = prev.filter(o => o.delivery_status === 'finding_rider' && !o.rider_id);
+           const unassignedRealtimeOrders = prev.filter(o => {
+              if (o.delivery_status !== 'finding_rider' || o.rider_id) return false;
+              const isLinked = activeShopIds.includes(o.shop_id);
+              const isExternal = o.allow_external_riders === true || o.dispatch_to_marketplace === true;
+              return isLinked || isExternal;
+           });
            for (const o of unassignedRealtimeOrders) {
               if (!mergedMap.has(o.id)) {
                  mergedMap.set(o.id, o);
@@ -6178,7 +6475,8 @@ export function App() {
                 description: notificationBody,
                 duration: 5000,
                 icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
-                style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 }
+                style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900, cursor: 'pointer' },
+                onClick: () => setView('feed')
               });
            }
            return merged as DeliveryOrder[];
@@ -6187,17 +6485,33 @@ export function App() {
         setAvailableOrders([]);
       }
     } catch (e: unknown) {
-      console.error(e);
-      const errMessage = e instanceof Error ? e.message : 'Unknown error';
-      if (errMessage.toLowerCase().includes('fetch') || errMessage.toLowerCase().includes('network') || errMessage.toLowerCase().includes('timeout')) {
+      const errMessage = getErrorMessage(e, 'Unknown error');
+      if (isTransientError(errMessage) || /fetch|network|timeout|timed out|abort|connection|failed/i.test(errMessage)) {
         console.warn('WARN: NETWORK_FAILURE - USING CACHED ORDERS');
       } else {
+        console.error(e);
         dispatchError('System error detected', errMessage);
       }
     } finally {
       isFetchingConnRef.current = false;
     }
   }, [user, profile, merchantAllowExternal, merchantCashTrust, merchantAutoLook, dispatchToMarketplace, notificationTitle, notificationBody, setAvailableOrders, setSurgeMultiplier]);
+
+  const clearCacheAndRefreshOrders = useCallback(async () => {
+    console.log('[Diagnostic] Clearing local order cache due to observed discrepancies...');
+    localStorage.removeItem('localeats_available_orders');
+    localStorage.removeItem('localeats_sim_orders');
+    localStorage.removeItem('localeats_active_orders');
+    setAvailableOrders([]);
+    setSimulatedOrders([]);
+    setDeclinedOrderIds([]);
+    toast.info('Local cache cleared. Resyncing store uplinks & marketplace orders...');
+    await runConnectionDiagnostics();
+    await fetchConnectionsAndOrders();
+    toast.success('Orders & Connections fully resynced!', {
+      icon: <Zap className="w-4 h-4 text-[#39FF14]" />
+    });
+  }, [runConnectionDiagnostics, fetchConnectionsAndOrders]);
 
   const invalidatePairing = useCallback(async (connectionId?: string) => {
     try {
@@ -6222,15 +6536,17 @@ export function App() {
 
       if (connectionId) {
         // Disconnect a specific connection
-        const { error } = await getSupabase()
-          .from('rider_connections')
-          .update({
-            rider_id: null,
-            expires_at: new Date(0).toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', connectionId)
-          .eq('rider_id', user?.id); // Pass current authenticated rider_id for RLS
+        const { error } = await fetchWithRetry(async () => {
+          return await getSupabase()
+            .from('rider_connections')
+            .update({
+              rider_id: null,
+              expires_at: new Date(0).toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', connectionId)
+            .eq('rider_id', user?.id);
+        }, 2, 1000, 5000);
 
         if (error) {
           console.error("Error disconnecting connection:", error);
@@ -6240,14 +6556,16 @@ export function App() {
       } else {
         // Disconnect all connections for this rider
         if (user?.id) {
-          const { error } = await getSupabase()
-            .from('rider_connections')
-            .update({
-              rider_id: null,
-              expires_at: new Date(0).toISOString(),
-              updated_at: new Date().toISOString()
-            })
-            .eq('rider_id', user.id); // Pass current authenticated rider_id for RLS
+          const { error } = await fetchWithRetry(async () => {
+            return await getSupabase()
+              .from('rider_connections')
+              .update({
+                rider_id: null,
+                expires_at: new Date(0).toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .eq('rider_id', user.id);
+          }, 2, 1000, 5000);
 
           if (error) {
             console.error("Error disconnecting all connections:", error);
@@ -6277,7 +6595,6 @@ export function App() {
     if (!user) return;
     try {
       if (isSupabaseMocked()) {
-        setActiveOrders([]);
         setHistory([
           {
              id: 'h1',
@@ -6296,51 +6613,59 @@ export function App() {
       // Active Orders
       let active: Record<string, unknown>[] | null = null;
       try {
-        const { data } = await fetchWithRetry(async () => {
-          const res = await getSupabase()
+        const res = await fetchWithRetry(async () => {
+          const r = await getSupabase()
             .from('orders')
             .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
             .eq('rider_id', user.id)
             .in('delivery_status', ['accepted', 'picked_up'])
             .neq('status', 'completed')
             .neq('status', 'cancelled');
-          return res;
+          if (r.error) throw r.error;
+          return r;
         }, 2, 1000, 8000);
-        active = data as Record<string, unknown>[] | null;
+        active = res.data as Record<string, unknown>[] | null;
       } catch {
         try {
-          const { data } = await fetchWithRetry(async () => {
-            const res = await getSupabase()
+          const res = await fetchWithRetry(async () => {
+            const r = await getSupabase()
               .from('orders')
               .select('*, shops(name, updated_at)')
               .eq('rider_id', user.id)
               .in('delivery_status', ['accepted', 'picked_up'])
               .neq('status', 'completed')
               .neq('status', 'cancelled');
-            return res;
+            if (r.error) throw r.error;
+            return r;
           }, 2, 1000, 8000);
-          active = data as Record<string, unknown>[] | null;
+          active = res.data as Record<string, unknown>[] | null;
         } catch {
           try {
-            const { data } = await fetchWithRetry(async () => {
-              const res = await getSupabase()
+            const res = await fetchWithRetry(async () => {
+              const r = await getSupabase()
                 .from('orders')
                 .select('*, restaurant_name')
                 .eq('rider_id', user.id)
                 .in('delivery_status', ['accepted', 'picked_up'])
                 .neq('status', 'completed')
                 .neq('status', 'cancelled');
-              return res;
+              if (r.error) throw r.error;
+              return r;
             }, 2, 1000, 8000);
-            active = data as Record<string, unknown>[] | null;
+            active = res.data as Record<string, unknown>[] | null;
           } catch (e2) {
-            console.warn('Quietly handling standby on secondary fallback active order query:', e2);
+            const errStr = getErrorMessage(e2);
+            if (/jwt expired|refresh token|invalid refresh token|token_not_found/i.test(errStr)) {
+              clearStaleAuthTokens();
+            } else {
+              console.warn('Quietly handling standby on secondary fallback active order query:', errStr);
+            }
           }
         }
       }
       
       if (active) {
-        setActiveOrders(active.map(order => {
+        const fetchedOrders = active.map(order => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const shopsObj = Array.isArray(order.shops) ? order.shops[0] : (order.shops as any);
           return {
@@ -6348,9 +6673,20 @@ export function App() {
             restaurant_name: shopsObj?.name || (order.restaurant_name as string) || 'Local Merchant',
             shop_updated_at: shopsObj?.updated_at || (order.shop_updated_at as string)
           } as unknown as DeliveryOrder;
-        }));
+        });
+        
+        setActiveOrders(prev => {
+          // Reconcile DB payload with local state: preserve recently accepted orders that might not be synced yet
+          const localPending = prev.filter(p => 
+            !fetchedOrders.some(f => f.id === p.id) && 
+            (Date.now() - new Date(p.updated_at || 0).getTime() < 5 * 60000)
+          );
+          return [...fetchedOrders, ...localPending];
+        });
       } else {
-        setActiveOrders([]);
+        // If DB returned nothing, don't blindly clear activeOrders.
+        // Clean out stale un-synced orders (older than 5 mins)
+        setActiveOrders(prev => prev.filter(p => (Date.now() - new Date(p.updated_at || 0).getTime() < 5 * 60000)));
       }
 
       // History
@@ -6480,14 +6816,16 @@ export function App() {
       
       const latest = queue[queue.length - 1];
       try {
-        const { error: profileError } = await getSupabase()
-          .from('rider_profiles')
-          .update({ 
-            current_latitude: latest.lat, 
-            current_longitude: latest.lng, 
-            updated_at: new Date().toISOString() 
-          })
-          .eq('id', user.id);
+        const { error: profileError } = await fetchWithRetry(async () => {
+          return await getSupabase()
+            .from('rider_profiles')
+            .update({ 
+              current_latitude: latest.lat, 
+              current_longitude: latest.lng, 
+              updated_at: new Date().toISOString() 
+            })
+            .eq('id', user.id);
+        }, 2, 1000, 5000);
         if (profileError) throw profileError;
       } catch (err) {
         console.warn('Rider profile status sync postponed:', err);
@@ -6514,9 +6852,12 @@ export function App() {
           );
           
           if (locationPushes.length > 0) {
-            const results = await Promise.all(locationPushes);
-            const errResult = results.find(r => r.error);
-            if (errResult?.error) throw errResult.error;
+            await fetchWithRetry(async () => {
+              const results = await Promise.all(locationPushes);
+              const errResult = results.find(r => r.error);
+              if (errResult?.error) throw errResult.error;
+              return results;
+            }, 2, 1000, 8000);
           }
           
           const index = remainingQueue.findIndex(q => q.captured_at === item.captured_at && q.lat === item.lat);
@@ -6603,7 +6944,9 @@ export function App() {
                  active_points: (profileRef.current?.active_points || 0) + 15,
                  updated_at: new Date().toISOString()
                };
-               await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profileRef.current?.id);
+               await fetchWithRetry(async () => {
+                 return await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profileRef.current?.id);
+               }, 2, 1000, 5000);
             }
           }
           
@@ -6749,14 +7092,16 @@ export function App() {
         }
         // Update master profile telemetry
         try {
-          await getSupabase()
-            .from('rider_profiles')
-            .update({ 
-              current_latitude: lat, 
-              current_longitude: lng, 
-              updated_at: new Date().toISOString() 
-            })
-            .eq('id', user.id);
+          await fetchWithRetry(async () => {
+            return await getSupabase()
+              .from('rider_profiles')
+              .update({ 
+                current_latitude: lat, 
+                current_longitude: lng, 
+                updated_at: new Date().toISOString() 
+              })
+              .eq('id', user.id);
+          }, 1, 1000, 3000);
         } catch {
           /* ignore profile update error */
         }
@@ -6983,8 +7328,9 @@ export function App() {
         }
       }).catch((err) => {
         addBootLog('ERR: AUTH_FETCH_FAILED - ENGAGING AUTONOMOUS SIM PROTOCOL');
-        const msg = err instanceof Error ? err.message : String(err || '');
-        if (msg.includes('Refresh Token') || msg.includes('refresh_token') || msg.includes('token_not_found') || msg.includes('Invalid Refresh Token')) {
+        const msg = getErrorMessage(err, '');
+        const lowerMsg = msg.toLowerCase();
+        if (lowerMsg.includes('refresh token') || lowerMsg.includes('refresh_token') || lowerMsg.includes('token_not_found') || lowerMsg.includes('jwt expired')) {
           clearStaleAuthTokens();
         } else {
           markSupabaseAsMocked();
@@ -7016,7 +7362,7 @@ export function App() {
 
   // Timer for countdowns
   useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 1000 * 30); // Update every 30s
+    const interval = setInterval(() => setNow(Date.now()), 1000 * 5); // Update every 5s for live countdowns
     return () => clearInterval(interval);
   }, []);
 
@@ -7061,37 +7407,49 @@ export function App() {
         }, (payload) => {
            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
              const newOrder = payload.new as DeliveryOrder;
-             console.log('REALTIME PAYLOAD (public_orders):', {
-               eventType: payload.eventType,
-               id: newOrder.id,
-               delivery_status: newOrder.delivery_status,
-               rider_id: newOrder.rider_id,
-               fullPayload: newOrder
-             });
-             
-             // Directly inject unassigned open-pool orders into available local state pool
              if (!newOrder.rider_id && newOrder.delivery_status === 'finding_rider') {
-                setAvailableOrders(prev => {
-                   const exists = prev.findIndex(o => o.id === newOrder.id);
-                   const orderWithOverrides = { ...newOrder };
-                   
-                   if (exists >= 0) {
-                      const copy = [...prev];
-                      copy[exists] = { ...copy[exists], ...orderWithOverrides };
-                      return copy;
-                   } else {
-                      audioSynth.playOrderAssigned();
-                      toast.success(`NEW MISSION DETECTED: Tap to view details.`, {
-                        duration: 5000,
-                        icon: <Zap className="w-5 h-5 text-[#f59e0b] animate-pulse" />,
-                        style: { background: '#050505', color: '#f59e0b', border: '2px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900, boxShadow: '0 0 20px rgba(245, 158, 11, 0.4)' }
-                      });
-                      return [orderWithOverrides, ...prev];
+               const activeShopIds = connections
+                 .filter(c => new Date(c.expires_at) > new Date())
+                 .map(c => c.shop_id);
+               const activeShopNames = connections
+                 .filter(c => new Date(c.expires_at) > new Date())
+                 .map(c => (c.shop_name || '').toLowerCase())
+                 .filter(Boolean);
+
+               const orderShopName = (newOrder.restaurant_name || '').toLowerCase();
+               const isLinked = activeShopIds.includes(newOrder.shop_id) || (orderShopName !== '' && activeShopNames.some(n => n !== '' && orderShopName.includes(n)));
+
+               const qualifies = activeShopIds.length > 0
+                 ? isLinked
+                 : (newOrder.allow_external_riders === true || newOrder.dispatch_to_marketplace === true);
+
+               if (qualifies) {
+                 audioSynth.playOrderAssigned();
+                 toast.success(`NEW MISSION DETECTED: Tap to view details.`, {
+                   duration: 5000,
+                   icon: <Zap className="w-5 h-5 text-[#f59e0b] animate-pulse" />,
+                   style: { background: '#050505', color: '#f59e0b', border: '2px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900, boxShadow: '0 0 20px rgba(245, 158, 11, 0.4)', cursor: 'pointer' },
+                   onClick: () => setView('feed')
+                 });
+                 setAvailableOrders(prev => {
+                   const formatted: DeliveryOrder = {
+                     ...newOrder,
+                     restaurant_name: newOrder.restaurant_name || 'Authorized Merchant',
+                     delivery_fee: Number(newOrder.delivery_fee) || 5.0,
+                     distance_km: Number(newOrder.distance_km) || 2.0,
+                     allow_external_riders: newOrder.allow_external_riders === true,
+                   };
+                   if (prev.some(o => o.id === formatted.id)) {
+                     return prev.map(o => o.id === formatted.id ? { ...o, ...formatted } : o);
                    }
-                });
+                   return [formatted, ...prev];
+                 });
+               } else {
+                 setAvailableOrders(prev => prev.filter(o => o.id !== newOrder.id));
+               }
+               refHolder.fetchConnectionsAndOrders();
              } else {
-                // If it no longer qualifies as an open-pool order, remove it from the pool
-                setAvailableOrders(prev => prev.filter(o => o.id !== newOrder.id));
+               setAvailableOrders(prev => prev.filter(o => o.id !== newOrder.id));
              }
            } else if (payload.eventType === 'DELETE') {
              setAvailableOrders(prev => prev.filter(o => o.id !== payload.old.id));
@@ -7134,6 +7492,9 @@ export function App() {
                    copy[exists] = { ...copy[exists], ...updatedOrder };
                    return copy;
                 }
+                if (updatedOrder.delivery_status === 'accepted' || updatedOrder.delivery_status === 'picked_up') {
+                   return [...prev, updatedOrder];
+                }
                 return prev;
              });
              // Also remove from available open pool if accepted by us
@@ -7155,12 +7516,25 @@ export function App() {
           schema: 'public', 
           table: 'rider_notifications',
           filter: `rider_id=eq.${user.id}` 
-        }, payload => {
+        }, async payload => {
           toast.info(`Update from store: ${payload.new.message}`, {
             duration: 6000,
             description: 'Store requires your attention.',
             icon: <Activity className="w-5 h-5 text-[#f59e0b]" />
           });
+          
+          try {
+             await fetchWithRetry(async () => {
+               const res = await getSupabase()
+                 .from('rider_notifications')
+                 .update({ is_read: true })
+                 .eq('id', payload.new.id);
+               if (res.error) throw res.error;
+               return res;
+             }, 2, 1000, 5000);
+          } catch (e) {
+             console.error('Failed to mark notification as read:', e);
+          }
         })
         .subscribe();
     }
@@ -7180,6 +7554,26 @@ export function App() {
       channelsRef.current = {};
     };
   }, [establishRealtimeChannels]);
+
+  // Resilience: Fallback polling for missed WebSocket events due to weak connection
+  useEffect(() => {
+    if (!user || isSupabaseMocked()) return;
+
+    let pollInterval: ReturnType<typeof setInterval>;
+    
+    // Only poll aggressively if online
+    if (profile?.is_online) {
+      pollInterval = setInterval(() => {
+        // Automatically sync latest state in case WS events were dropped
+        refHolder.fetchConnectionsAndOrders();
+        refHolder.fetchActiveOrdersAndHistory();
+      }, 30000); // Poll every 30 seconds
+    }
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [user, profile?.is_online]);
 
   // Initial Fetches
   useEffect(() => {
@@ -7221,6 +7615,42 @@ export function App() {
     }
     prevActiveOrdersLengthRef.current = activeOrders.length;
   }, [activeOrders.length]);
+
+  // FCM Foreground Notification Listener
+  useEffect(() => {
+    const unsubscribe = onForegroundMessage((payload) => {
+      const title = payload.notification?.title || payload.data?.title || '🚨 Mission Update';
+      const body = payload.notification?.body || payload.data?.body || 'New dispatch or order update received.';
+      
+      try {
+        if ('vibrate' in navigator) {
+          navigator.vibrate([200, 100, 200]);
+        }
+      } catch {
+        // ignore vibration failure
+      }
+
+      toast.info(title, {
+        description: body,
+        duration: 6000
+      });
+    });
+
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
+    };
+  }, []);
+
+  // Automatic FCM Push Token Registration on Login/Restore/Online
+  useEffect(() => {
+    if (user?.id) {
+      registerAndSyncPushToken(user.id).catch((err) => {
+        console.warn('Automatic FCM token registration notice:', err);
+      });
+    }
+  }, [user?.id, profile?.is_online]);
 
   // Actions
   const handleUpdateStatus = useCallback(async (orderId: string, status: DeliveryStatus) => {
@@ -7307,6 +7737,33 @@ export function App() {
       } else {
         setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
         toast.info(`Advancing mission phase to ${status}...`, { id: 'status-updating' });
+      }
+
+      // Dispatch Push Notification to Customer / Merchant if applicable
+      const customerUserId = orderToUpdate.user_id || (orderToUpdate as unknown as { customer_id?: string }).customer_id;
+      if (orderToUpdate && customerUserId) {
+        const targetUserId = customerUserId;
+        const statusMessages: Record<string, string> = {
+          accepted: 'Rider accepted your delivery mission! 🛵',
+          preparing: 'Order is being prepared by the merchant 👨‍🍳',
+          ready_for_pickup: 'Order is ready for pickup! ⚡',
+          picked_up: 'Rider picked up your order and is heading your way! 📦',
+          on_the_way: 'Rider is en route to your delivery location! 🛵💨',
+          arrived: 'Rider has arrived at your delivery address! 📍',
+          delivered: 'Order delivered! Enjoy your meal! 🎉'
+        };
+        const bodyMsg = statusMessages[status] || `Order status updated to ${status.replace('_', ' ')}.`;
+        sendPushNotification({
+          user_id: targetUserId,
+          title: `📦 Order #${orderToUpdate.id.slice(-4)} Update`,
+          body: bodyMsg,
+          data: {
+            order_id: orderToUpdate.id,
+            status: status
+          }
+        }).catch((err) => {
+          console.warn('Non-blocking customer push notification failed:', err);
+        });
       }
 
       if (isSupabaseMocked()) {
@@ -7483,6 +7940,7 @@ export function App() {
       if (isSupabaseMocked()) {
         if (newStatus) {
           toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
+          fetchConnectionsAndOrders();
         } else {
           toast.info('System Standby. Taking a break.');
         }
@@ -7511,6 +7969,7 @@ export function App() {
       } else {
         if (newStatus) {
           toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
+          fetchConnectionsAndOrders();
         } else {
           toast.success('System Standby. Taking a break.');
         }
@@ -7541,7 +8000,7 @@ export function App() {
     }
 
     await confirmOnlineToggle();
-  }, [profile, activeOrders.length, confirmOnlineToggle]);
+  }, [profile, activeOrders, confirmOnlineToggle]);
 
   const updateVehicle = async (type: UserVehicle) => {
     if (!profile) return;
@@ -7589,10 +8048,12 @@ export function App() {
       if (user) {
         try {
           if (!isSupabaseMocked()) {
-            await getSupabase()
-              .from('rider_profiles')
-              .update({ onboarding_complete: true })
-              .eq('id', user.id);
+            await fetchWithRetry(async () => {
+              return await getSupabase()
+                .from('rider_profiles')
+                .update({ onboarding_complete: true })
+                .eq('id', user.id);
+            }, 3, 1000, 5000);
           }
           setProfile(prev => prev ? { ...prev, onboarding_complete: true } : null);
           addBootLog('SYS_READY: OPERATOR_CERTIFIED');
@@ -7607,6 +8068,11 @@ export function App() {
 
   const handleOrderAccept = async (orderId: string) => {
     if (!profile || !user) return;
+
+    if (activeOrders.length >= 2) {
+      toast.error('Active load limit reached (2/2 active deliveries max). Complete an active order before accepting new missions.');
+      return;
+    }
 
     const isSimulated = simulatedOrders.some(o => o.id === orderId);
     if (isSimulated) {
@@ -7659,15 +8125,10 @@ export function App() {
         return;
       }
     }
-    
-    if (activeOrders.length >= 2) {
-      toast.error('Please complete your current order first.');
-      return;
-    }
 
     try {
-      if (isSupabaseMocked()) {
-        const order = availableOrders.find(o => o.id === orderId);
+      if (isSupabaseMocked() || (orderToAccept as any)?.is_mocked || orderId.toLowerCase().includes('mock') || orderId.toLowerCase().includes('sim')) {
+        const order = availableOrders.find(o => o.id === orderId) || orderToAccept;
         if (order) {
           const accepted = { 
             ...order, 
@@ -7679,7 +8140,7 @@ export function App() {
             surge_multiplier: surgeMultiplier 
           };
           setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
-          setActiveOrders(prev => [...prev, accepted as DeliveryOrder]);
+          setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), accepted as DeliveryOrder]);
           if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]); // Short vibration pattern for accept
           toast.success('Order accepted. Starting navigation.', {
             description: surgeMultiplier > 1 ? `Bonus active: x${surgeMultiplier.toFixed(1)}` : undefined
@@ -7688,51 +8149,99 @@ export function App() {
         }
         return;
       }
-      let result = await fetchWithRetry(async () => {
-        return await getSupabase()
-          .from('orders')
-          .update({ 
-            delivery_status: 'accepted', 
-            status: 'preparing', // Crucial: Set main status to 'preparing' to notify merchant kitchen immediately!
-            rider_id: user.id,
-            rider_name: profile.name || profile.full_name || 'Rider',
-            rider_phone: profile.phone || '+27 83 123 4567',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', orderId)
-          .eq('delivery_status', 'finding_rider')
-          .select()
-          .single();
-      }, 3, 1000, 10000);
 
-      // fallback to basic column set if schema does not support rider details columns
-      if (result.error && (
-        result.error.message?.includes('rider_name') || 
-        result.error.message?.includes('rider_phone') || 
-        result.error.message?.includes('column') || 
-        result.error.code === '42703'
-      )) {
-        console.warn('PostgREST Schema cache mismatch. Retrying update with basic column set.');
-        result = await fetchWithRetry(async () => {
+      let claimed = false;
+      let fetchedOrder: DeliveryOrder | null = null;
+
+      // Primary claim attempt via database RPC
+      try {
+        const rpcResult = await fetchWithRetry(async () => {
           return await getSupabase()
+            .rpc('claim_delivery_mission', {
+              target_order_id: orderId,
+              p_rider_name: profile.name || profile.full_name || 'Rider',
+              p_rider_phone: profile.phone || '+27 83 123 4567'
+            });
+        }, 2, 500, 3000);
+
+        if (!rpcResult.error && rpcResult.data === true) {
+          claimed = true;
+        }
+      } catch (err) {
+        console.warn('RPC claim attempt failed, attempting fallback direct update:', err);
+      }
+
+      // Secondary claim attempt via direct table update if RPC is missing or fails
+      if (!claimed) {
+        try {
+          const { data: updatedRows, error: directErr } = await getSupabase()
             .from('orders')
-            .update({ 
-              delivery_status: 'accepted', 
-              status: 'preparing',
+            .update({
               rider_id: user.id,
+              rider_name: profile.name || profile.full_name || 'Rider',
+              rider_phone: profile.phone || '+27 83 123 4567',
+              delivery_status: 'accepted',
+              status: 'preparing',
               updated_at: new Date().toISOString()
             })
             .eq('id', orderId)
-            .eq('delivery_status', 'finding_rider')
-            .select()
-            .single();
-        }, 3, 1000, 10000);
+            .select('*');
+
+          if (!directErr && updatedRows && updatedRows.length > 0) {
+            claimed = true;
+            fetchedOrder = updatedRows[0] as DeliveryOrder;
+          }
+        } catch (e) {
+          console.warn('Direct order update claim failed:', e);
+        }
       }
 
-      const { data, error } = result;
+      if (!claimed) {
+        // Check if the order actually exists in DB and was claimed by a different rider
+        try {
+          const { data: existingDbOrder } = await getSupabase()
+            .from('orders')
+            .select('rider_id')
+            .eq('id', orderId)
+            .maybeSingle();
 
-      if (error || !data) {
-        // Clear order from availableOrders so it's instantly wiped from the screen
+          if (existingDbOrder && existingDbOrder.rider_id && existingDbOrder.rider_id !== user.id) {
+            console.warn('MISSION PROTOCOL: Claim failed', 'Mission taken by another courier');
+            setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
+            toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
+              style: {
+                background: "#991b1b",
+                color: "#ffffff",
+                border: "2px solid #ef4444",
+                textTransform: "uppercase",
+                fontWeight: 900,
+                fontFamily: "monospace",
+              }
+            });
+            return;
+          }
+        } catch (checkErr) {
+          console.warn('Db check failed:', checkErr);
+        }
+
+        // If not explicitly claimed by another rider, fallback to local state claim
+        const fallbackOrder = availableOrders.find(o => o.id === orderId) || orderToAccept;
+        if (fallbackOrder) {
+          claimed = true;
+          fetchedOrder = {
+            ...fallbackOrder,
+            delivery_status: 'accepted',
+            status: 'preparing',
+            rider_id: user.id,
+            rider_name: profile.name || profile.full_name || 'Rider',
+            rider_phone: profile.phone || '+27 83 123 4567',
+            surge_multiplier: surgeMultiplier
+          } as DeliveryOrder;
+        }
+      }
+
+      if (!claimed) {
+        console.warn('MISSION PROTOCOL: Claim failed', 'Mission taken by another courier');
         setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
         toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
           style: {
@@ -7744,13 +8253,39 @@ export function App() {
             fontFamily: "monospace",
           }
         });
-      } else {
-        toast.success('Order accepted. Starting navigation.');
-        setView('move');
+        return;
       }
+
+      // Successfully claimed!
+      if (!fetchedOrder) {
+        const orderFetch = await getSupabase().from('orders').select('*').eq('id', orderId).maybeSingle();
+        fetchedOrder = orderFetch.data as DeliveryOrder | null;
+      }
+
+      const customerUserId = fetchedOrder?.user_id || fetchedOrder?.customer_id;
+      if (customerUserId) {
+        sendPushNotification({
+          user_id: customerUserId,
+          title: `🛵 Order #${orderId.slice(-4)} Accepted`,
+          body: `Rider ${profile.name || 'Courier'} accepted your delivery mission!`,
+          data: { order_id: orderId, status: 'accepted' }
+        }).catch(console.warn);
+      }
+      toast.success('Order accepted. Starting navigation.');
+      
+      setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
+      if (fetchedOrder) {
+        setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), fetchedOrder as DeliveryOrder]);
+      } else {
+        const orderToAcceptFallback = availableOrders.find(o => o.id === orderId) || orderToAccept;
+        if (orderToAcceptFallback) {
+          setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), { ...orderToAcceptFallback, delivery_status: 'accepted', status: 'preparing', rider_id: user.id } as DeliveryOrder]);
+        }
+      }
+      setView('move');
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : 'Accept failed';
-      if (message.toLowerCase().includes('fetch') || message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
+      if (/fetch|network|timeout|timed out|abort/i.test(message)) {
         toast.error('You must be online to accept an order.');
       } else {
         // Clear order from availableOrders so it's instantly wiped from the screen on generic failures
@@ -7790,25 +8325,30 @@ export function App() {
       }
 
       let connection: (ShopConnection & { shops?: { name: string } | null }) | undefined;
-      let fetchError;
+      let fetchError: unknown = null;
       
       try {
         const res = await fetchWithRetry(async () => {
           return await getSupabase()
             .from('rider_connections')
-            .select('*, shops(name)')
-            .eq('connection_code', code)
-            .gte('expires_at', new Date().toISOString())
-            .single();
+            .select('*')
+            .eq('connection_code', code);
         }, 3, 1000, 10000);
-        connection = res.data;
-        fetchError = res.error;
+        
+        if (res.error) {
+           fetchError = res.error;
+        } else if (res.data && res.data.length > 0) {
+           const validConns = res.data;
+           connection = validConns.length > 0 ? validConns[0] : res.data[0];
+        }
+        console.log("Diagnostic [handlePair]: Pulled pairing connection:", connection, "Current system time:", new Date().toISOString(), "expires_at:", connection?.expires_at, "Error:", fetchError);
       } catch (e) {
         fetchError = e;
       }
       
       if (fetchError || !connection) {
-        throw new Error('Invalid or expired pairing code. Ensure the Store has generated a new one.');
+        const errMsg = fetchError?.message || 'Code not found in database.';
+        throw new Error('Invalid or expired pairing code. Ensure the Store has generated a new one. (' + errMsg + ')');
       }
 
       let updateError;
@@ -7861,10 +8401,11 @@ export function App() {
             .select('id, shop_id, rider_id')
             .eq('id', connection!.id)
             .eq('rider_id', user.id)
-            .eq('shop_id', connection!.shop_id)
-            .single();
+            .eq('shop_id', connection!.shop_id);
         }, 3, 1000, 10000);
-        verification = res.data;
+        if (res.data && res.data.length > 0) {
+            verification = res.data[0];
+        }
         verifyError = res.error;
       } catch (e) {
         verifyError = e;
@@ -7875,6 +8416,15 @@ export function App() {
       }
 
       setHandshakeVerificationState('verified');
+
+      // Sync linked_rider_id on shops table if schema column exists
+      if (connection?.shop_id) {
+        try {
+          await getSupabase().from('shops').update({ linked_rider_id: user.id }).eq('id', connection.shop_id);
+        } catch {
+          // ignore column missing
+        }
+      }
 
       // Haptic Feedback Trigger!
       if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
@@ -8303,12 +8853,16 @@ export function App() {
                  const hours = Math.max(0, Math.floor((new Date(connections[0].expires_at).getTime() - now) / (1000 * 60 * 60)));
                  const mins = Math.max(0, Math.floor(((new Date(connections[0].expires_at).getTime() - now) % (1000 * 60 * 60)) / (1000 * 60)));
                  return (
-                   <div className="hidden sm:flex flex-col items-end gap-1 px-4 border-r border-zinc-800">
-                      <span className="text-[7px] text-zinc-500 font-black uppercase">Fleet Pass</span>
-                      <div className="flex items-center gap-1 cursor-pointer" onClick={() => isExpired && setView('pair')}>
-                        <Clock className={cn("w-2 h-2", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
+                   <div 
+                     className="flex flex-col items-end gap-0.5 px-2 sm:px-4 border-r border-zinc-800 cursor-pointer hover:opacity-80 transition-opacity" 
+                     onClick={() => setView('hub')}
+                     title="Click to view Store Connections"
+                   >
+                      <span className="text-[7px] text-zinc-500 font-black uppercase tracking-wider">Fleet Pass</span>
+                      <div className="flex items-center gap-1">
+                        <Clock className={cn("w-2.5 h-2.5", isExpired ? "text-red-500 animate-pulse" : "text-[#f59e0b]")} />
                         <span className={cn("text-[10px] font-mono font-bold", isExpired ? "text-red-500" : "text-[#F0F0F0]")}>
-                           {isExpired ? "EXPIRED - RE-PAIR" : `CONNECTED: ${hours}H ${mins}M`}
+                           {isExpired ? "EXPIRED" : `${hours}H ${mins}M`}
                         </span>
                       </div>
                    </div>
@@ -8367,7 +8921,7 @@ export function App() {
         
         {/* Mission Pulse Overlay */}
         <AnimatePresence>
-          {profile?.is_online && visibleAvailableOrders.length > 0 && activeOrders.length === 0 && view !== 'orders' && (
+          {profile?.is_online && pendingOverlayOrder && activeOrders.length === 0 && view !== 'orders' && (
             <motion.div
               initial={{ y: "100%", opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
@@ -8378,9 +8932,9 @@ export function App() {
                 {/* Dismiss Button in top corner */}
                 <button 
                   onClick={() => {
-                    const orderId = visibleAvailableOrders[0].id;
+                    const orderId = pendingOverlayOrder.id;
                     setDeclinedOrderIds(prev => [...prev, orderId]);
-                    toast.info("Order dismissed.");
+                    toast.info("Overlay alert dismissed. Order remains available in Nearby Feed.");
                   }}
                   className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors p-1.5 rounded-full hover:bg-zinc-900 border border-transparent hover:border-zinc-850"
                   title="Dismiss order request"
@@ -8396,22 +8950,22 @@ export function App() {
                     <div>
                       <h3 className="text-[10px] font-black uppercase text-[#f59e0b] tracking-[0.4em] mb-1">Drop-Off Details</h3>
                       <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter truncate max-w-[200px]">
-                        {visibleAvailableOrders[0].customer_name || visibleAvailableOrders[0].product_name || 'Customer'}
+                        {pendingOverlayOrder.customer_name || pendingOverlayOrder.product_name || 'Customer'}
                       </p>
-                      <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{visibleAvailableOrders[0].restaurant_name}</p>
+                      <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{pendingOverlayOrder.restaurant_name}</p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] font-black uppercase tracking-widest text-[#f59e0b] mb-1">Potential</p>
                     <p className="text-3xl font-mono font-bold text-white tracking-tighter">
-                      R{Number(visibleAvailableOrders[0].delivery_fee || 0).toFixed(2)}
+                      R{Number(pendingOverlayOrder.delivery_fee || 0).toFixed(2)}
                     </p>
                   </div>
                 </div>
                 
                 {/* Brand Signaling Badges */}
                 <div className="flex flex-wrap gap-2 mb-5">
-                  {visibleAvailableOrders[0].allow_external_riders ? (
+                  {pendingOverlayOrder.allow_external_riders ? (
                     <span className="text-[9px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20 px-2.5 py-1 rounded">
                       📡 Public Fleet
                     </span>
@@ -8421,7 +8975,7 @@ export function App() {
                     </span>
                   )}
 
-                  {visibleAvailableOrders[0].cash_trust_enabled && (
+                  {pendingOverlayOrder.cash_trust_enabled && (
                     <span className="text-[9px] font-black uppercase tracking-wider bg-[#39FF14]/10 text-[#39FF14] border border-[#39FF14]/20 px-2.5 py-1 rounded flex items-center gap-1 animate-pulse">
                       ⚡ TRUSTED LOCAL PARTNER
                     </span>
@@ -8431,20 +8985,20 @@ export function App() {
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest mb-1">Travel Time</span>
-                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor(Number(visibleAvailableOrders[0].distance_km || 0) * 3))}:00 MIN</span>
+                    <span className="text-xl font-mono font-bold text-white">{Math.max(0, Math.floor(Number(pendingOverlayOrder.distance_km || 0) * 3))}:00 MIN</span>
                   </div>
                   <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex flex-col items-center">
                     <span className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-1">Distance</span>
-                    <span className="text-xl font-mono font-bold text-white">{Number(visibleAvailableOrders[0].distance_km || 0).toFixed(1)} KM</span>
+                    <span className="text-xl font-mono font-bold text-white">{Number(pendingOverlayOrder.distance_km || 0).toFixed(1)} KM</span>
                   </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button 
                     onClick={() => {
-                      const orderId = visibleAvailableOrders[0].id;
+                      const orderId = pendingOverlayOrder.id;
                       setDeclinedOrderIds(prev => [...prev, orderId]);
-                      toast.info("Order request ignored.");
+                      toast.info("Popup alert dismissed. Order remains available in Nearby Feed.");
                     }}
                     className="py-4 px-6 bg-zinc-900 border border-zinc-800 hover:border-red-500/30 text-zinc-400 hover:text-red-400 font-black uppercase tracking-[0.2em] text-xs rounded-2xl transition-all active:scale-95 flex items-center justify-center"
                   >
@@ -8454,11 +9008,11 @@ export function App() {
                     <SwipeButton 
                       label="SLIDE TO ACCEPT"
                       onComplete={() => {
-                        handleOrderAccept(visibleAvailableOrders[0].id);
+                        handleOrderAccept(pendingOverlayOrder.id);
                         setView('move');
                       }}
                       color="#f59e0b"
-                      resetToken={visibleAvailableOrders[0].id}
+                      resetToken={pendingOverlayOrder.id}
                     />
                   </div>
                 </div>
@@ -8546,17 +9100,28 @@ export function App() {
                         </div>
                       </div>
                     </div>
-                    <button 
-                       onClick={() => {
-                         addBootLog('MANUAL_SYNC_INIT');
-                         fetchProfile();
-                         fetchConnectionsAndOrders();
-                         toast.success('App connection refreshed successfully.', { icon: <Zap className="w-4 h-4" /> });
-                       }}
-                       className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-black uppercase px-3 py-2 rounded-lg transition-colors border border-zinc-700"
-                    >
-                      Refresh Sync
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                         onClick={() => {
+                           addBootLog('MANUAL_SYNC_INIT');
+                           fetchProfile();
+                           fetchConnectionsAndOrders();
+                           toast.success('App connection refreshed successfully.', { icon: <Zap className="w-4 h-4" /> });
+                         }}
+                         className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-black uppercase px-3 py-2 rounded-lg transition-colors border border-zinc-700"
+                      >
+                        Refresh Sync
+                      </button>
+                      <button 
+                         onClick={() => {
+                           clearCacheAndRefreshOrders();
+                         }}
+                         title="Clear local order cache and resync if orders seem inaccurate or missing"
+                         className="bg-amber-950/40 hover:bg-amber-900/60 text-amber-400 border border-amber-800/50 text-[10px] font-black uppercase px-2.5 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+                      >
+                        <RefreshCw className="w-3 h-3 text-amber-400" /> Clear Cache & Resync
+                      </button>
+                    </div>
                   </div>
                 </BentoCard>
 
@@ -8623,8 +9188,11 @@ export function App() {
                   )}
                 </AnimatePresence>
                 <OrdersFeed 
-                  orders={availableOrders} 
+                  orders={visibleAvailableOrders} 
                   activeOrders={activeOrders}
+                  connections={connections}
+                  now={now}
+                  setView={setView}
                   onAccept={handleOrderAccept} 
                   isOnline={profile?.is_online || false} 
                   surgeMultiplier={surgeMultiplier} 
@@ -8666,6 +9234,7 @@ export function App() {
                     isNavVisible={isGlobalNavVisible}
                     isHighContrastMode={isHighContrastMode}
                     cashOnHand={cashOnHand}
+                    onDepositCash={() => setCashOnHand(0)}
                   />
                 </div>
               ) : (

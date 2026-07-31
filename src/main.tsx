@@ -2,17 +2,23 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { getErrorMessage } from './lib/errorHandling';
+
+const isTransient = (msg: string) => {
+  return /fetch|network|timeout|timed out|operation timed out|abort|connection|lock broken|refresh token|invalid refresh token|token_not_found|jwt expired/i.test(msg);
+};
 
 window.addEventListener('unhandledrejection', (event) => {
-  const msg = event.reason?.message || '';
+  const rawMsg = event.reason ? getErrorMessage(event.reason, '') : '';
+  const msg = rawMsg.toLowerCase();
   
-  if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('timeout')) {
-    console.warn('Network or fetch error suppressed:', msg);
+  if (isTransient(msg)) {
+    console.warn('Transient error suppressed:', rawMsg);
     event.preventDefault();
     return;
   }
 
-  if (msg.includes('Refresh Token Not Found')) {
+  if (msg.includes('refresh token') || msg.includes('token_not_found') || msg.includes('jwt expired')) {
     event.preventDefault();
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('sb-') && key.endsWith('-auth-token')) {
@@ -57,15 +63,16 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 window.addEventListener('error', (event) => {
-  const msg = event.message || '';
+  const rawMsg = event.message || (event.error ? getErrorMessage(event.error, '') : '');
+  const msg = rawMsg.toLowerCase();
 
-  if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('timeout')) {
-    console.warn('Network or fetch error suppressed:', msg);
+  if (isTransient(msg)) {
+    console.warn('Network or fetch error suppressed:', rawMsg);
     event.preventDefault();
     return;
   }
 
-  if (msg.includes('Refresh Token Not Found')) {
+  if (msg.includes('refresh token') || msg.includes('token_not_found') || msg.includes('jwt expired')) {
     event.preventDefault();
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('sb-') && key.endsWith('-auth-token')) {

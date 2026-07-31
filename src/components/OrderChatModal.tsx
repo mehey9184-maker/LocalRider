@@ -16,7 +16,6 @@ import {
 import { DeliveryOrder, OrderChatMessage } from '../types';
 import { getSupabase, isSupabaseMocked } from '../lib/supabase';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { toast } from 'sonner';
 
 interface OrderChatModalProps {
   order: DeliveryOrder;
@@ -47,24 +46,92 @@ const CUSTOMER_QUICK_REPLIES = [
   "📦 Please leave at security guard post."
 ];
 
-const SIMULATED_CUSTOMER_REPLIES = [
-  "Awesome, thanks! Gate code is #4092.",
-  "I see you on the live map! Coming outside now.",
-  "Please leave it at the security guard post.",
-  "Could you please ring the doorbell when you arrive?",
-  "Got it! Thanks for the update."
-];
-
-const SIMULATED_RIDER_REPLIES = [
-  "Just arrived at the merchant! Getting your food now.",
-  "Order picked up! On my way to your location.",
-  "Almost there! I'm about 2 minutes away.",
-  "I'm at your building entrance now.",
-  "Thanks! See you outside."
-];
-
 function generateMessageId(prefix: string = 'msg'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+}
+
+// Strict Message Deduplicator
+function dedupeMessages(msgs: OrderChatMessage[]): OrderChatMessage[] {
+  const seen = new Set<string>();
+  const result: OrderChatMessage[] = [];
+  for (const m of msgs) {
+    if (!m || !m.id) continue;
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    result.push(m);
+  }
+  return result;
+}
+
+// Universal Schema Normalizer to resolve field dissonance across Client and Rider payloads
+function normalizeChatMessage(raw: Record<string, unknown> | null | undefined, fallbackOrderId: string): OrderChatMessage {
+  if (!raw) {
+    return {
+      id: generateMessageId('msg'),
+      order_id: fallbackOrderId,
+      sender_role: 'system',
+      sender_id: 'system',
+      sender_name: 'LocalEats Relay',
+      message: '',
+      created_at: new Date().toISOString(),
+      is_read: true,
+      is_delivered: true
+    };
+  }
+
+  const messageText = 
+    (raw.message as string) || 
+    (raw.message_text as string) || 
+    (raw.content as string) || 
+    (raw.text as string) || 
+    '';
+
+  const rawRole = String(
+    raw.sender_role || 
+    raw.sender_type || 
+    raw.role || 
+    raw.user_role || 
+    ''
+  ).toLowerCase().trim();
+
+  let senderRole: 'rider' | 'customer' | 'merchant' | 'system';
+  if (rawRole === 'customer' || rawRole === 'client' || rawRole === 'user') {
+    senderRole = 'customer';
+  } else if (rawRole === 'rider' || rawRole === 'driver') {
+    senderRole = 'rider';
+  } else if (rawRole === 'shop' || rawRole === 'merchant' || rawRole === 'store') {
+    senderRole = 'merchant';
+  } else if (rawRole === 'system') {
+    senderRole = 'system';
+  } else {
+    // Default to customer if missing
+    senderRole = 'customer';
+  }
+
+  const senderId = 
+    (raw.sender_id as string) || 
+    (raw.user_id as string) || 
+    (raw.author_id as string) || 
+    'unknown';
+
+  const senderName = 
+    (raw.sender_name as string) || 
+    (raw.user_name as string) || 
+    (raw.author_name as string) || 
+    (senderRole === 'rider' ? 'Rider' : senderRole === 'customer' ? 'Customer' : senderRole === 'merchant' ? 'Shop' : 'System');
+
+  return {
+    id: String(raw.id || generateMessageId('msg')),
+    order_id: String(raw.order_id || raw.orderId || fallbackOrderId),
+    sender_role: senderRole,
+    sender_id: String(senderId),
+    sender_name: senderName,
+    message: String(messageText),
+    created_at: (raw.created_at as string) || (raw.createdAt as string) || (raw.timestamp as string) || new Date().toISOString(),
+    is_quick_reply: Boolean(raw.is_quick_reply || raw.isQuickReply),
+    is_read: Boolean(raw.is_read || raw.isRead),
+    is_delivered: raw.is_delivered !== undefined ? Boolean(raw.is_delivered) : true
+  };
 }
 
 export const OrderChatModal: React.FC<OrderChatModalProps> = ({
@@ -149,34 +216,59 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
     return updated;
   }, [currentUserRole, storageKey]);
 
-  // Refresh messages manually or on mount
+  // Refresh messages manually or on mount with universal normalization & deduplication across both chat_messages and order_messages
   const handleRefreshMessages = useCallback(async () => {
     setIsRefreshing(true);
     let loadedFromDb = false;
 
     if (!isSupabaseMocked()) {
       try {
-        const { data, error } = await getSupabase()
-          .from('order_messages')
-          .select('*')
-          .eq('order_id', order.id)
-          .order('created_at', { ascending: true });
+        const supabase = getSupabase();
+        
+        const fetchChat = async () => {
+          try {
+            const res = await supabase
+              .from('chat_messages')
+              .select('*')
+              .eq('order_id', order.id)
+              .order('created_at', { ascending: true });
+            return (res.data || []) as Record<string, unknown>[];
+          } catch {
+            return [] as Record<string, unknown>[];
+          }
+        };
 
-        if (!error && data) {
+        const fetchOrderMsg = async () => {
+          try {
+            const res = await supabase
+              .from('order_messages')
+              .select('*')
+              .eq('order_id', order.id)
+              .order('created_at', { ascending: true });
+            return (res.data || []) as Record<string, unknown>[];
+          } catch {
+            return [] as Record<string, unknown>[];
+          }
+        };
+
+        const [chatRows, orderMsgRows] = await Promise.all([fetchChat(), fetchOrderMsg()]);
+        const allRows = [...chatRows, ...orderMsgRows];
+
+        if (allRows.length > 0) {
           loadedFromDb = true;
           setMessages(prev => {
             const combined = [...prev];
-            data.forEach((item: OrderChatMessage) => {
-              const idx = combined.findIndex(m => m.id === item.id);
+            allRows.forEach((item: Record<string, unknown>) => {
+              const norm = normalizeChatMessage(item, order.id);
+              const idx = combined.findIndex(m => m.id === norm.id);
               if (idx === -1) {
-                combined.push({ ...item, is_read: true, is_delivered: true });
+                combined.push({ ...norm, is_read: true, is_delivered: true });
               } else {
-                combined[idx] = { ...combined[idx], ...item, is_read: true };
+                combined[idx] = { ...combined[idx], ...norm, is_read: true, is_delivered: true };
               }
             });
             combined.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-            const marked = markMessagesAsRead(combined);
-            return marked;
+            return markMessagesAsRead(dedupeMessages(combined));
           });
         }
       } catch (err) {
@@ -189,8 +281,8 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
         const stored = localStorage.getItem(storageKey);
         if (stored) {
           const parsed = JSON.parse(stored);
-          const marked = markMessagesAsRead(parsed);
-          setMessages(marked);
+          const normalized = parsed.map((m: Record<string, unknown>) => normalizeChatMessage(m, order.id));
+          setMessages(markMessagesAsRead(dedupeMessages(normalized)));
         }
       } catch {
         /* ignore */
@@ -203,19 +295,128 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
     }, 300);
   }, [order.id, storageKey, markMessagesAsRead, scrollToBottom]);
 
+  // Flush offline pending queue when connection restores
+  const flushPendingQueue = useCallback(async () => {
+    const queueKey = `localeats_pending_chat_queue_${order.id}`;
+    try {
+      const storedQueue = localStorage.getItem(queueKey);
+      if (!storedQueue) return;
+      const pendingMsgs: OrderChatMessage[] = JSON.parse(storedQueue);
+      if (!pendingMsgs || pendingMsgs.length === 0) return;
+
+      const remaining: OrderChatMessage[] = [];
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      for (const msg of pendingMsgs) {
+        let sent = false;
+        if (!isSupabaseMocked()) {
+          try {
+            const chatPayload: Record<string, unknown> = {
+              order_id: msg.order_id,
+              sender_id: msg.sender_id,
+              sender_type: msg.sender_role,
+              content: msg.message,
+              message_text: msg.message,
+              created_at: msg.created_at,
+              is_read: false
+            };
+            if (uuidRegex.test(msg.sender_id)) {
+              chatPayload.user_id = msg.sender_id;
+            }
+
+            const { error: err1 } = await getSupabase().from('chat_messages').insert(chatPayload);
+            let err2 = null;
+            try {
+              const res2 = await getSupabase().from('order_messages').insert({
+                id: msg.id,
+                order_id: msg.order_id,
+                sender_role: msg.sender_role,
+                sender_id: msg.sender_id,
+                sender_name: msg.sender_name,
+                message: msg.message,
+                created_at: msg.created_at
+              });
+              err2 = res2.error;
+            } catch {
+              err2 = { message: 'order_messages insert failed' };
+            }
+
+            if (!err1 || !err2) sent = true;
+          } catch {
+            /* ignore */
+          }
+        } else {
+          sent = true;
+        }
+
+        if (sent) {
+          // Broadcast upon recovery
+          try {
+            const ch = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
+            ch.send({
+              type: 'broadcast',
+              event: 'new_message',
+              payload: msg
+            }).catch(() => {});
+          } catch {
+            /* ignore */
+          }
+        } else {
+          remaining.push(msg);
+        }
+      }
+
+      if (remaining.length > 0) {
+        localStorage.setItem(queueKey, JSON.stringify(remaining));
+      } else {
+        localStorage.removeItem(queueKey);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [order.id]);
+
   // Sync Supabase messages, subscribe to Realtime channel & localStorage storage events
   useEffect(() => {
     if (!isOpen) return;
+
+    // Helper to add normalized incoming message with strict deduplication
+    const processIncomingRawMessage = (raw: unknown) => {
+      const norm = normalizeChatMessage(raw as Record<string, unknown>, order.id);
+      if (!norm.message) return;
+
+      setMessages(prev => {
+        // Deduplicate by ID
+        if (prev.some(m => m.id === norm.id)) return prev;
+
+        const updated = dedupeMessages([...prev, {
+          ...norm,
+          is_read: true,
+          is_delivered: true
+        }]);
+        updated.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(updated));
+          window.dispatchEvent(new Event('storage'));
+          window.dispatchEvent(new CustomEvent('localeats_chat_update', { detail: { orderId: order.id } }));
+        } catch {
+          /* ignore */
+        }
+        return updated;
+      });
+      setTimeout(scrollToBottom, 100);
+    };
 
     // Local Storage & Custom Multi-Tab/Same-Window listener
     const syncFromLocalStorage = () => {
       try {
         const stored = localStorage.getItem(storageKey);
         if (stored) {
-          const parsed: OrderChatMessage[] = JSON.parse(stored);
+          const parsed: Record<string, unknown>[] = JSON.parse(stored);
+          const normalized = parsed.map(m => normalizeChatMessage(m, order.id));
           setMessages(prev => {
-            if (JSON.stringify(prev) === stored) return prev;
-            return markMessagesAsRead(parsed);
+            if (JSON.stringify(prev) === JSON.stringify(normalized)) return prev;
+            return markMessagesAsRead(normalized);
           });
           setTimeout(scrollToBottom, 50);
         }
@@ -235,11 +436,13 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
       setConnectionStatus('connecting');
       setMessages(prev => markMessagesAsRead(prev));
       handleRefreshMessages();
+      flushPendingQueue();
     });
 
-    // Setup Realtime Broadcast & Postgres Subscriptions with status tracking
+    // Setup Realtime Broadcast & Postgres Subscriptions on BOTH channel naming conventions (`order_chat_${order.id}` and `order-chat-${order.id}`)
     const supabase = getSupabase();
-    const channelName = `order_chat_${order.id}`;
+    const primaryChannelName = `order_chat_${order.id}`;
+    const fallbackChannelName = `order-chat-${order.id}`;
 
     if (isSupabaseMocked()) {
       const timer = setTimeout(() => setConnectionStatus('online'), 200);
@@ -252,65 +455,39 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
     }
     
     const realtimeChannel = supabase
-      .channel(channelName)
-      .on('broadcast', { event: 'new_message' }, (payload) => {
-        const incomingMsg = payload.payload as OrderChatMessage;
-        if (incomingMsg && incomingMsg.order_id === order.id) {
-          setMessages(prev => {
-            if (prev.some(m => m.id === incomingMsg.id)) return prev;
-            const updated = [...prev, {
-              ...incomingMsg,
-              is_read: true,
-              is_delivered: true
-            }];
-            try {
-              localStorage.setItem(storageKey, JSON.stringify(updated));
-              window.dispatchEvent(new Event('storage'));
-              window.dispatchEvent(new CustomEvent('localeats_chat_update', { detail: { orderId: order.id } }));
-            } catch {
-              /* ignore */
-            }
-            return updated;
-          });
-          setTimeout(scrollToBottom, 100);
-        }
-      })
+      .channel(primaryChannelName)
+      .on('broadcast', { event: 'new_message' }, (payload) => processIncomingRawMessage(payload.payload))
+      .on('broadcast', { event: 'message' }, (payload) => processIncomingRawMessage(payload.payload))
+      .on('broadcast', { event: 'chat_message' }, (payload) => processIncomingRawMessage(payload.payload))
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_messages',
+        filter: `order_id=eq.${order.id}`
+      }, (payload) => processIncomingRawMessage(payload.new))
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'order_messages',
         filter: `order_id=eq.${order.id}`
-      }, (payload) => {
-        const incomingMsg = payload.new as OrderChatMessage;
-        if (incomingMsg && incomingMsg.order_id === order.id) {
-          setMessages(prev => {
-            if (prev.some(m => m.id === incomingMsg.id)) return prev;
-            const updated = [...prev, {
-              ...incomingMsg,
-              is_read: true,
-              is_delivered: true
-            }];
-            try {
-              localStorage.setItem(storageKey, JSON.stringify(updated));
-              window.dispatchEvent(new Event('storage'));
-              window.dispatchEvent(new CustomEvent('localeats_chat_update', { detail: { orderId: order.id } }));
-            } catch {
-              /* ignore */
-            }
-            return updated;
-          });
-          setTimeout(scrollToBottom, 100);
-        }
-      })
+      }, (payload) => processIncomingRawMessage(payload.new))
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setConnectionStatus('online');
+          flushPendingQueue();
         } else if (status === 'TIMED_OUT' || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
           setConnectionStatus('offline');
         } else {
           setConnectionStatus('connecting');
         }
       });
+
+    // Secondary listener for hyphenated channel format
+    const secondaryChannel = supabase
+      .channel(fallbackChannelName)
+      .on('broadcast', { event: 'new_message' }, (payload) => processIncomingRawMessage(payload.payload))
+      .on('broadcast', { event: 'message' }, (payload) => processIncomingRawMessage(payload.payload))
+      .subscribe();
 
     channelRef.current = realtimeChannel;
 
@@ -322,8 +499,9 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
+      supabase.removeChannel(secondaryChannel);
     };
-  }, [isOpen, order.id, storageKey, markMessagesAsRead, handleRefreshMessages, scrollToBottom]);
+  }, [isOpen, order.id, storageKey, markMessagesAsRead, handleRefreshMessages, flushPendingQueue, scrollToBottom]);
 
   useEffect(() => {
     scrollToBottom();
@@ -345,13 +523,13 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
       message: content,
       created_at: new Date().toISOString(),
       is_quick_reply: isQuick,
-      is_delivered: true,
+      is_delivered: connectionStatus === 'online',
       is_read: false
     };
 
     // Optimistic UI Update & Storage Dispatch
     setMessages(prev => {
-      const updated = [...prev, newMsg];
+      const updated = dedupeMessages([...prev, newMsg]);
       try {
         localStorage.setItem(storageKey, JSON.stringify(updated));
         window.dispatchEvent(new Event('storage'));
@@ -366,10 +544,16 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
     setIsSending(false);
     setTimeout(scrollToBottom, 50);
 
-    // 1. Broadcast Realtime Message via Subscribed Channel
+    // 1. Broadcast Realtime Message via Subscribed Channels (both underscore & hyphen)
     try {
-      const ch = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
-      ch.send({
+      const ch1 = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
+      ch1.send({
+        type: 'broadcast',
+        event: 'new_message',
+        payload: newMsg
+      }).catch(() => {});
+
+      getSupabase().channel(`order-chat-${order.id}`).send({
         type: 'broadcast',
         event: 'new_message',
         payload: newMsg
@@ -378,91 +562,61 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
       /* ignore */
     }
 
-    // 2. Try DB Insert
+    // 2. Try DB Insert with multi-field fallback schema across chat_messages and order_messages
     if (!isSupabaseMocked()) {
       try {
-        await getSupabase().from('order_messages').insert({
-          id: newMsg.id,
+        const supabase = getSupabase();
+        
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const isValidUuid = uuidRegex.test(newMsg.sender_id);
+
+        const chatPayload: Record<string, unknown> = {
           order_id: newMsg.order_id,
-          sender_role: newMsg.sender_role,
           sender_id: newMsg.sender_id,
-          sender_name: newMsg.sender_name,
-          message: newMsg.message,
-          created_at: newMsg.created_at
-        });
+          sender_type: newMsg.sender_role,
+          content: newMsg.message,
+          message_text: newMsg.message,
+          created_at: newMsg.created_at,
+          is_read: false
+        };
+        if (isValidUuid) {
+          chatPayload.user_id = newMsg.sender_id;
+        }
+
+        const { error: chatErr } = await supabase.from('chat_messages').insert(chatPayload);
+
+        let orderMsgErr = null;
+        try {
+          const res = await supabase.from('order_messages').insert({
+            id: newMsg.id,
+            order_id: newMsg.order_id,
+            sender_role: newMsg.sender_role,
+            sender_id: newMsg.sender_id,
+            sender_name: newMsg.sender_name,
+            message: newMsg.message,
+            created_at: newMsg.created_at
+          });
+          orderMsgErr = res.error;
+        } catch {
+          orderMsgErr = { message: 'order_messages insert failed' };
+        }
+
+        if (chatErr && orderMsgErr) {
+          // Store in offline pending queue if both fail
+          const queueKey = `localeats_pending_chat_queue_${order.id}`;
+          const currentQueue = JSON.parse(localStorage.getItem(queueKey) || '[]');
+          currentQueue.push(newMsg);
+          localStorage.setItem(queueKey, JSON.stringify(currentQueue));
+        }
       } catch (err) {
         console.info('DB save info:', err);
+        const queueKey = `localeats_pending_chat_queue_${order.id}`;
+        const currentQueue = JSON.parse(localStorage.getItem(queueKey) || '[]');
+        currentQueue.push(newMsg);
+        localStorage.setItem(queueKey, JSON.stringify(currentQueue));
       }
     }
-
-    // Auto-Simulate polite customer/rider response after short delay if in single tab/demo mode
-    setTimeout(() => {
-      try {
-        const stored = localStorage.getItem(storageKey);
-        if (stored) {
-          const parsedArr: OrderChatMessage[] = JSON.parse(stored);
-          const lastMsg = parsedArr[parsedArr.length - 1];
-          // If the last message is still our message (meaning counterpart hasn't replied yet), trigger automated counterpart response
-          if (lastMsg && lastMsg.id === newMsg.id) {
-            handleSimulateReply();
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    }, 2200);
   };
-
-  const handleSimulateReply = useCallback(() => {
-    const isTargetingRider = currentUserRole === 'customer';
-    const repliesList = isTargetingRider ? SIMULATED_RIDER_REPLIES : SIMULATED_CUSTOMER_REPLIES;
-    const randomIndex = Math.floor(Math.random() * repliesList.length);
-    const randomReply = repliesList[randomIndex];
-    
-    const simRole: 'rider' | 'customer' = isTargetingRider ? 'rider' : 'customer';
-    const simName = isTargetingRider ? (order.rider_name || 'Rider') : (order.customer_name || 'Customer');
-
-    const simMsg: OrderChatMessage = {
-      id: generateMessageId('sim-msg'),
-      order_id: order.id,
-      sender_role: simRole,
-      sender_id: `sim-${simRole}`,
-      sender_name: simName,
-      message: randomReply,
-      created_at: new Date().toISOString(),
-      is_delivered: true,
-      is_read: true
-    };
-
-    setMessages(prev => {
-      // Mark all sent messages before this reply as read by the other party!
-      const updated = prev.map(m => m.sender_role === currentUserRole ? { ...m, is_read: true } : m);
-      updated.push(simMsg);
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(updated));
-        window.dispatchEvent(new Event('storage'));
-        window.dispatchEvent(new CustomEvent('localeats_chat_update', { detail: { orderId: order.id, message: simMsg } }));
-      } catch {
-        /* ignore */
-      }
-      return updated;
-    });
-
-    // Broadcast to realtime channel
-    try {
-      const ch = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
-      ch.send({
-        type: 'broadcast',
-        event: 'new_message',
-        payload: simMsg
-      }).catch(() => {});
-    } catch {
-      /* ignore */
-    }
-
-    toast.info(`Message from ${simName}: "${randomReply}"`);
-    setTimeout(scrollToBottom, 100);
-  }, [currentUserRole, order.rider_name, order.customer_name, order.id, storageKey, scrollToBottom]);
 
   if (!isOpen) return null;
 
@@ -590,13 +744,13 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
             className="flex-1 p-4 overflow-y-auto space-y-3 bg-[#08080a] pointer-events-auto relative z-20"
             onClick={(e) => e.stopPropagation()}
           >
-            {messages.map((msg) => {
+            {dedupeMessages(messages).map((msg, idx) => {
               const isSelf = msg.sender_role === currentUserRole;
               const isSystem = msg.sender_role === 'system';
 
               if (isSystem) {
                 return (
-                  <div key={msg.id} className="flex justify-center my-2 pointer-events-auto">
+                  <div key={`${msg.id}-${idx}`} className="flex justify-center my-2 pointer-events-auto">
                     <div className="max-w-[90%] bg-zinc-900/80 border border-zinc-800 rounded-2xl px-3 py-1.5 text-[10px] text-zinc-400 text-center font-mono flex items-center gap-1.5">
                       <Lock className="w-3 h-3 text-[#f59e0b] shrink-0" />
                       <span>{msg.message}</span>
@@ -607,7 +761,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
 
               return (
                 <div
-                  key={msg.id}
+                  key={`${msg.id}-${idx}`}
                   className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} pointer-events-auto`}
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -701,18 +855,6 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
                 className="p-3 bg-[#f59e0b] hover:bg-[#d97706] disabled:opacity-40 disabled:hover:bg-[#f59e0b] text-zinc-950 font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center shrink-0 pointer-events-auto relative z-30"
               >
                 <Send className="w-4 h-4" />
-              </button>
-
-              {/* Simulation Helper for Demo / Testing */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSimulateReply();
-                }}
-                title={currentUserRole === 'customer' ? "Simulate Rider Reply" : "Simulate Customer Reply"}
-                className="p-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-[#f59e0b] rounded-xl border border-zinc-700/60 transition-colors text-[10px] font-black uppercase font-mono shrink-0 cursor-pointer pointer-events-auto relative z-30"
-              >
-                {currentUserRole === 'customer' ? 'Sim Rider' : 'Sim Customer'}
               </button>
             </div>
           ) : (

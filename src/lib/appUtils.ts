@@ -68,12 +68,31 @@ export function isTodayLocal(dateStr: string): boolean {
 /**
  * Simple promise with timeout wrapper.
  */
-export function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs = 2000): Promise<T> {
+export function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs = 15000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Operation timed out')), timeoutMs);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('Operation timed out'));
+      }
+    }, timeoutMs);
+
     promise.then(
-      res => { clearTimeout(timer); resolve(res); },
-      err => { clearTimeout(timer); reject(err); }
+      res => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(res);
+        }
+      },
+      err => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      }
     );
   });
 }
@@ -81,6 +100,10 @@ export function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs = 2000): Pr
 /**
  * Network request retry runner with exponential backoff and timeout thresholds.
  */
+import { toast } from 'sonner';
+import { getErrorMessage } from './errorHandling';
+import { clearStaleAuthTokens } from './supabase';
+
 export async function fetchWithRetry<T>(
   fn: () => Promise<T>, 
   retries = 5, 
@@ -90,17 +113,32 @@ export async function fetchWithRetry<T>(
   try {
     return await promiseWithTimeout(fn(), timeoutMs);
   } catch (err: unknown) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    const isNetworkOrTimeoutErr = Boolean(error && (
-      /fetch|network|offline|connection|failed|changed|cors|disconnected|abort|timeout|timed out/i.test(error.message)
-    ));
-    if (retries > 0 && isNetworkOrTimeoutErr) {
+    const errorMsg = getErrorMessage(err, 'Network or database operation failed');
+    const error = err instanceof Error ? err : new Error(errorMsg);
+    const msg = error.message.toLowerCase();
+    
+    // Check if error is due to expired auth token / JWT
+    if (/jwt expired|refresh token|invalid refresh token|token_not_found/i.test(msg)) {
+      clearStaleAuthTokens();
+      throw error;
+    }
+
+    // Distinguish between transient (network/timeout) and fatal errors
+    const isTransientErr = /fetch|network|offline|connection|failed|changed|cors|disconnected|abort|timeout|timed out/i.test(msg);
+    const isFatalDbErr = /relation.*does not exist|syntax error|permission denied|row-level security|duplicate key/i.test(msg);
+
+    if (retries > 0 && isTransientErr && !isFatalDbErr) {
       const nextDelay = delay * 1.5; 
       const errMessage = error instanceof Error ? error.message : 'Network sequence interrupted';
       console.log(`[RETRYING] ${errMessage.toUpperCase()} | Attempts remaining: ${retries}`);
+      if (retries === 5 || retries === 3) {
+        toast.warning('Network unstable, retrying...', { id: 'network-retry', duration: 3000 });
+      }
       await new Promise(res => setTimeout(res, delay));
       return fetchWithRetry(fn, retries - 1, nextDelay, timeoutMs);
     }
+    
+    // Throw error so it can be handled or swallowed quietly by caller
     throw error;
   }
 }

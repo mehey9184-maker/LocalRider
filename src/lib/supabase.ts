@@ -26,10 +26,24 @@ export function getSupabase(): SupabaseClient {
     if (isUrlPlaceholder || isKeyPlaceholder) {
       isMocked = true;
       // Return a dummy client that doesn't throw immediate errors but we'll check isMocked
-      supabaseClient = createClient('https://placeholder.supabase.co', 'placeholder');
+      supabaseClient = createClient('https://placeholder.supabase.co', 'placeholder', {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          storageKey: 'localeats_auth_token_v2'
+        }
+      });
     } else {
       try {
-        supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+        supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+            storageKey: 'localeats_auth_token_v2'
+          }
+        });
       } catch (err) {
         console.warn('Supabase client creation failed, defaulting to mock mode:', err);
         isMocked = true;
@@ -61,12 +75,21 @@ export function clearStaleAuthTokens() {
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;
-    const msg = typeof reason === 'string' ? reason : (reason?.message || reason?.error_description || '');
+    let msg = typeof reason === 'string' ? reason : (reason?.message || reason?.error_description || reason?.error || '');
+    if (!msg && typeof reason === 'object' && reason) {
+      try {
+        msg = JSON.stringify(reason);
+      } catch {
+        msg = String(reason);
+      }
+    }
+    const lowerMsg = String(msg).toLowerCase();
     if (
-      msg.includes('Refresh Token') || 
-      msg.includes('refresh_token') || 
-      msg.includes('Invalid Refresh Token') || 
-      msg.includes('token_not_found')
+      lowerMsg.includes('refresh token') || 
+      lowerMsg.includes('refresh_token') || 
+      lowerMsg.includes('invalid refresh token') || 
+      lowerMsg.includes('token_not_found') ||
+      lowerMsg.includes('jwt expired')
     ) {
       console.warn('Handling invalid refresh token rejection gracefully:', msg);
       clearStaleAuthTokens();

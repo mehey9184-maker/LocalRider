@@ -23,6 +23,14 @@ console.warn = (...args) => {
   if (typeof args[0] === 'string' && /width\(-?\d+\).*height\(-?\d+\).*should be greater than 0/.test(args[0])) {
     return;
   }
+  const isTransient = args.some(arg => {
+    if (!arg) return false;
+    const msg = typeof arg === 'string' ? arg : (arg instanceof Error ? arg.message : String(arg));
+    return /failed to fetch|networkerror|operation timed out|operation timeout|timed out|timeout|jwt expired|refresh token|invalid refresh token|token_not_found/i.test(msg);
+  });
+  if (isTransient) {
+    return;
+  }
   originalConsoleWarn(...args);
 };
 
@@ -6300,7 +6308,7 @@ export function App() {
             .order('expires_at', { ascending: false });
           if (r.error) throw r.error;
           return r as unknown as { data: Record<string, unknown>[] | null; error?: unknown };
-        }, 1, 500, 4000);
+        }, 0, 500, 3000);
         connData = res.data;
       } catch {
         try {
@@ -6312,10 +6320,10 @@ export function App() {
               .order('expires_at', { ascending: false });
             if (r.error) throw r.error;
             return r as unknown as { data: Record<string, unknown>[] | null; error?: unknown };
-          }, 1, 500, 4000);
+          }, 0, 500, 3000);
           connData = res.data;
         } catch (eConn) {
-          console.warn('Quietly handling connection query fallback:', getErrorMessage(eConn));
+          // Quiet fallback to cached/local connection code
         }
       }
       
@@ -6403,7 +6411,7 @@ export function App() {
             .limit(100);
           if (r.error) throw r.error;
           return r;
-        }, 2, 1000, 8000); // 2 retries, 8s timeout
+        }, 0, 500, 3000);
         ordersData = res.data;
         ordersError = res.error;
       } catch {
@@ -6416,7 +6424,7 @@ export function App() {
               .limit(100);
             if (r.error) throw r.error;
             return r;
-          }, 2, 1000, 8000); // 2 retries, 8s timeout
+          }, 0, 500, 3000);
           ordersData = res.data;
         } catch {
           try {
@@ -6428,14 +6436,12 @@ export function App() {
                 .limit(100);
               if (r.error) throw r.error;
               return r;
-            }, 2, 1000, 8000); // 2 retries, 8s timeout
+            }, 0, 500, 3000);
             ordersData = res.data;
           } catch (e3) {
             const errStr = getErrorMessage(e3);
             if (/jwt expired|refresh token|invalid refresh token|token_not_found/i.test(errStr)) {
               clearStaleAuthTokens();
-            } else {
-              console.warn('Quietly handling standby on tertiary fallback order query:', errStr);
             }
             ordersError = e3;
           }

@@ -54,7 +54,7 @@ export const errorBus = new ErrorEventEmitter();
 
 export const isTransientError = (msg: string): boolean => {
   if (!msg) return false;
-  return /fetch|network|timeout|timed out|operation timed out|operation timeout|abort|connection|lock broken|refresh token|invalid refresh token|token_not_found|jwt expired/i.test(msg);
+  return /fetch|network|timeout|timed out|operation timed out|operation timeout|abort|connection|lock broken|refresh token|invalid refresh token|token_not_found|jwt expired|permission denied|is_shop_owner|42501|row-level security/i.test(msg);
 };
 
 export function dispatchError(message: string, description?: string, onRetry?: () => void) {

@@ -100,16 +100,29 @@ export function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs = 15000): P
 /**
  * Network request retry runner with exponential backoff and timeout thresholds.
  */
-import { toast } from 'sonner';
 import { getErrorMessage } from './errorHandling';
-import { clearStaleAuthTokens } from './supabase';
+import { clearStaleAuthTokens, isSupabaseMocked } from './supabase';
+import { addNetworkErrorLog } from '../utils/appUtils';
+
+export {
+  forceCacheRevalidation,
+  addNetworkErrorLog,
+  getRecentErrorLogs,
+  clearNetworkErrorLogs,
+  subscribeNetworkErrors
+} from '../utils/appUtils';
+export type { NetworkErrorLog } from '../utils/appUtils';
 
 export async function fetchWithRetry<T>(
   fn: () => Promise<T>, 
-  retries = 5, 
-  delay = 1000, 
-  timeoutMs = 15000
+  retries = 1, 
+  delay = 500, 
+  timeoutMs = 4000
 ): Promise<T> {
+  if (isSupabaseMocked()) {
+    throw new Error('Supabase is in mock mode');
+  }
+
   try {
     return await promiseWithTimeout(fn(), timeoutMs);
   } catch (err: unknown) {
@@ -117,6 +130,9 @@ export async function fetchWithRetry<T>(
     const error = err instanceof Error ? err : new Error(errorMsg);
     const msg = error.message.toLowerCase();
     
+    // Log network request failures for diagnostic Network Health HUD
+    addNetworkErrorLog(error.message);
+
     // Check if error is due to expired auth token / JWT
     if (/jwt expired|refresh token|invalid refresh token|token_not_found/i.test(msg)) {
       clearStaleAuthTokens();
@@ -129,11 +145,6 @@ export async function fetchWithRetry<T>(
 
     if (retries > 0 && isTransientErr && !isFatalDbErr) {
       const nextDelay = delay * 1.5; 
-      const errMessage = error instanceof Error ? error.message : 'Network sequence interrupted';
-      console.log(`[RETRYING] ${errMessage.toUpperCase()} | Attempts remaining: ${retries}`);
-      if (retries === 5 || retries === 3) {
-        toast.warning('Network unstable, retrying...', { id: 'network-retry', duration: 3000 });
-      }
       await new Promise(res => setTimeout(res, delay));
       return fetchWithRetry(fn, retries - 1, nextDelay, timeoutMs);
     }

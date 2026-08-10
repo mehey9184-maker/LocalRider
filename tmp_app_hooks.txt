@@ -1,0 +1,201 @@
+  );
+}
+
+const refHolder = {
+  fetchConnectionsAndOrders: () => Promise.resolve(),
+  fetchActiveOrdersAndHistory: () => Promise.resolve(),
+  establishRealtimeChannels: () => {}
+};
+
+export function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<RiderProfile | null>(null);
+  const profileRef = useRef<RiderProfile | null>(null);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+  const [showOfflineWarning, setShowOfflineWarning] = useState(false);
+  const [showRiderTour, setShowRiderTour] = useState(false);
+  const [showLegalModal, setShowLegalModal] = useState(false);
+  const [connections, setConnections] = useState<ShopConnection[]>([]);
+  const [handshakeVerificationState, setHandshakeVerificationState] = useState<'idle' | 'pending' | 'verified' | 'failed'>('idle');
+  const [now, setNow] = useState(() => Date.now());
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<AppView>(() => {
+    return (localStorage.getItem('localeats_view') as AppView) || 'dash';
+  });
+
+  // --- LocalEats Simulator State ---
+  const [simulatedOrders, setSimulatedOrders] = useState<DeliveryOrder[]>(() => {
+    const saved = localStorage.getItem('localeats_sim_orders');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [dispatchLog, setDispatchLog] = useState<string[]>(() => {
+    const saved = localStorage.getItem('localeats_dispatch_log');
+    return saved ? JSON.parse(saved) : ["System Backend initialized. Ready to process Kota and Braai orders..."];
+  });
+  const [dispatchState, setDispatchState] = useState<Record<string, {
+    stage: 'idle' | 'notifying_rider1' | 'rider1_deciding' | 'rider1_declined' | 'notifying_rider2' | 'rider2_deciding' | 'accepted' | 'preparing';
+    rider1Timer: number;
+    rider2Timer: number;
+  }>>(() => {
+    const saved = localStorage.getItem('localeats_dispatch_state');
+    return saved ? JSON.parse(saved) : {};
+  });
+
+  useEffect(() => {
+    localStorage.setItem('localeats_sim_orders', JSON.stringify(simulatedOrders));
+  }, [simulatedOrders]);
+
+  useEffect(() => {
+    localStorage.setItem('localeats_dispatch_log', JSON.stringify(dispatchLog));
+  }, [dispatchLog]);
+
+  useEffect(() => {
+    localStorage.setItem('localeats_dispatch_state', JSON.stringify(dispatchState));
+  }, [dispatchState]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      let changed = false;
+      const newLogs: string[] = [];
+      
+      const nextSimOrders = simulatedOrders.map(order => {
+        if (order.delivery_status !== 'finding_rider') return order;
+        
+        // If "In-House Shop Delivery" is active, don't dispatch to public riders.
+        if (order.allow_external_riders === false) {
+          if (order.status !== 'preparing' && order.status !== 'accepted') {
+            changed = true;
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Order #${order.id.slice(-4)} marked for IN-HOUSE SHOP DELIVERY. Dispatching to private in-house driver.`);
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Private driver accepted. Merchant chef triggers meal preparation!`);
+            return {
+              ...order,
+              delivery_status: 'accepted' as const,
+              status: 'preparing' as const,
+              rider_name: 'In-House Driver',
+              rider_phone: '+27 11 000 0000',
+              allow_external_riders: false
+            };
+          }
+          return order;
+        }
+
+        const state = dispatchState[order.id];
+        if (!state) return order;
+
+        let r1T = state.rider1Timer;
+        let r2T = state.rider2Timer;
+
+        if (state.stage === 'notifying_rider1') {
+          r1T = 10;
+          changed = true;
+          newLogs.push(`[${new Date().toLocaleTimeString()}] System Backend: Dispatched push notification order ping to nearest active Rider: Thabo (0.8km away).`);
+          setDispatchState(prev => ({
+            ...prev,
+            [order.id]: {
+              ...prev[order.id],
+              stage: 'rider1_deciding',
+              rider1Timer: 10
+            }
+          }));
+        } else if (state.stage === 'rider1_deciding') {
+          if (r1T > 1) {
+            r1T -= 1;
+            changed = true;
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                rider1Timer: r1T
+              }
+            }));
+          } else {
+            // Rider 1 times out!
+            changed = true;
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Rider 1 (Thabo) timed out. Seamlessly re-routing the delivery ping to the next closest active Rider: You (the logged-in Rider, 1.2km away).`);
+            
+            toast("🔔 Incoming Order Ping!", {
+              description: `Classic Kota or Braai order available from ${order.restaurant_name}! Open the dispatch feed to accept.`,
+              duration: 8000
+            });
+            if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
+
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                stage: 'notifying_rider2',
+                rider1Timer: 0
+              }
+            }));
+          }
+        } else if (state.stage === 'notifying_rider2') {
+          r2T = 12;
+          changed = true;
+          newLogs.push(`[${new Date().toLocaleTimeString()}] System Backend: Sent push notification alert to next closest active Rider: Sipho (2.1km away).`);
+          setDispatchState(prev => ({
+            ...prev,
+            [order.id]: {
+              ...prev[order.id],
+              stage: 'rider2_deciding',
+              rider2Timer: 12
+            }
+          }));
+        } else if (state.stage === 'rider2_deciding') {
+          if (r2T > 1) {
+            r2T -= 1;
+            changed = true;
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                rider2Timer: r2T
+              }
+            }));
+          } else {
+            // Rider 2 (Sipho) accepts!
+            changed = true;
+            newLogs.push(`[${new Date().toLocaleTimeString()}] Rider 2 (Sipho) triggered ACCEPT REQUEST! Setting order to preparing state.`);
+            newLogs.push(`[${new Date().toLocaleTimeString()}] System Backend: Updating order state across Customer UI & Merchant Dashboard. Meal preparation triggered!`);
+            
+            setDispatchState(prev => ({
+              ...prev,
+              [order.id]: {
+                ...prev[order.id],
+                stage: 'accepted'
+              }
+            }));
+
+            return {
+              ...order,
+              delivery_status: 'accepted' as const,
+              status: 'preparing' as const,
+              rider_id: 'mock-rider-sipho',
+              rider_name: 'Sipho (Scooter)',
+              rider_phone: '+27 82 555 4321'
+            };
+          }
+        }
+
+        return order;
+      });
+
+      if (changed) {
+        setSimulatedOrders(nextSimOrders);
+      }
+      if (newLogs.length > 0) {
+        setDispatchLog(prev => [...newLogs.reverse(), ...prev]);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [simulatedOrders, dispatchState]);
+
+  const [cashOnHand, setCashOnHand] = useState<number>(() => {
+    return Number(localStorage.getItem('localeats_cash_on_hand') || '0');
+  });
+
+  useEffect(() => {
+    localStorage.setItem('localeats_cash_on_hand', cashOnHand.toString());
+  }, [cashOnHand]);

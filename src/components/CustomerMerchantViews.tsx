@@ -85,11 +85,11 @@ export const CustomerView = ({
                 onClick={() => onPlaceOrder('kota')}
                 disabled={!!activeFindingOrder}
                 className={cn(
-                  "w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:border-transparent text-black font-black uppercase tracking-widest text-[10px] rounded-xl mt-6 transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                  "w-full min-h-[44px] py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:border-transparent text-black font-black uppercase tracking-widest text-fluid-xs rounded-xl mt-6 transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-target",
                   activeFindingOrder && "cursor-not-allowed"
                 )}
               >
-                <Plus className="w-3.5 h-3.5" /> Order Kota
+                <Plus className="icon-responsive-sm" /> Order Kota
               </button>
             </BentoCard>
 
@@ -116,11 +116,11 @@ export const CustomerView = ({
                 onClick={() => onPlaceOrder('braai')}
                 disabled={!!activeFindingOrder}
                 className={cn(
-                  "w-full py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:border-transparent text-black font-black uppercase tracking-widest text-[10px] rounded-xl mt-6 transition-all flex items-center justify-center gap-1.5 cursor-pointer",
+                  "w-full min-h-[44px] py-3 bg-emerald-500 hover:bg-emerald-600 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:border-transparent text-black font-black uppercase tracking-widest text-fluid-xs rounded-xl mt-6 transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-target",
                   activeFindingOrder && "cursor-not-allowed"
                 )}
               >
-                <Plus className="w-3.5 h-3.5" /> Order Braai Plate
+                <Plus className="icon-responsive-sm" /> Order Braai Plate
               </button>
             </BentoCard>
           </div>

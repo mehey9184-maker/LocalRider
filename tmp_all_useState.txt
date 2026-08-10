@@ -1,0 +1,121 @@
+160:  const [showRight, setShowRight] = useState(true);
+161:  const [showLeft, setShowLeft] = useState(false);
+228:  const [email, setEmail] = useState('');
+229:  const [password, setPassword] = useState('');
+230:  const [fullName, setFullName] = useState('');
+231:  const [phone, setPhone] = useState('');
+232:  const [vehicleType, setVehicleType] = useState<UserVehicle>('Road');
+233:  const [loading, setLoading] = useState(false);
+234:  const [isSignUp, setIsSignUp] = useState(false);
+646:  const [confirmId, setConfirmId] = useState<string | null>(null);
+647:  const [instantAccept, setInstantAccept] = useState(() => localStorage.getItem('localeats_instant_accept') === 'true');
+657:  const [isRefreshing, setIsRefreshing] = useState(false);
+658:  const [localNow, setLocalNow] = useState(() => Date.now());
+667:  const [showNearbyMap, setShowNearbyMap] = useState(true);
+669:  const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
+670:  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+671:  const [riderNotes, setRiderNotes] = useState<Record<string, string>>({});
+675:  const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
+1536:  const [sortMethod, setSortMethod] = useState<'default' | 'optimized'>('default');
+1537:  const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+1538:  const [activeIndex, setActiveIndex] = useState(0);
+1539:  const [showGooglePocket, setShowGooglePocket] = useState(false);
+1540:  const [isSwapped, setIsSwapped] = useState(false);
+1541:  const [isPocketExpanded, setIsPocketExpanded] = useState(false);
+1542:  const [routeProgress, setRouteProgress] = useState(0);
+1543:  const [activeEta, setActiveEta] = useState(0);
+1544:  const [routeDistance, setRouteDistance] = useState(0);
+1545:  const [arrivedAtCustomer, setArrivedAtCustomer] = useState<Record<string, boolean>>({});
+1546:  const [arrivedAtMerchant, setArrivedAtMerchant] = useState<Record<string, boolean>>({});
+1547:  const [showCipherModal, setShowCipherModal] = useState(false);
+1548:  const [handshakeCipherInput, setHandshakeCipherInput] = useState('');
+1549:  const [cashCollected, setCashCollected] = useState<Record<string, boolean>>({});
+1550:  const [delayedOrders, setDelayedOrders] = useState<Record<string, boolean>>({});
+1551:  const [uploadingProofId, setUploadingProofId] = useState<string | null>(null);
+1552:  const [deliveryProofs, setDeliveryProofs] = useState<Record<string, string>>({});
+1553:  const [showDelayModal, setShowDelayModal] = useState(false);
+1554:  const [delayReason, setDelayReason] = useState<string>('');
+1555:  const [isForceDeviated, setIsForceDeviated] = useState(false);
+1557:  const [showLandmarkModal, setShowLandmarkModal] = useState(false);
+1558:  const [landmarkAddress, setLandmarkAddress] = useState('');
+1559:  const [landmarkSuggestion, setLandmarkSuggestion] = useState('');
+1560:  const [isChatOpen, setIsChatOpen] = useState(false);
+1563:  const [isListening, setIsListening] = useState(false);
+2772:  const [searchQuery, setSearchQuery] = useState('');
+2773:  const [activeTab, setActiveTab] = useState<'all' | 'completed' | 'cancelled'>('all');
+2774:  const [period, setPeriod] = useState<'7d' | '30d' | 'all' | 'custom'>('7d');
+2775:  const [customDateRange, setCustomDateRange] = useState({ start: '', end: '' });
+2776:  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+2792:  const [initialNow] = useState(() => Date.now());
+3504:  const [cachedTileCount, setCachedTileCount] = useState<number>(0);
+3505:  const [cachedSizeStr, setCachedSizeStr] = useState<string>('0.0 MB');
+3506:  const [syncingSector, setSyncingSector] = useState<string | null>(null);
+3507:  const [syncProgress, setSyncProgress] = useState<number>(0);
+3508:  const [syncTotal, setSyncTotal] = useState<number>(0);
+3509:  const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
+3612:  const [licensePlate, setLicensePlate] = useState(() => localStorage.getItem(`localeats_plate_${profile.id}`) || '');
+3613:  const [vehicleDetails, setVehicleDetails] = useState(() => localStorage.getItem(`localeats_vehDetail_${profile.id}`) || '');
+3614:  const [showLicenseSaved, setShowLicenseSaved] = useState(false);
+3616:  const [pinging, setPinging] = useState(false);
+3617:  const [pingResult, setPingResult] = useState<number | null>(null);
+3619:  const [copied, setCopied] = useState(false);
+3620:  const [showQR, setShowQR] = useState(false);
+3621:  const [activeTab, setActiveTab] = useState<'overview' | 'identity' | 'settings' | 'referrals'>('overview');
+3623:  const [flyersScanned, setFlyersScanned] = useState(() => Number(localStorage.getItem('localeats_flyers_scanned') || '14'));
+3624:  const [ridersRecruited, setRidersRecruited] = useState(() => Number(localStorage.getItem('localeats_riders_recruited') || '2'));
+3625:  const [customSectorInput, setCustomSectorInput] = useState('');
+3626:  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+3628:  const [showDiagnostics, setShowDiagnostics] = useState(false);
+3629:  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+4798:  const [order, setOrder] = useState<DeliveryOrder | null>(null);
+4799:  const [riderLocation, setRiderLocation] = useState<[number, number] | null>(null);
+4800:  const [loading, setLoading] = useState(true);
+4801:  const [isChatOpen, setIsChatOpen] = useState(false);
+4802:  const [showDiagnostics, setShowDiagnostics] = useState(false);
+4803:  const [channelStatus, setChannelStatus] = useState<'SUBSCRIBED' | 'CONNECTING' | 'OFFLINE' | 'MOCK_MODE'>('CONNECTING');
+4804:  const [diagLogs, setDiagLogs] = useState<string[]>([]);
+5106:  const [code, setCode] = useState('');
+5107:  const [loading, setLoading] = useState(false);
+5108:  const [showScanner, setShowScanner] = useState(false);
+5281:  const [error, setError] = useState(false);
+5310:  const [user, setUser] = useState<User | null>(null);
+5311:  const [profile, setProfile] = useState<RiderProfile | null>(null);
+5316:  const [showOfflineWarning, setShowOfflineWarning] = useState(false);
+5317:  const [showRiderTour, setShowRiderTour] = useState(false);
+5318:  const [showLegalModal, setShowLegalModal] = useState(false);
+5319:  const [connections, setConnections] = useState<ShopConnection[]>([]);
+5320:  const [handshakeVerificationState, setHandshakeVerificationState] = useState<'idle' | 'pending' | 'verified' | 'failed'>('idle');
+5321:  const [now, setNow] = useState(() => Date.now());
+5322:  const [loading, setLoading] = useState(true);
+5323:  const [view, setView] = useState<AppView>(() => {
+5328:  const [simulatedOrders, setSimulatedOrders] = useState<DeliveryOrder[]>(() => {
+5332:  const [dispatchLog, setDispatchLog] = useState<string[]>(() => {
+5336:  const [dispatchState, setDispatchState] = useState<Record<string, {
+5494:  const [cashOnHand, setCashOnHand] = useState<number>(() => {
+5585:  const [isEcoMode, setIsEcoMode] = useState(() => localStorage.getItem('localeats_eco') === 'true');
+5586:  const [weather, setWeather] = useState<WeatherData | null>(() => {
+5600:  const [isHighContrastMode, setIsHighContrastMode] = useState(() => localStorage.getItem('localeats_contrast') === 'true');
+5601:  const [notificationTitle, setNotificationTitle] = useState(() => localStorage.getItem('localeats_noti_title') || 'New Order');
+5602:  const [notificationBody, setNotificationBody] = useState(() => localStorage.getItem('localeats_noti_body') || 'A new order is available in your area.');
+5604:  const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
+5605:  const [isHudExpanded, setIsHudExpanded] = useState(false);
+5606:  const [cachedTileCount, setCachedTileCount] = useState<number>(0);
+5607:  const [cachedSizeStr, setCachedSizeStr] = useState<string>('0.0 MB');
+5608:  const [orderQueueCount, setOrderQueueCount] = useState(0);
+5609:  const [locQueueCount, setLocQueueCount] = useState(0);
+5691:  const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>(() => {
+5700:  const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
+5702:  const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
+5765:  const [merchantAllowExternal] = useState(() => {
+5769:  const [merchantCashTrust] = useState(() => {
+5773:  const [merchantAutoLook] = useState(() => {
+5777:  const [dispatchToMarketplace] = useState<Record<string, boolean>>(() => {
+5900:  const [history, setHistory] = useState<DeliveryOrder[]>([]);
+5901:  const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
+5902:  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+5903:  const [dismissedOfflineBanner, setDismissedOfflineBanner] = useState(false);
+5904:  const [isGlobalNavVisible, setIsGlobalNavVisible] = useState(true);
+5905:  const [selectedTrackingOrderId, setSelectedTrackingOrderId] = useState<string | null>(null);
+5932:  const [showOnboarding, setShowOnboarding] = useState(() => {
+5935:  const [onboardingMode, setOnboardingMode] = useState<'onboarding' | 'helphub'>(() => {
+7743:  const [isListening, setIsListening] = useState(false);

@@ -55,6 +55,67 @@ html, body {
     transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
     @apply hover:border-zinc-700/80 hover:bg-[#121214] hover:shadow-[0_12px_30px_rgba(0,0,0,0.4)] active:scale-[0.99];
   }
+
+  /* Global Fluid Typography Scale (using CSS clamp) */
+  .text-fluid-xs {
+    font-size: clamp(0.65rem, 0.58rem + 0.3vw, 0.75rem);
+    line-height: 1.3;
+  }
+  .text-fluid-sm {
+    font-size: clamp(0.75rem, 0.68rem + 0.45vw, 0.875rem);
+    line-height: 1.35;
+  }
+  .text-fluid-base {
+    font-size: clamp(0.875rem, 0.8rem + 0.5vw, 1rem);
+    line-height: 1.4;
+  }
+  .text-fluid-lg {
+    font-size: clamp(1rem, 0.9rem + 0.6vw, 1.125rem);
+    line-height: 1.35;
+  }
+  .text-fluid-xl {
+    font-size: clamp(1.125rem, 1rem + 0.8vw, 1.375rem);
+    line-height: 1.3;
+  }
+  .text-fluid-2xl {
+    font-size: clamp(1.25rem, 1.1rem + 1.2vw, 1.75rem);
+    line-height: 1.25;
+  }
+  .text-fluid-3xl {
+    font-size: clamp(1.5rem, 1.25rem + 1.6vw, 2.25rem);
+    line-height: 1.2;
+  }
+
+  /* Responsive Icon Utility Classes */
+  .icon-responsive-xs {
+    width: clamp(0.75rem, 0.65rem + 0.4vw, 0.875rem);
+    height: clamp(0.75rem, 0.65rem + 0.4vw, 0.875rem);
+  }
+  .icon-responsive-sm {
+    width: clamp(0.875rem, 0.75rem + 0.5vw, 1rem);
+    height: clamp(0.875rem, 0.75rem + 0.5vw, 1rem);
+  }
+  .icon-responsive {
+    width: clamp(1rem, 0.85rem + 0.75vw, 1.25rem);
+    height: clamp(1rem, 0.85rem + 0.75vw, 1.25rem);
+  }
+  .icon-responsive-lg {
+    width: clamp(1.25rem, 1.1rem + 1vw, 1.5rem);
+    height: clamp(1.25rem, 1.1rem + 1vw, 1.5rem);
+  }
+  .icon-responsive-xl {
+    width: clamp(1.5rem, 1.25rem + 1.5vw, 2rem);
+    height: clamp(1.5rem, 1.25rem + 1.5vw, 2rem);
+  }
+
+  /* Touch Target minimum sizing */
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 @keyframes soft-pulse-anim {

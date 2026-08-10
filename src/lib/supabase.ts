@@ -3,6 +3,12 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 let supabaseClient: SupabaseClient | null = null;
 let isMocked = false;
 
+// Custom no-op lock handler to bypass Web Locks API issues in StrictMode/iframes
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const noopLock = async (_name: string, _acquireTimeout: number, fn: () => Promise<any>): Promise<any> => {
+  return await fn();
+};
+
 export function getSupabase(): SupabaseClient {
   if (!supabaseClient) {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -31,7 +37,8 @@ export function getSupabase(): SupabaseClient {
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: true,
-          storageKey: 'localeats_auth_token_v2'
+          storageKey: 'localeats_auth_token_v2',
+          lock: noopLock
         }
       });
     } else {
@@ -41,13 +48,16 @@ export function getSupabase(): SupabaseClient {
             persistSession: true,
             autoRefreshToken: true,
             detectSessionInUrl: true,
-            storageKey: 'localeats_auth_token_v2'
+            storageKey: 'localeats_auth_token_v2',
+            lock: noopLock
           }
         });
       } catch (err) {
         console.warn('Supabase client creation failed, defaulting to mock mode:', err);
         isMocked = true;
-        supabaseClient = createClient('https://placeholder.supabase.co', 'placeholder');
+        supabaseClient = createClient('https://placeholder.supabase.co', 'placeholder', {
+          auth: { lock: noopLock }
+        });
       }
     }
   }
@@ -89,10 +99,20 @@ if (typeof window !== 'undefined') {
       lowerMsg.includes('refresh_token') || 
       lowerMsg.includes('invalid refresh token') || 
       lowerMsg.includes('token_not_found') ||
-      lowerMsg.includes('jwt expired')
+      lowerMsg.includes('jwt expired') ||
+      lowerMsg.includes('lock broken') ||
+      lowerMsg.includes('was not released') ||
+      lowerMsg.includes('steal') ||
+      lowerMsg.includes('permission denied') ||
+      lowerMsg.includes('is_shop_owner') ||
+      lowerMsg.includes('42501')
     ) {
-      console.warn('Handling invalid refresh token rejection gracefully:', msg);
-      clearStaleAuthTokens();
+      if (lowerMsg.includes('refresh')) {
+        console.warn('Handling invalid refresh token rejection gracefully:', msg);
+        clearStaleAuthTokens();
+      } else {
+        console.warn('Handling database permission error gracefully:', msg);
+      }
       event.preventDefault();
     }
   });

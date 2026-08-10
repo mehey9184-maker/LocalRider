@@ -181,6 +181,9 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
   const [isSending, setIsSending] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'online' | 'offline'>('connecting');
+  const [isCounterpartTyping, setIsCounterpartTyping] = useState(false);
+  const counterpartTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTypingEventSentRef = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   
@@ -251,8 +254,21 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
           }
         };
 
-        const [chatRows, orderMsgRows] = await Promise.all([fetchChat(), fetchOrderMsg()]);
-        const allRows = [...chatRows, ...orderMsgRows];
+        const fetchRiderChatMsg = async () => {
+          try {
+            const res = await supabase
+              .from('rider_chat_messages')
+              .select('*')
+              .eq('order_id', order.id)
+              .order('created_at', { ascending: true });
+            return (res.data || []) as Record<string, unknown>[];
+          } catch {
+            return [] as Record<string, unknown>[];
+          }
+        };
+
+        const [chatRows, orderMsgRows, riderChatRows] = await Promise.all([fetchChat(), fetchOrderMsg(), fetchRiderChatMsg()]);
+        const allRows = [...chatRows, ...orderMsgRows, ...riderChatRows];
 
         if (allRows.length > 0) {
           loadedFromDb = true;
@@ -341,7 +357,23 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
               err2 = { message: 'order_messages insert failed' };
             }
 
-            if (!err1 || !err2) sent = true;
+            let err3 = null;
+            try {
+              const res3 = await getSupabase().from('rider_chat_messages').insert({
+                id: msg.id,
+                order_id: msg.order_id,
+                sender_type: msg.sender_role,
+                sender_id: msg.sender_id,
+                sender_name: msg.sender_name,
+                message: msg.message,
+                created_at: msg.created_at
+              });
+              err3 = res3.error;
+            } catch {
+              err3 = { message: 'rider_chat_messages insert failed' };
+            }
+
+            if (!err1 || !err2 || !err3) sent = true;
           } catch {
             /* ignore */
           }
@@ -459,6 +491,14 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
       .on('broadcast', { event: 'new_message' }, (payload) => processIncomingRawMessage(payload.payload))
       .on('broadcast', { event: 'message' }, (payload) => processIncomingRawMessage(payload.payload))
       .on('broadcast', { event: 'chat_message' }, (payload) => processIncomingRawMessage(payload.payload))
+      .on('broadcast', { event: 'typing' }, (payload) => {
+        if (payload.payload.sender_role !== currentUserRole && payload.payload.order_id === order.id) {
+          setIsCounterpartTyping(true);
+          if (counterpartTypingTimeoutRef.current) clearTimeout(counterpartTypingTimeoutRef.current);
+          counterpartTypingTimeoutRef.current = setTimeout(() => setIsCounterpartTyping(false), 3000);
+          scrollToBottom();
+        }
+      })
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -469,6 +509,12 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
         event: 'INSERT',
         schema: 'public',
         table: 'order_messages',
+        filter: `order_id=eq.${order.id}`
+      }, (payload) => processIncomingRawMessage(payload.new))
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'rider_chat_messages',
         filter: `order_id=eq.${order.id}`
       }, (payload) => processIncomingRawMessage(payload.new))
       .subscribe((status) => {
@@ -601,7 +647,23 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
           orderMsgErr = { message: 'order_messages insert failed' };
         }
 
-        if (chatErr && orderMsgErr) {
+        let riderChatErr = null;
+        try {
+          const res = await supabase.from('rider_chat_messages').insert({
+            id: newMsg.id,
+            order_id: newMsg.order_id,
+            sender_type: newMsg.sender_role,
+            sender_id: newMsg.sender_id,
+            sender_name: newMsg.sender_name,
+            message: newMsg.message,
+            created_at: newMsg.created_at
+          });
+          riderChatErr = res.error;
+        } catch {
+          riderChatErr = { message: 'rider_chat_messages insert failed' };
+        }
+
+        if (chatErr && orderMsgErr && riderChatErr) {
           // Store in offline pending queue if both fail
           const queueKey = `localeats_pending_chat_queue_${order.id}`;
           const currentQueue = JSON.parse(localStorage.getItem(queueKey) || '[]');
@@ -799,6 +861,17 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
                 </div>
               );
             })}
+            {isCounterpartTyping && (
+              <div className="flex justify-start mb-2 animate-in fade-in zoom-in duration-300">
+                <div className="bg-zinc-900 border border-zinc-800 text-zinc-400 px-3 py-2 rounded-2xl rounded-tl-none text-[10px] flex items-center gap-1.5 w-fit">
+                  <span className="flex gap-0.5">
+                    <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                    <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                    <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce"></span>
+                  </span>
+                </div>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
 
@@ -835,7 +908,23 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
               <input
                 type="text"
                 value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
+                onChange={(e) => {
+                  setInputText(e.target.value);
+                  const now = Date.now();
+                  if (now - lastTypingEventSentRef.current > 1500) {
+                    lastTypingEventSentRef.current = now;
+                    try {
+                      const ch1 = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
+                      ch1.send({
+                        type: 'broadcast',
+                        event: 'typing',
+                        payload: { sender_role: currentUserRole, order_id: order.id }
+                      }).catch(() => {});
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                }}
                 onKeyDown={(e) => {
                   e.stopPropagation();
                   if (e.key === 'Enter') sendMessage();

@@ -1,8 +1,23 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
+import * as Sentry from "@sentry/react";
 import App from './App.tsx';
 import './index.css';
 import { getErrorMessage } from './lib/errorHandling';
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN || "",
+  integrations: [
+    Sentry.browserTracingIntegration(),
+    Sentry.replayIntegration(),
+  ],
+  tracesSampleRate: 1.0,
+  tracePropagationTargets: ["localhost", /^https:\/\/.*\.run\.app/],
+  replaysSessionSampleRate: 0.1,
+  replaysOnErrorSampleRate: 1.0,
+  enabled: !!import.meta.env.VITE_SENTRY_DSN || process.env.NODE_ENV === 'production',
+});
+
 
 const isTransient = (msg: string) => {
   return /fetch|network|timeout|timed out|operation timed out|abort|connection|lock broken|refresh token|invalid refresh token|token_not_found|jwt expired/i.test(msg);
@@ -35,6 +50,9 @@ window.addEventListener('unhandledrejection', (event) => {
   // Implementation of Automated Failsafe for general crashes
   if (!document.cookie.includes('fatal_reload=true')) {
     console.error("App crashed. Initiating self-healing protocol...", event.reason);
+    if (event.reason) {
+      Sentry.captureException(event.reason);
+    }
     document.cookie = "fatal_reload=true; max-age=10; path=/";
     
     try {
@@ -90,6 +108,9 @@ window.addEventListener('error', (event) => {
   const isSameOrigin = !event.filename || event.filename.includes(window.location.origin) || event.filename.includes('run.app');
   if (!document.cookie.includes('fatal_reload=true') && isSameOrigin) {
     console.error("App crashed. Initiating self-healing protocol...", event.error);
+    if (event.error) {
+      Sentry.captureException(event.error);
+    }
     
     document.cookie = "fatal_reload=true; max-age=10; path=/";
     

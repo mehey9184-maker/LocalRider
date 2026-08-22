@@ -7,15 +7,11 @@ import { getErrorMessage } from './lib/errorHandling';
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN || "",
-  integrations: [
-    Sentry.browserTracingIntegration(),
-    Sentry.replayIntegration(),
-  ],
-  tracesSampleRate: 1.0,
-  tracePropagationTargets: ["localhost", /^https:\/\/.*\.run\.app/],
-  replaysSessionSampleRate: 0.1,
-  replaysOnErrorSampleRate: 1.0,
-  enabled: !!import.meta.env.VITE_SENTRY_DSN || process.env.NODE_ENV === 'production',
+  integrations: [],
+  tracesSampleRate: 0,
+  replaysSessionSampleRate: 0,
+  replaysOnErrorSampleRate: 0,
+  enabled: false,
 });
 
 

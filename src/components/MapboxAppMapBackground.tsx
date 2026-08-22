@@ -73,6 +73,54 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   const [forceOffline, setForceOffline] = useState(() => localStorage.getItem('localeats_force_offline') === 'true');
 
   useEffect(() => {
+    // Proactively cache Tembisa area tiles for immediate offline rendering
+    const prefetchTembisaTiles = async () => {
+      try {
+        if (!('caches' in window)) return;
+        const cache = await caches.open('localeats-map-tiles-v1');
+        const centerLat = -25.9964;
+        const centerLng = 28.2268;
+        
+        const lon2tile = (lon: number, zoom: number) => Math.floor((lon + 180) / 360 * Math.pow(2, zoom));
+        const lat2tile = (lat: number, zoom: number) => Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
+        
+        const zLevels = [14, 15, 16];
+        const urlsToFetch: string[] = [];
+        
+        for (const z of zLevels) {
+           const x = lon2tile(centerLng, z);
+           const y = lat2tile(centerLat, z);
+           for (let dx = -1; dx <= 1; dx++) {
+              for (let dy = -1; dy <= 1; dy++) {
+                  urlsToFetch.push(`https://a.basemaps.cartocdn.com/dark_all/${z}/${x+dx}/${y+dy}@2x.png`);
+                  urlsToFetch.push(`https://a.basemaps.cartocdn.com/light_all/${z}/${x+dx}/${y+dy}@2x.png`);
+              }
+           }
+        }
+        
+        for (let i = 0; i < urlsToFetch.length; i += 5) {
+            const batch = urlsToFetch.slice(i, i + 5);
+            await Promise.all(batch.map(async (url) => {
+               const cached = await cache.match(url);
+               if (!cached) {
+                   try {
+                     const res = await fetch(url);
+                     if (res.status === 200) await cache.put(url, res);
+                   } catch { /* ignore */ }
+               }
+            }));
+        }
+      } catch (err) {
+        console.warn('Failed to pre-cache', err);
+      }
+    };
+    
+    const timer = setTimeout(prefetchTembisaTiles, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
+
+  useEffect(() => {
     const checkOffline = () => {
       const isOff = localStorage.getItem('localeats_force_offline') === 'true';
       if (isOff !== forceOffline) {
@@ -318,6 +366,7 @@ export const AppMapBackground = React.memo(function AppMapBackground({
       <Map
         ref={mapRef}
         {...viewState}
+
         onMove={evt => {
           setViewState(evt.viewState);
           if (mapRef.current) {
@@ -365,8 +414,8 @@ export const AppMapBackground = React.memo(function AppMapBackground({
         attributionControl={false}
         className={(highContrast !== undefined ? highContrast : localStorage.getItem('localeats_contrast') === 'true') ? "brightness-[1.2] contrast-[1.1] saturate-[1.0]" : "brightness-[1.1] contrast-[0.95] saturate-[0.85]"}
         style={{ width: '100%', height: '100%' }}
-        transformRequest={(url, resourceType) => {
-          if (resourceType === 'Tile' && url.includes('basemaps.cartocdn.com')) {
+        transformRequest={(url) => {
+          if (url.includes('basemaps.cartocdn.com')) {
             const forceOffline = localStorage.getItem('localeats_force_offline') === 'true';
             if (forceOffline) {
               return { url: `${url}?force_offline=true` };

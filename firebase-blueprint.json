@@ -1,0 +1,35 @@
+{
+  "models": [
+    {
+      "name": "chat_messages",
+      "fields": [
+        {"name": "order_id", "type": "string"},
+        {"name": "sender_id", "type": "string"},
+        {"name": "message", "type": "string"},
+        {"name": "created_at", "type": "timestamp"}
+      ]
+    },
+    {
+      "name": "orders",
+      "fields": [
+        {"name": "id", "type": "string"},
+        {"name": "status", "type": "string"},
+        {"name": "user_id", "type": "string"}
+      ]
+    },
+    {
+      "name": "rider_profiles",
+      "fields": [
+        {"name": "id", "type": "string"},
+        {"name": "name", "type": "string"}
+      ]
+    },
+    {
+      "name": "rider_connections",
+      "fields": [
+        {"name": "id", "type": "string"},
+        {"name": "status", "type": "string"}
+      ]
+    }
+  ]
+}

@@ -68,7 +68,7 @@ export function isTodayLocal(dateStr: string): boolean {
 /**
  * Simple promise with timeout wrapper.
  */
-export function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs = 15000): Promise<T> {
+export function promiseWithTimeout<T>(promise: PromiseLike<T> | Promise<T>, timeoutMs = 15000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -78,7 +78,7 @@ export function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs = 15000): P
       }
     }, timeoutMs);
 
-    promise.then(
+    Promise.resolve(promise).then(
       res => {
         if (!settled) {
           settled = true;
@@ -336,3 +336,48 @@ export const fuzzyMatch = (query: string, target: string): boolean => {
   const t = target.toLowerCase();
   return t.includes(q) || q.split(/\s+/).every(word => t.includes(word));
 };
+
+/**
+ * Safely converts an order item of any structure (string, object with name/quantity/price, etc.) into a clean display string.
+ */
+export function formatOrderItem(item: unknown): string {
+  if (item === null || item === undefined) return '';
+  if (typeof item === 'string') return item;
+  if (typeof item === 'number' || typeof item === 'boolean') return String(item);
+  if (typeof item === 'object') {
+    const obj = item as Record<string, unknown>;
+    const name = obj.name || obj.product_name || obj.title || obj.item || obj.description;
+    const quantity = obj.quantity || obj.qty || obj.count;
+    const price = obj.price || obj.unit_price || obj.amount;
+    
+    if (name) {
+      const qtyPrefix = quantity && Number(quantity) > 1 ? `${quantity}x ` : '';
+      const priceSuffix = price !== undefined && price !== null && !isNaN(Number(price)) && Number(price) > 0 
+        ? ` (R${Number(price).toFixed(2)})` 
+        : '';
+      return `${qtyPrefix}${name}${priceSuffix}`;
+    }
+
+    try {
+      return JSON.stringify(item);
+    } catch {
+      return 'Order Item';
+    }
+  }
+  return String(item);
+}
+
+/**
+ * Normalizes an items array or fallback product name to an array of formatted strings.
+ */
+export function normalizeOrderItems(items?: unknown[] | null, fallbackProductName?: unknown): string[] {
+  if (Array.isArray(items) && items.length > 0) {
+    return items.map(formatOrderItem).filter(Boolean);
+  }
+  if (fallbackProductName) {
+    const formatted = formatOrderItem(fallbackProductName);
+    if (formatted) return [formatted];
+  }
+  return [];
+}
+

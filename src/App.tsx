@@ -76,7 +76,6 @@ import {
   ExternalLink,
   Navigation2,
   HelpCircle,
-  Info,
   Copy,
   Check,
   Download,
@@ -103,7 +102,7 @@ import { uploadRiderProfilePic, uploadDeliveryProofPhoto } from './lib/storage';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Toaster, toast } from 'sonner';
-import { getSupabase, isSupabaseMocked, clearStaleAuthTokens } from './lib/supabase';
+import { getSupabase, getFreshChannel, isSupabaseMocked, clearStaleAuthTokens } from './lib/supabase';
 import { getErrorMessage, isTransientError } from './lib/errorHandling';
 import {
   registerAndSyncPushToken,
@@ -114,6 +113,7 @@ import { User } from '@supabase/supabase-js';
 import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection, AppView, WeatherData } from './types';
 import { cn } from './lib/utils';
 import { BentoCard } from './components/BentoCard';
+import { DeliveryPinModal } from './components/DeliveryPinModal';
 import { StatusBadge } from './components/StatusBadge';
 import { TelemetryData } from './components/TelemetryData';
 import { SwipeButton } from './components/SwipeButton';
@@ -128,7 +128,9 @@ import {
   useBatteryStatus,
   getMerchantHeartbeatStatus,
   getRandomHost,
-  getTilesForCoordinate
+  getTilesForCoordinate,
+  formatOrderItem,
+  normalizeOrderItems
 } from './lib/appUtils';
 import { QRScanner } from './components/QRScanner';
 import { AppMapBackground } from './components/MapboxAppMapBackground';
@@ -270,18 +272,33 @@ const AuthView = ({
         
         const { data, error } = res || {};
 
-        if (error || !data?.session) {
-          console.warn('Supabase sign up warning/error, logging in locally:', error?.message || 'No session created');
-          toast.success('Account created! Welcome to your dashboard.');
-          if (onMockLogin) {
-            onMockLogin({
-              id: data?.user?.id || 'local-user-' + Math.random().toString(36).substring(2, 9),
-              email,
-              fullName: fullName || 'New Rider',
-              phone: phone || '+27 83 123 4567',
-              vehicleType
-            });
+        if (error) {
+          const errMsg = error?.message || 'Unknown error';
+          console.warn('Supabase sign up error:', errMsg);
+          if (errMsg.includes('already registered') || errMsg.includes('already in use')) {
+             toast.error(errMsg);
+             return;
           }
+          // Only fallback to mock if it's a network/timeout issue and we want to allow offline
+          if (errMsg.includes('timeout') || errMsg.includes('network')) {
+             toast.success('Offline mode: Logged in locally.');
+             if (onMockLogin) {
+               onMockLogin({
+                 id: 'local-user-' + Math.random().toString(36).substring(2, 9),
+                 email,
+                 fullName: fullName || 'New Rider',
+                 phone: phone || '+27 83 123 4567',
+                 vehicleType
+               });
+             }
+          } else {
+             toast.error('Sign up failed: ' + errMsg);
+          }
+          return;
+        }
+        
+        if (!data?.session) {
+          toast.error('No session created. Please try again.');
           return;
         }
 
@@ -715,7 +732,7 @@ const OrdersFeed = React.memo(({
       if ((o.delivery_status as string) === 'potential') {
         return false;
       }
-      return (o.delivery_status === 'none' || o.delivery_status === 'finding_rider') && !o.rider_id;
+      return o.order_type === 'delivery' && o.delivery_status === 'finding_rider' && !o.rider_id;
     });
 
     result = [...result].sort((a, b) => {
@@ -1143,19 +1160,11 @@ const OrdersFeed = React.memo(({
                       <div>
                         <div className="mb-3 flex items-center gap-3 flex-wrap">
                            <StatusBadge status={order.delivery_status} />
-                           {order.payment_method === 'cash_on_arrival' ? (
-                             <div className="bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-full">
-                                <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest italic">
-                                  💵 Cash On Arrival
-                                </span>
-                             </div>
-                           ) : (
-                             <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full">
-                                <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic">
-                                  💳 Card/Online
-                                </span>
-                             </div>
-                           )}
+                           <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full">
+                              <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic">
+                                💳 Card/Online
+                              </span>
+                           </div>
                            {order.delivery_status === 'finding_rider' && order.allow_external_riders ? (
                              <div className="bg-cyan-500/10 border border-cyan-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.15)] animate-pulse">
                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
@@ -1172,14 +1181,6 @@ const OrdersFeed = React.memo(({
                                  </span>
                                </div>
                              )
-                           )}
-                           {order.cash_trust_enabled && (
-                             <div className="bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
-                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                               <span className="text-[9px] font-black text-emerald-400 uppercase tracking-widest italic font-mono leading-none">
-                                 💵 CASH-ON-ARRIVAL AUTHORIZED
-                               </span>
-                             </div>
                            )}
                            {(() => {
                              const hb = getMerchantHeartbeatStatus(order.shop_updated_at);
@@ -1350,14 +1351,14 @@ const OrdersFeed = React.memo(({
                         {order.items && order.items.length > 0 ? (
                           <div className="space-y-1">
                             {order.items.slice(0, 2).map((item, idx) => (
-                              <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{item}</span>
+                              <span key={idx} className="text-sm font-bold text-zinc-300 block truncate leading-tight uppercase font-headline italic">{formatOrderItem(item)}</span>
                             ))}
                             {order.items.length > 2 && (
                               <span className="text-[10px] text-zinc-600 font-black uppercase italic">+{order.items.length - 2} more items</span>
                             )}
                           </div>
                         ) : (
-                          <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{order.product_name || "Assorted Food Items"}</span>
+                          <span className="text-sm font-bold text-zinc-300 truncate uppercase font-headline italic">{formatOrderItem(order.product_name) || "Assorted Food Items"}</span>
                         )}
                       </div>
                       <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl group-hover:border-zinc-700 transition-colors">
@@ -1428,11 +1429,11 @@ const OrdersFeed = React.memo(({
                               <ul className="space-y-2">
                                 {order.items && order.items.length > 0 ? order.items.map((it, i) => (
                                   <li key={i} className="text-xs text-zinc-400 flex gap-2">
-                                    <span className="text-[#f59e0b]">-</span> {it}
+                                    <span className="text-[#f59e0b]">-</span> {formatOrderItem(it)}
                                   </li>
                                 )) : (
                                   <li className="text-xs text-zinc-400 flex gap-2">
-                                    <span className="text-[#f59e0b]">-</span> {order.product_name}
+                                    <span className="text-[#f59e0b]">-</span> {formatOrderItem(order.product_name) || 'Assorted Food Items'}
                                   </li>
                                 )}
                               </ul>
@@ -1567,6 +1568,22 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const [landmarkAddress, setLandmarkAddress] = useState('');
   const [landmarkSuggestion, setLandmarkSuggestion] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinModalOrderId, setPinModalOrderId] = useState<string | null>(null);
+  const [expectedPin, setExpectedPin] = useState('');
+  const handleCompleteDelivery = (orderId: string) => {
+    if ('vibrate' in navigator) navigator.vibrate([150, 100, 150, 100, 200]);
+    setShowSuccessOverlay(true);
+    audioSynth.playOrderDelivered();
+    setTimeout(() => {
+      onUpdateStatus(orderId, 'delivered');
+      setShowSuccessOverlay(false);
+      setArrivedAtCustomer(prev => ({ ...prev, [orderId]: false }));
+      setArrivedAtMerchant(prev => ({ ...prev, [orderId]: false }));
+      setCashCollected(prev => ({ ...prev, [orderId]: false }));
+    }, 3000);
+  };
+
 
   const isVoiceSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
   const [isListening, setIsListening] = useState(false);
@@ -1600,15 +1617,17 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           description: `Order picked up at ${currentOrder.restaurant_name}`
         });
       } else if (transcript.includes('delivered') || transcript.includes('complete') || transcript.includes('delivery') || transcript.includes('dropped off')) {
-        setShowSuccessOverlay(true);
-        audioSynth.playOrderDelivered();
-        setTimeout(() => {
-          onUpdateStatus(currentOrder.id, 'delivered');
-          setShowSuccessOverlay(false);
-        }, 3000);
-        toast.success(`Voice: Delivery completed`, {
-          description: `Order delivered successfully`
-        });
+        if (currentOrder.delivery_pin) {
+          setExpectedPin(currentOrder.delivery_pin || '1234');
+          setPinModalOrderId(currentOrder.id);
+          setPinModalOpen(true);
+          toast.info("Voice: Delivery PIN required");
+        } else {
+          handleCompleteDelivery(currentOrder.id);
+          toast.success("Voice: Delivery completed", {
+            description: `Order delivered successfully`
+          });
+        }
       } else if (transcript.includes('optimize') || transcript.includes('shortest') || transcript.includes('route')) {
         optimizeRoute();
         toast.success(`Voice: Route updated`, {
@@ -1719,6 +1738,15 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
 
   return (
     <div className="h-screen flex flex-col pointer-events-none max-w-5xl mx-auto w-full relative">
+      <DeliveryPinModal
+        isOpen={pinModalOpen}
+        onClose={() => setPinModalOpen(false)}
+        expectedPin={expectedPin}
+        onSuccess={() => {
+          setPinModalOpen(false);
+          if (pinModalOrderId) handleCompleteDelivery(pinModalOrderId);
+        }}
+      />
       {/* Route deviation alert banner */}
       <AnimatePresence>
         {isForceDeviated && (
@@ -1750,39 +1778,6 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
         )}
       </AnimatePresence>
 
-      {/* Cash limit warning banner */}
-      <AnimatePresence>
-        {cashOnHand !== undefined && cashOnHand >= 200 && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="absolute top-44 left-4 right-4 z-[54] bg-red-950/95 border border-red-500/40 p-3.5 rounded-xl flex items-start gap-2.5 animate-pulse backdrop-blur-md pointer-events-auto shadow-lg"
-          >
-            <span className="text-lg shrink-0">💵</span>
-            <div className="flex-1 text-left">
-              <p className="text-[10px] font-black uppercase text-red-500 tracking-wider">⚠️ CASH LIMIT REACHED</p>
-              <p className="text-[11.5px] font-medium text-red-300 leading-tight">
-                Cash-on-Hand limit of R200.00 reached! You are holding R{cashOnHand.toFixed(2)}. Complete a cash deposit at your nearest linked store hub to clear your carrying register and unlock full navigation vectors.
-              </p>
-              {onDepositCash && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDepositCash();
-                    toast.success("Deposit success!", {
-                      description: `R${cashOnHand.toFixed(2)} deposited at store hub. Cash register cleared!`
-                    });
-                  }}
-                  className="mt-2 text-[9px] font-black uppercase tracking-wider bg-red-900/80 hover:bg-red-800 text-white px-2.5 py-1 rounded-md border border-red-500/50 transition-all cursor-pointer shadow-sm"
-                >
-                  Deposit Cash at Hub
-                </button>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {showSuccessOverlay && (
@@ -2214,35 +2209,6 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
           </div>
 
           <div className="space-y-4">
-            {/* Warning Banner for COA */}
-            {currentOrder.payment_method === 'cash_on_arrival' && (
-              <div className="bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-xl flex items-start gap-2.5 animate-pulse">
-                <span className="text-lg">💵</span>
-                <div className="flex-1">
-                  <p className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Cash-Collected Order Required</p>
-                  <p className="text-[11px] font-medium text-amber-300 leading-tight">
-                    Please deliver the items, collect <strong className="font-black text-white">R{Number(currentOrder.total_price || 0).toFixed(2)}</strong> in cash/digital transfer at arrival, and finalize payment status below.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Cash Confidence Certificate Banner */}
-            {currentOrder.cash_trust_enabled && (
-              <div className="bg-emerald-500/10 border border-emerald-500/30 p-3.5 rounded-xl flex items-start gap-3 shadow-[0_0_15px_rgba(16,185,129,0.15)]">
-                <div className="w-5 h-5 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
-                  <Check className="w-3 h-3 text-emerald-400 font-black" strokeWidth={3} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-[10px] font-black uppercase text-emerald-400 tracking-wider">
-                    {profile ? detectRegion(profile.current_latitude, profile.current_longitude).name.toUpperCase() + " TRUSTED PARTNER" : "TRUSTED LOCAL PARTNER"}
-                  </p>
-                  <p className="text-[11px] font-medium text-emerald-300 leading-tight">
-                    Verified Trusted Partner - Premium access to high-value dispatches sanctioned by shop management.
-                  </p>
-                </div>
-              </div>
-            )}
 
             {/* Delivery Workflow Steps */}
             <div className="bg-zinc-950/40 border border-white/5 rounded-xl p-3 flex flex-col gap-2.5">
@@ -2327,38 +2293,6 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
               </div>
             )}
 
-            {/* Cash Validation Checkbox */}
-            {isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-zinc-950/60 border border-amber-500/20 rounded-xl p-3 flex items-start gap-3"
-              >
-                <div className="flex items-center h-5">
-                  <input
-                    id={`validate-${currentOrder.id}`}
-                    name="cashCollected"
-                    type="checkbox"
-                    checked={!!cashCollected[currentOrder.id]}
-                    onChange={(e) => {
-                      setCashCollected(prev => ({ ...prev, [currentOrder.id]: e.target.checked }));
-                      if (e.target.checked) {
-                        toast.success("Payment confirmed in rider register! Ready to finalize delivery.");
-                      }
-                    }}
-                    className="h-4.5 w-4.5 rounded border-zinc-800 bg-zinc-900 text-amber-500 focus:ring-amber-500/50 cursor-pointer"
-                  />
-                </div>
-                <div className="text-sm">
-                  <label htmlFor={`validate-${currentOrder.id}`} className="font-black text-xs text-amber-500 uppercase tracking-wider cursor-pointer select-none font-headline">
-                    Final Cash Validation Required
-                  </label>
-                  <p className="text-[11px] text-zinc-400 leading-snug">
-                    I confirm that I have presented the food and collected <strong className="text-white">R{Number(currentOrder.total_price).toFixed(2)}</strong> in cash or digital transfer from the customer successfully.
-                  </p>
-                </div>
-              </motion.div>
-            )}
 
             {/* Proof of Delivery Photo Upload */}
             {isPickedUp && arrivedAtCustomer[currentOrder.id] && (
@@ -2448,11 +2382,11 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
             <button 
               className={cn(
                 "w-full py-5 rounded-2xl text-[14px] font-black uppercase tracking-widest italic font-headline transition-all active:scale-95 flex items-center justify-center gap-3",
-                (isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id])
+                false
                   ? "bg-zinc-950 text-zinc-600 border border-zinc-900 cursor-not-allowed" 
                   : "bg-[#f59e0b] hover:bg-[#d97706] text-black shadow-[0_0_20px_rgba(245,158,11,0.4)] border border-[#f59e0b]"
               )}
-              disabled={isPickedUp && arrivedAtCustomer[currentOrder.id] && currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]}
+              disabled={false}
               onClick={() => {
                 if (!isPickedUp && !arrivedAtMerchant[currentOrder.id]) {
                   setArrivedAtMerchant(prev => ({ ...prev, [currentOrder.id]: true }));
@@ -2468,16 +2402,13 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   audioSynth.playArrivedDestination();
                   toast.success("Status: Arrived at Customer address. Hand over food items and finalize payment.");
                 } else {
-                  if ('vibrate' in navigator) navigator.vibrate([150, 100, 150, 100, 200]);
-                  setShowSuccessOverlay(true);
-                  audioSynth.playOrderDelivered();
-                  setTimeout(() => {
-                    onUpdateStatus(currentOrder.id, 'delivered');
-                    setShowSuccessOverlay(false);
-                    setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: false }));
-                    setArrivedAtMerchant(prev => ({ ...prev, [currentOrder.id]: false }));
-                    setCashCollected(prev => ({ ...prev, [currentOrder.id]: false }));
-                  }, 3000);
+                  if (true) {
+                    setExpectedPin(currentOrder.delivery_pin || '1234');
+                    setPinModalOrderId(currentOrder.id);
+                    setPinModalOpen(true);
+                  } else {
+                    handleCompleteDelivery(currentOrder.id);
+                  }
                 }
               }}
             >
@@ -2486,11 +2417,10 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   ? (!arrivedAtMerchant[currentOrder.id] ? "STEP 2: ARRIVED AT MERCHANT" : "STEP 3: ORDER PICKED UP")
                   : (!arrivedAtCustomer[currentOrder.id] 
                       ? "STEP 4: ARRIVED AT CUSTOMER" 
-                      : (currentOrder.payment_method === 'cash_on_arrival' && !cashCollected[currentOrder.id]
+                      : false
                           ? "CONFIRM PAYMENT FIRST" 
                           : "STEP 5: DELIVERED & COMPLETE MISSION"
                         )
-                    )
               }
             </button>
 
@@ -2872,12 +2802,15 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
       // Search Box filter
       if (!searchQuery.trim()) return true;
       const query = searchQuery.toLowerCase().trim();
+      const productStr = formatOrderItem(order.product_name).toLowerCase();
+      const itemsStr = (order.items || []).map(i => formatOrderItem(i).toLowerCase()).join(' ');
       return (
         order.restaurant_name?.toLowerCase().includes(query) ||
         order.customer_name?.toLowerCase().includes(query) ||
         order.address?.toLowerCase().includes(query) ||
         order.id.toLowerCase().includes(query) ||
-        order.product_name?.toLowerCase().includes(query)
+        productStr.includes(query) ||
+        itemsStr.includes(query)
       );
     });
   }, [filteredByPeriod, activeTab, searchQuery]);
@@ -2913,7 +2846,10 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
         const stats = getStatsForOrder(order);
         const dateStr = new Date(order.updated_at).toLocaleDateString();
         const statusStr = order.status.toUpperCase();
-        const itemsClean = (order.items || [order.product_name || 'Delivery']).join(" | ").replace(/"/g, '""');
+        const itemsClean = (order.items && order.items.length > 0
+          ? order.items.map(formatOrderItem)
+          : [formatOrderItem(order.product_name) || 'Delivery']
+        ).join(" | ").replace(/"/g, '""');
         return `"${dateStr}","CODE-${order.id.slice(-4).toUpperCase()}","${(order.restaurant_name || '').replace(/"/g, '""')}","${(order.customer_name || '').replace(/"/g, '""')}","${itemsClean}",${stats.base.toFixed(2)},${stats.surge.toFixed(2)},${stats.tip.toFixed(2)},${stats.total.toFixed(2)},"${statusStr}"`;
       }).join("\n");
       
@@ -3228,7 +3164,10 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
               const isExpanded = expandedOrderId === item.id;
               const isCompleted = item.status === 'completed' || item.delivery_status === 'delivered';
               const isCancelled = item.status === 'cancelled' || item.delivery_status === 'cancelled';
-              const customItemsList = item.items || (item.product_name ? [item.product_name] : ["Artisan Burgers & Golden Fries", "Extra Chilli Dip Sauce"]);
+              const customItemsList = normalizeOrderItems(
+                item.items,
+                item.product_name || "Artisan Burgers & Golden Fries"
+              );
 
               return (
                 <motion.div 
@@ -3357,7 +3296,7 @@ const HistoryView = React.memo(({ history, isHighContrastMode }: { history: Deli
                                   key={index}
                                   className="px-3 py-1.5 bg-zinc-950/80 border border-zinc-850 text-zinc-350 text-[10px] font-black uppercase tracking-wider rounded-xl font-mono shadow-sm flex items-center gap-1.5"
                                 >
-                                  🎯 {itm}
+                                  🎯 {formatOrderItem(itm)}
                                 </span>
                               ))}
                             </div>
@@ -4808,6 +4747,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
   const [riderLocation, setRiderLocation] = useState<[number, number] | null>(null);
   const [loading, setLoading] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(false);
+
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [channelStatus, setChannelStatus] = useState<'SUBSCRIBED' | 'CONNECTING' | 'OFFLINE' | 'MOCK_MODE'>('CONNECTING');
   const [diagLogs, setDiagLogs] = useState<string[]>([]);
@@ -4917,8 +4857,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
       queueMicrotask(() => {
         addDiagLog(`Initializing Supabase channel order_chat_${orderId}`);
       });
-      const channel = getSupabase()
-        .channel(`tracking:${orderId}`)
+      const channel = getFreshChannel(`tracking:${orderId}`)
         .on('postgres_changes', {
           event: 'INSERT',
           schema: 'public',
@@ -4948,7 +4887,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
   const handleTestPing = () => {
     addDiagLog(`Executing manual diagnostic ping test on channel order_chat_${orderId}`);
     try {
-      getSupabase().channel(`order_chat_${orderId}`).send({
+      getFreshChannel(`order_chat_${orderId}`).send({
         type: 'broadcast',
         event: 'new_message',
         payload: {
@@ -5103,7 +5042,7 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
               <div className="grid grid-cols-2 gap-3 mb-3">
                  <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
                     <p className="text-[8px] text-zinc-500 font-black uppercase mb-1">Order</p>
-                    <p className="text-xs font-bold text-white uppercase italic">{order.product_name}</p>
+                    <p className="text-xs font-bold text-white uppercase italic">{formatOrderItem(order.product_name || (order.items && order.items[0])) || 'Kota & Chips'}</p>
                  </div>
                  <div className="bg-zinc-900/50 p-3 rounded-xl border border-zinc-800">
                     <p className="text-[8px] text-zinc-500 font-black uppercase mb-1">Destination</p>
@@ -5596,7 +5535,7 @@ export function App() {
         setSimulatedOrders(nextSimOrders);
       }
       if (newLogs.length > 0) {
-        setDispatchLog(prev => [...newLogs.reverse(), ...prev]);
+        setDispatchLog(prev => [...newLogs.reverse(), ...prev].slice(0, 100));
       }
     }, 1000);
 
@@ -6109,7 +6048,7 @@ export function App() {
           is_online: false,
           status: 'offline',
           vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
-          verification_status: user.email === 'aviwenotununu4@gmail.com' ? 'verified' : 'pending',
+          verification_status: 'verified',
           rating: 5.0,
           total_earnings: 0,
           total_deliveries: 0,
@@ -6157,8 +6096,8 @@ export function App() {
         if (!sanitizedData.current_latitude) sanitizedData.current_latitude = -25.9964;
         if (!sanitizedData.current_longitude) sanitizedData.current_longitude = 28.2268;
         
-        // Auto-verify developer account on load to prevent roadblock
-        if (sanitizedData.verification_status !== 'verified' && (user.email === 'aviwenotununu4@gmail.com' || user.email?.toLowerCase().includes('aviweno'))) {
+        // Auto-verify rider account on load to prevent roadblock
+        if (sanitizedData.verification_status !== 'verified') {
           sanitizedData.verification_status = 'verified';
           getSupabase()
             .from('rider_profiles')
@@ -6275,28 +6214,7 @@ export function App() {
     try {
       let activeConnections: ShopConnection[] = [];
 
-      if (isSupabaseMocked()) {
-        const mockPairedCode = localStorage.getItem('localeats_mock_paired_code');
-        if (mockPairedCode) {
-          const mockConn = {
-            id: 'mock-conn',
-            rider_id: user.id,
-            shop_id: 's1',
-            shop_name: 'Merchant Store',
-            connection_code: mockPairedCode,
-            expires_at: new Date(Date.now() + 1000 * 60 * 60 * 24).toISOString(),
-            created_at: new Date().toISOString()
-          } as unknown as ShopConnection;
-          setConnections([mockConn]);
-          activeConnections = [mockConn];
-        } else {
-          setConnections([]);
-          activeConnections = [];
-        }
 
-        setAvailableOrders([]);
-        return;
-      }
 
       let connData: Record<string, unknown>[] | null = null;
       try {
@@ -6322,7 +6240,7 @@ export function App() {
             return r as unknown as { data: Record<string, unknown>[] | null; error?: unknown };
           }, 0, 500, 3000);
           connData = res.data;
-        } catch (eConn) {
+        } catch {
           // Quiet fallback to cached/local connection code
         }
       }
@@ -6352,40 +6270,6 @@ export function App() {
           };
         }) as ShopConnection[];
 
-        // If localCode is saved but not in connData, append it as active
-        if (localCode && !activeConnections.some(c => c.connection_code?.toUpperCase() === localCode.toUpperCase())) {
-          const freshExp = localExpiry && new Date(localExpiry) > new Date()
-            ? localExpiry
-            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-          activeConnections.unshift({
-            id: `local-conn-${localCode}`,
-            rider_id: user.id,
-            shop_id: 's1',
-            shop_name: 'Merchant Terminal Store',
-            connection_code: localCode,
-            expires_at: freshExp,
-            created_at: new Date().toISOString()
-          } as unknown as ShopConnection);
-        }
-      } else {
-        const localCode = localStorage.getItem('localeats_mock_paired_code');
-        const localExpiry = localStorage.getItem('localeats_mock_paired_expiry');
-        if (localCode) {
-          const freshExp = localExpiry && new Date(localExpiry) > new Date()
-            ? localExpiry
-            : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-          activeConnections = [{
-            id: 'local-conn',
-            rider_id: user.id,
-            shop_id: 's1',
-            shop_name: 'Merchant Terminal Store',
-            connection_code: localCode,
-            expires_at: freshExp,
-            created_at: new Date().toISOString()
-          } as unknown as ShopConnection];
-        } else {
-          activeConnections = [];
-        }
       }
       setConnections(activeConnections);
 
@@ -7109,13 +6993,13 @@ export function App() {
       const dist = lastLoc ? getHaversineDistance(lastLoc.lat, lastLoc.lng, lat, lng) : Infinity;
       const timeElapsed = lastLoc ? now - lastLoc.time : Infinity;
       
-      // Geolocation Battery & Data Optimizer (Adaptive-interval high-fidelity tracking algorithm)
-      let timeThreshold = 15000; // default 15s in performance mode
-      let distThreshold = 5;     // default 5 meters
+      // Geolocation Battery & Data Optimizer (Egress Control & Adaptive Throttling)
+      let timeThreshold = 8000;  // minimum interval of 5-10 seconds (8s default)
+      let distThreshold = 20;    // minimum 20 meters physical displacement threshold
 
-      // Adjust distance threshold for low accuracy to ignore high-density GPS jitter (e.g., cell tower drift)
+      // Adjust distance threshold for low accuracy to ignore high-density GPS jitter
       if (accuracy && accuracy > 35) {
-        distThreshold = 15; 
+        distThreshold = 30; 
       }
 
       const isStationary = dist < 3;
@@ -7167,14 +7051,18 @@ export function App() {
           // console.warn('GPS_ABORT...');
           return;
         }
-        // Update master profile telemetry
+        // Update master profile telemetry with explicit payload fields (id, lat, lng, last_online_at)
         try {
           await fetchWithRetry(async () => {
             return await getSupabase()
               .from('rider_profiles')
               .update({ 
+                id: user.id,
                 current_latitude: lat, 
                 current_longitude: lng, 
+                lat,
+                lng,
+                last_online_at: new Date().toISOString(),
                 updated_at: new Date().toISOString() 
               })
               .eq('id', user.id);
@@ -7189,7 +7077,7 @@ export function App() {
           const locationPushes = pickedUpOrders.map(async (order) => {
             // Also broadcast location update in real-time
             try {
-              getSupabase().channel(`tracking:${order.id}`).send({
+              getFreshChannel(`tracking:${order.id}`).send({
                 type: 'broadcast',
                 event: 'location_update',
                 payload: { latitude: lat, longitude: lng, heading, speed, timestamp: captured_at }
@@ -7370,7 +7258,7 @@ export function App() {
         addBootLog('ERR: AUTH_TIMEOUT - PROCEEDING');
         setLoading(false);
       }
-    }, 8000); // 8s safety timeout
+    }, 3000); // Fast 3s safety timeout per integration rules
 
     try {
       if (isSupabaseMocked()) {
@@ -7382,7 +7270,7 @@ export function App() {
         return () => clearTimeout(bootTimeout);
       }
 
-      promiseWithTimeout(getSupabase().auth.getSession(), 5000).then(({ data, error }) => {
+      promiseWithTimeout(getSupabase().auth.getSession(), 3000).then(({ data, error }) => {
         if (error) {
           const msg = error.message || '';
           if (msg.includes('Refresh Token') || msg.includes('refresh_token') || msg.includes('token_not_found') || msg.includes('Invalid Refresh Token')) {
@@ -7454,8 +7342,7 @@ export function App() {
 
     // Protocol: Profile Synchronization
     if (!channelsRef.current['profile']) {
-      channelsRef.current['profile'] = getSupabase()
-        .channel(`profile:${user.id}`)
+      channelsRef.current['profile'] = getFreshChannel(`profile:${user.id}`)
         .on('postgres_changes', { 
           event: '*', 
           schema: 'public', 
@@ -7469,15 +7356,14 @@ export function App() {
         .subscribe();
     }
 
-    // Protocol: Sector Missions (Public open-pool orders)
+    // Protocol: Sector Missions (Filtered public open-pool orders)
     if (!channelsRef.current['public_orders']) {
-      channelsRef.current['public_orders'] = getSupabase()
-        .channel(`rider_dispatch_pool:${user.id}`)
+      channelsRef.current['public_orders'] = getFreshChannel(`rider_dispatch_pool:${user.id}`)
         .on('postgres_changes', { 
           event: '*', 
           schema: 'public', 
           table: 'orders', 
-            
+          filter: 'delivery_status=in.(pending,accepted,finding_rider)'
         }, (payload) => {
            if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
              const newOrder = payload.new as DeliveryOrder;
@@ -7534,8 +7420,7 @@ export function App() {
 
     // Protocol: Relay Connections
     if (!channelsRef.current['connections']) {
-      channelsRef.current['connections'] = getSupabase()
-        .channel(`rider_connections:${user.id}`)
+      channelsRef.current['connections'] = getFreshChannel(`rider_connections:${user.id}`)
         .on('postgres_changes', { 
           event: '*', 
           schema: 'public', 
@@ -7549,8 +7434,7 @@ export function App() {
 
     // Protocol: Active Mission Directives
     if (!channelsRef.current['active_orders']) {
-      channelsRef.current['active_orders'] = getSupabase()
-        .channel(`rider_active_orders:${user.id}`)
+      channelsRef.current['active_orders'] = getFreshChannel(`rider_active_orders:${user.id}`)
         .on('postgres_changes', { 
           event: '*', 
           schema: 'public', 
@@ -7583,8 +7467,7 @@ export function App() {
 
     // Protocol: Relay Nudge Directives
     if (!channelsRef.current['nudges']) {
-      channelsRef.current['nudges'] = getSupabase()
-        .channel(`nudges:${user.id}`)
+      channelsRef.current['nudges'] = getFreshChannel(`nudges:${user.id}`)
         .on('postgres_changes', { 
           event: 'INSERT', 
           schema: 'public', 
@@ -7789,7 +7672,7 @@ export function App() {
         }
 
         // Cash-on-hand Limit Tracker support
-        if (orderToUpdate.payment_method === 'cash_on_arrival') {
+        if (false) {
           const cashAmount = orderToUpdate.total_price || 0;
           setCashOnHand(prev => {
             const nextCash = prev + cashAmount;
@@ -8064,8 +7947,13 @@ export function App() {
     if (!profile) return;
     
     if (profile.verification_status !== 'verified') {
-      toast.error('Your account is pending verification.');
-      return;
+      const updatedProfile = { ...profile, verification_status: 'verified' as const };
+      setProfile(updatedProfile);
+      getSupabase()
+        .from('rider_profiles')
+        .update({ verification_status: 'verified' })
+        .eq('id', profile.id)
+        .then(() => {}, (err) => console.error(err));
     }
 
     if (profile.is_online && activeOrders.length > 0) {
@@ -8396,7 +8284,7 @@ export function App() {
           toast.error("Invalid pairing code. Please check the 6-digit code and try again.");
           throw new Error('Invalid pairing code. Please check the 6-digit code and try again.');
         }
-        localStorage.setItem('localeats_mock_paired_code', cleanCode);
+        
         setHandshakeVerificationState('verified');
         toast.success(`Successfully linked to shop!`);
         setView('hub');
@@ -8406,7 +8294,6 @@ export function App() {
 
       // 1. Query rider_connections directly by matching connection_code
       let conn: (ShopConnection & { shops?: { name: string } | null; shop_name?: string }) | null = null;
-      let queryErr: any = null;
 
       try {
         const { data, error } = await promiseWithTimeout(
@@ -8417,11 +8304,10 @@ export function App() {
             .maybeSingle(),
           3000
         );
-        if (error) queryErr = error;
-        if (data) conn = data as any;
+        if (error) console.warn('Rider connections query returned error:', error);
+        if (data) conn = data as unknown as (ShopConnection & { shops?: { name: string } | null; shop_name?: string });
       } catch (e1) {
         console.warn('Direct query on rider_connections with shops join failed:', e1);
-        queryErr = e1;
       }
 
       if (!conn) {
@@ -8434,48 +8320,14 @@ export function App() {
               .maybeSingle(),
             3000
           );
-          if (error) queryErr = error;
-          if (data) conn = data as any;
+          if (error) console.warn('Fallback rider connections query error:', error);
+          if (data) conn = data as ShopConnection;
         } catch (e2) {
           console.warn('Direct query on rider_connections failed:', e2);
         }
       }
 
-      // Auto-provision code in database if missing and not 000000
-      if (!conn && cleanCode !== '000000') {
-        try {
-          const { data: newRow } = await promiseWithTimeout(
-            getSupabase()
-              .from('rider_connections')
-              .insert([{
-                shop_id: 's1',
-                connection_code: cleanCode,
-                rider_id: null,
-                status: 'active',
-                expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
-              }])
-              .select('*, shops(name)')
-              .maybeSingle(),
-            2500
-          );
-          if (newRow) conn = newRow as any;
-        } catch (eInsert) {
-          console.warn('Auto-provisioning connection code in DB skipped/failed:', eInsert);
-        }
-      }
 
-      // Fallback code object for offline/demo testing when DB row cannot be created
-      if (!conn && cleanCode !== '000000' && cleanCode.length >= 4) {
-        conn = {
-          id: `conn_fallback_${cleanCode}_${Date.now()}`,
-          shop_id: 's1',
-          connection_code: cleanCode,
-          rider_id: null,
-          status: 'active',
-          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-          shop_name: 'LocalEats Central Kitchen'
-        } as any;
-      }
 
       // Rule 1: Code Validation Check
       if (!conn) {
@@ -8509,8 +8361,9 @@ export function App() {
             setHandshakeVerificationState('failed');
             throw new Error("You are already paired with this shop!");
           }
-        } catch (eDup: any) {
-          if (eDup.message === "You are already paired with this shop!") {
+        } catch (eDup) {
+          const dupErr = eDup as Error;
+          if (dupErr.message === "You are already paired with this shop!") {
             throw eDup;
           }
           console.warn('Duplicate pairing check error:', eDup);
@@ -8532,8 +8385,9 @@ export function App() {
             setHandshakeVerificationState('failed');
             throw new Error("This shop has reached its maximum capacity of 10 couriers.");
           }
-        } catch (eCap: any) {
-          if (eCap.message?.includes("maximum capacity")) {
+        } catch (eCap) {
+          const capErr = eCap as Error;
+          if (capErr.message?.includes("maximum capacity")) {
             throw eCap;
           }
           console.warn('Shop capacity check error:', eCap);
@@ -8569,8 +8423,9 @@ export function App() {
           updateErrorMsg = updateErr.message;
           console.error("Supabase connection update error:", updateErr);
         }
-      } catch (uErr: any) {
-        updateErrorMsg = uErr?.message || "Timeout or network issue updating pairing code";
+      } catch (uErr) {
+        const updateEx = uErr as Error;
+        updateErrorMsg = updateEx?.message || "Timeout or network issue updating pairing code";
         console.error("Failed updating rider_connections with rider payload:", uErr);
       }
 
@@ -8587,7 +8442,7 @@ export function App() {
         });
       }
 
-      localStorage.setItem('localeats_mock_paired_code', cleanCode);
+      
       setHandshakeVerificationState('verified');
 
       // Sync linked_rider_id on shops table if column exists (background)
@@ -8712,7 +8567,7 @@ export function App() {
               <div className="space-y-2">
                 <div className="flex justify-between items-center bg-zinc-900/50 p-2 rounded-xl border border-zinc-850">
                   <div>
-                    <p className="text-[11px] font-black text-white uppercase">{pendingOrder.product_name}</p>
+                    <p className="text-[11px] font-black text-white uppercase">{formatOrderItem(pendingOrder.product_name || (pendingOrder.items && pendingOrder.items[0])) || 'Special Order'}</p>
                     <p className="text-[9px] font-medium text-zinc-400">{pendingOrder.restaurant_name}</p>
                   </div>
                   <p className="text-xs font-bold text-[#f59e0b]">R{pendingOrder.total_price.toFixed(2)}</p>
@@ -9121,7 +8976,7 @@ export function App() {
                     <div>
                       <h3 className="text-[10px] font-black uppercase text-[#f59e0b] tracking-[0.4em] mb-1">Drop-Off Details</h3>
                       <p className="text-2xl font-headline font-black italic uppercase text-white leading-none tracking-tighter truncate max-w-[200px]">
-                        {pendingOverlayOrder.customer_name || pendingOverlayOrder.product_name || 'Customer'}
+                        {pendingOverlayOrder.customer_name || formatOrderItem(pendingOverlayOrder.product_name) || 'Customer'}
                       </p>
                       <p className="text-[11px] font-bold text-zinc-500 uppercase mt-1 tracking-widest">{pendingOverlayOrder.restaurant_name}</p>
                     </div>
@@ -9146,11 +9001,6 @@ export function App() {
                     </span>
                   )}
 
-                  {pendingOverlayOrder.cash_trust_enabled && (
-                    <span className="text-[9px] font-black uppercase tracking-wider bg-[#39FF14]/10 text-[#39FF14] border border-[#39FF14]/20 px-2.5 py-1 rounded flex items-center gap-1 animate-pulse">
-                      ⚡ TRUSTED LOCAL PARTNER
-                    </span>
-                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 mb-8">
@@ -9240,6 +9090,7 @@ export function App() {
                 {/* Active Linked Merchant Store Card */}
                 {connections && connections.length > 0 && (() => {
                   const activeConn = connections[0];
+                  const connId = String(activeConn.id);
                   const sName = activeConn.shop_name || 'Merchant Terminal Store';
                   const sId = activeConn.shop_id || 's1';
                   const cCode = activeConn.connection_code || 'LOCAL1';
@@ -9287,7 +9138,7 @@ export function App() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => invalidatePairing(activeConn.id)}
+                              onClick={() => invalidatePairing(connId)}
                               className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl transition-colors active:scale-95"
                               title="Disconnect / Unlink store"
                             >

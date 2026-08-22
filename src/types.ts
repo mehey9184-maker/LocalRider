@@ -58,8 +58,9 @@ export interface DeliveryOrder {
   match_score?: number; // Tactical algorithm score
   surge_multiplier?: number; // ROI Multiplier
   batch_id?: string; // Grouping missions
+  delivery_pin?: string; // 4-digit PIN for drop-off
   dropoff_photo_ref?: string; // Proof of delivery
-  items?: string[]; // Optional list of items in the order
+  items?: Array<string | { name?: string; quantity?: number; price?: number; [key: string]: unknown }>; // Optional list of items in the order
   merchant_rating?: number;
   merchant_feedback?: string;
   payment_method?: 'cash_on_arrival' | 'card_online';

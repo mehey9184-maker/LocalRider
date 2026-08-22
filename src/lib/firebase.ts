@@ -1,20 +1,48 @@
+import { toast } from 'sonner';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
+import { initializeFirestore, getFirestore, setLogLevel, Firestore } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, Messaging, MessagePayload } from 'firebase/messaging';
 import { getSupabase, isSupabaseMocked } from './supabase';
 import { fetchWithRetry } from './appUtils';
 
+// Silence benign internal WebChannel streaming reconnection warnings
+try {
+  setLogLevel('error');
+} catch {
+  // Ignore if already configured
+}
+
 // Firebase configuration with lazy defaults
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDummyKeyForSSR",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBuX3QvWFTWSLoaEsMPE7TsQLEodAaFS1M",
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "localeats-5e26e.firebaseapp.com",
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "localeats-5e26e",
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "localeats-5e26e.firebasestorage.app",
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "281496568360",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:281496568360:web:localeats"
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:281496568360:web:45557127bbd2a352bfeb1d"
 };
 
 let appInstance: FirebaseApp | null = null;
 let messagingInstance: Messaging | null = null;
+
+const initApp = () => {
+  if (getApps().length > 0) return getApp();
+  return initializeApp(firebaseConfig);
+};
+
+const app = initApp();
+const DB_NAME = "ai-studio-localeatsvendord-a61b068b-3029-4d93-ba41-626b03a23bbe";
+
+let firestoreDb: Firestore;
+try {
+  firestoreDb = initializeFirestore(app, {
+    experimentalAutoDetectLongPolling: true,
+  }, DB_NAME);
+} catch {
+  firestoreDb = getFirestore(app, DB_NAME);
+}
+
+export const db = firestoreDb;
 
 export function getFirebaseApp(): FirebaseApp | null {
   if (typeof window === 'undefined') return null;
@@ -66,6 +94,12 @@ export async function requestNotificationPermissionAndGetToken(customVapidKey?: 
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
       console.warn('Notification permission status:', permission);
+      if (permission === 'denied') {
+         toast.error('Push Notifications Denied', {
+           description: 'Notifications are critical for receiving immediate order dispatch alerts. Please enable them in your browser settings to avoid missing deliveries.',
+           duration: 8000,
+         });
+      }
       return null;
     }
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Menu, Globe, Clock, Battery } from 'lucide-react';
+import { Menu, Globe, Battery } from 'lucide-react';
 import { NetworkHealthIndicator } from './NetworkHealthIndicator';
 import { cn } from '../lib/utils';
 import { ShopConnection, AppView } from '../types';
@@ -15,7 +15,6 @@ interface TopNavOptionsMenuProps {
 
 export const TopNavOptionsMenu: React.FC<TopNavOptionsMenuProps> = ({
   connections,
-  now,
   batteryLevel,
   batteryCharging,
   onClearCache,
@@ -40,13 +39,6 @@ export const TopNavOptionsMenu: React.FC<TopNavOptionsMenuProps> = ({
   const activeConn = hasConnections ? connections[0] : null;
   const shopName = activeConn?.shop_name || 'Merchant Store';
   const connectionCode = activeConn?.connection_code;
-
-  const expiryMs = hasConnections ? new Date(connections[0].expires_at).getTime() - now : 0;
-  const isExpired = !hasConnections || expiryMs <= 0;
-  const isNearingExpiry = hasConnections && expiryMs > 0 && expiryMs <= 2 * 60 * 60 * 1000;
-  const hours = hasConnections ? Math.max(0, Math.floor(expiryMs / (1000 * 60 * 60))) : 0;
-  const mins = hasConnections ? Math.max(0, Math.floor((expiryMs % (1000 * 60 * 60)) / (1000 * 60))) : 0;
-  const secs = hasConnections ? Math.max(0, Math.floor((expiryMs % (1000 * 60)) / 1000)) : 0;
 
   const statusTextColor = !hasConnections ? "text-zinc-500" : activeConn?.status === 'revoked' ? "text-red-500" : "text-emerald-400";
   const statusLabel = !hasConnections ? "UNLINKED" : activeConn?.status === 'revoked' ? "REVOKED" : "CONNECTED";

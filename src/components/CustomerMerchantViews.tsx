@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { DeliveryOrder } from '../types';
 import { cn } from '../lib/utils';
+import { formatOrderItem } from '../lib/appUtils';
 import { BentoCard } from './BentoCard';
 import { OrderChatModal } from './OrderChatModal';
 
@@ -130,15 +131,17 @@ export const CustomerView = ({
             <div className="space-y-3 mt-6">
               <h4 className="text-xs font-black uppercase tracking-[0.2em] text-zinc-500">Order History</h4>
               <div className="space-y-2">
-                {simulatedOrders.map(order => (
+                {simulatedOrders.map(order => {
+                  const prodTitle = formatOrderItem(order.product_name || (order.items && order.items[0])) || 'Order Payload';
+                  return (
                   <div key={order.id} className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-2xl flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-zinc-950 flex items-center justify-center text-lg border border-zinc-800">
-                        {order.product_name.includes('Kota') ? '🍔' : '🥩'}
+                        {prodTitle.includes('Kota') ? '🍔' : '🥩'}
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-black text-white uppercase">{order.product_name}</span>
+                          <span className="text-xs font-black text-white uppercase">{prodTitle}</span>
                           <span className={cn(
                             "text-[8px] font-black uppercase px-1.5 py-0.5 rounded font-mono",
                             order.status === 'preparing' ? "bg-orange-500/10 text-orange-400 border border-orange-500/20" :
@@ -178,7 +181,8 @@ export const CustomerView = ({
                       )}
                     </div>
                   </div>
-                ))}
+                );
+              })}
               </div>
             </div>
           )}
@@ -388,7 +392,7 @@ export const MerchantDashboard = ({
                     {/* Item and details */}
                     <div className="md:col-span-4 space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-white uppercase">{order.product_name}</span>
+                        <span className="text-sm font-black text-white uppercase">{formatOrderItem(order.product_name || (order.items && order.items[0])) || 'Order Items'}</span>
                         <span className="text-[9px] font-mono font-bold text-zinc-500">#{order.id.slice(-4).toUpperCase()}</span>
                       </div>
                       <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 font-sans">

@@ -14,7 +14,8 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { DeliveryOrder, OrderChatMessage } from '../types';
-import { getSupabase, isSupabaseMocked } from '../lib/supabase';
+import { getSupabase, getFreshChannel, isSupabaseMocked } from '../lib/supabase';
+import { formatOrderItem } from '../lib/appUtils';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 interface OrderChatModalProps {
@@ -384,7 +385,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
         if (sent) {
           // Broadcast upon recovery
           try {
-            const ch = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
+            const ch = channelRef.current || getFreshChannel(`order_chat_${order.id}`);
             ch.send({
               type: 'broadcast',
               event: 'new_message',
@@ -486,8 +487,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
       };
     }
     
-    const realtimeChannel = supabase
-      .channel(primaryChannelName)
+    const realtimeChannel = getFreshChannel(primaryChannelName)
       .on('broadcast', { event: 'new_message' }, (payload) => processIncomingRawMessage(payload.payload))
       .on('broadcast', { event: 'message' }, (payload) => processIncomingRawMessage(payload.payload))
       .on('broadcast', { event: 'chat_message' }, (payload) => processIncomingRawMessage(payload.payload))
@@ -529,8 +529,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
       });
 
     // Secondary listener for hyphenated channel format
-    const secondaryChannel = supabase
-      .channel(fallbackChannelName)
+    const secondaryChannel = getFreshChannel(fallbackChannelName)
       .on('broadcast', { event: 'new_message' }, (payload) => processIncomingRawMessage(payload.payload))
       .on('broadcast', { event: 'message' }, (payload) => processIncomingRawMessage(payload.payload))
       .subscribe();
@@ -547,7 +546,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
       }
       supabase.removeChannel(secondaryChannel);
     };
-  }, [isOpen, order.id, storageKey, markMessagesAsRead, handleRefreshMessages, flushPendingQueue, scrollToBottom]);
+  }, [isOpen, order.id, storageKey, markMessagesAsRead, handleRefreshMessages, flushPendingQueue, scrollToBottom, currentUserRole]);
 
   useEffect(() => {
     scrollToBottom();
@@ -592,14 +591,14 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
 
     // 1. Broadcast Realtime Message via Subscribed Channels (both underscore & hyphen)
     try {
-      const ch1 = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
+      const ch1 = channelRef.current || getFreshChannel(`order_chat_${order.id}`);
       ch1.send({
         type: 'broadcast',
         event: 'new_message',
         payload: newMsg
       }).catch(() => {});
 
-      getSupabase().channel(`order-chat-${order.id}`).send({
+      getFreshChannel(`order-chat-${order.id}`).send({
         type: 'broadcast',
         event: 'new_message',
         payload: newMsg
@@ -742,7 +741,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
                   )}
                 </div>
                 <p className="text-[10px] text-zinc-500 font-mono truncate">
-                  Order #{order.id.slice(-6).toUpperCase()} • {order.product_name}
+                  Order #{order.id.slice(-6).toUpperCase()} • {formatOrderItem(order.product_name || (order.items && order.items[0])) || 'Delivery Payload'}
                 </p>
               </div>
             </div>
@@ -914,7 +913,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
                   if (now - lastTypingEventSentRef.current > 1500) {
                     lastTypingEventSentRef.current = now;
                     try {
-                      const ch1 = channelRef.current || getSupabase().channel(`order_chat_${order.id}`);
+                      const ch1 = channelRef.current || getFreshChannel(`order_chat_${order.id}`);
                       ch1.send({
                         type: 'broadcast',
                         event: 'typing',

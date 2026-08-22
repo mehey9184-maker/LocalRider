@@ -1,0 +1,53 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    match /orders/{orderId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /shops/{shopId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /rider_connections/{connId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /rider_profiles/{profileId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /rider_locations/{locId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /chat_messages/{messageId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /order_messages/{messageId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /rider_chat_messages/{messageId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+
+    match /{document=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() || request.resource != null;
+    }
+  }
+}

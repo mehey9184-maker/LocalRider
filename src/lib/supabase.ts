@@ -277,9 +277,6 @@ class FakeChannel {
     }
     return this;
   }
-  send(payload: any) {
-    return Promise.resolve('ok');
-  }
 }
 
 const mapUser = (u: FirebaseUser | null) => {

@@ -184,7 +184,6 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'online' | 'offline'>('connecting');
   const [isCounterpartTyping, setIsCounterpartTyping] = useState(false);
   const counterpartTypingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastTypingEventSentRef = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   
@@ -382,19 +381,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
           sent = true;
         }
 
-        if (sent) {
-          // Broadcast upon recovery
-          try {
-            const ch = channelRef.current || getFreshChannel(`order_chat_${order.id}`);
-            ch.send({
-              type: 'broadcast',
-              event: 'new_message',
-              payload: msg
-            }).catch(() => {});
-          } catch {
-            /* ignore */
-          }
-        } else {
+        if (!sent) {
           remaining.push(msg);
         }
       }
@@ -589,25 +576,7 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
     setIsSending(false);
     setTimeout(scrollToBottom, 50);
 
-    // 1. Broadcast Realtime Message via Subscribed Channels (both underscore & hyphen)
-    try {
-      const ch1 = channelRef.current || getFreshChannel(`order_chat_${order.id}`);
-      ch1.send({
-        type: 'broadcast',
-        event: 'new_message',
-        payload: newMsg
-      }).catch(() => {});
-
-      getFreshChannel(`order-chat-${order.id}`).send({
-        type: 'broadcast',
-        event: 'new_message',
-        payload: newMsg
-      }).catch(() => {});
-    } catch {
-      /* ignore */
-    }
-
-    // 2. Try DB Insert with multi-field fallback schema across chat_messages and order_messages
+    // Try DB Insert with multi-field fallback schema across chat_messages and order_messages
     if (!isSupabaseMocked()) {
       try {
         const supabase = getSupabase();
@@ -909,20 +878,6 @@ export const OrderChatModal: React.FC<OrderChatModalProps> = ({
                 value={inputText}
                 onChange={(e) => {
                   setInputText(e.target.value);
-                  const now = Date.now();
-                  if (now - lastTypingEventSentRef.current > 1500) {
-                    lastTypingEventSentRef.current = now;
-                    try {
-                      const ch1 = channelRef.current || getFreshChannel(`order_chat_${order.id}`);
-                      ch1.send({
-                        type: 'broadcast',
-                        event: 'typing',
-                        payload: { sender_role: currentUserRole, order_id: order.id }
-                      }).catch(() => {});
-                    } catch {
-                      /* ignore */
-                    }
-                  }
                 }}
                 onKeyDown={(e) => {
                   e.stopPropagation();

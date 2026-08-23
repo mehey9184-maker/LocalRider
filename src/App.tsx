@@ -6080,17 +6080,7 @@ export function App() {
         if (!sanitizedData.current_longitude) sanitizedData.current_longitude = 28.2268;
         
         // Auto-verify rider account on load to prevent roadblock
-        if (sanitizedData.verification_status !== 'verified') {
-          sanitizedData.verification_status = 'verified';
-          getSupabase()
-            .from('rider_profiles')
-            .update({ verification_status: 'verified' })
-            .eq('id', user.id)
-            .then(({ error }) => {
-              if (error) console.error('Failed to auto-verify rider:', error);
-              else console.log('Successfully auto-verified rider in database!');
-            });
-        }
+        // Removed insecure client-controlled verification_status update
         
         setProfile(sanitizedData as RiderProfile);
         if (!data.onboarding_complete && localStorage.getItem('localeats_onboarding_seen') !== 'true') {
@@ -6881,16 +6871,8 @@ export function App() {
             });
             
             if (rpcError) {
-               console.warn('RPC failed during cached sync replay, writing directly', rpcError);
-               const profileUpdates = {
-                 total_earnings: (profileRef.current?.total_earnings || 0) + (delivery_fee || 0),
-                 total_deliveries: (profileRef.current?.total_deliveries || 0) + 1,
-                 active_points: (profileRef.current?.active_points || 0) + 15,
-                 updated_at: new Date().toISOString()
-               };
-               await fetchWithRetry(async () => {
-                 return await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profileRef.current?.id);
-               }, 2, 1000, 5000);
+               console.warn('SERVER DEPENDENCY: increment_rider_stats Cloud Function required to calculate earnings safely.', rpcError);
+               toast.info('Delivery logged. Earnings will synchronize via server.');
             }
           }
           
@@ -6901,10 +6883,23 @@ export function App() {
             localStorage.removeItem('order_sync_queue');
           }
           addBootLog(`SYNC_SUCCESS: Replayed order transition ${status} for #${orderId.slice(-4)}`);
-        } catch (err) {
+        } catch (err: any) {
           console.error('Failed to replay offline order sync item:', err);
-          addBootLog('SYNC_REPLAY_SUSPENDED: Connection lost during dispatch sync replay');
-          break; // Stop and retry later on next online trigger
+          const isPermanentError = err.code === 'permission-denied' || err.message?.includes('permission') || err.message?.includes('validation');
+          
+          if (isPermanentError) {
+             console.error('Permanent error syncing offline order item (permission/validation). Dropping item from queue.');
+             remaining = remaining.filter(item => item.id !== action.id);
+             if (remaining.length > 0) {
+               localStorage.setItem('order_sync_queue', JSON.stringify(remaining));
+             } else {
+               localStorage.removeItem('order_sync_queue');
+             }
+             continue; // Move to the next item
+          } else {
+             addBootLog('SYNC_REPLAY_SUSPENDED: Connection lost during dispatch sync replay');
+             break; // Stop and retry later on next online trigger
+          }
         }
       }
       
@@ -7623,15 +7618,9 @@ export function App() {
         
         // Spoor & Tube Cooperative Fund Auto-Deduction support
         const isCoopDeduct = localStorage.getItem('localeats_coop_autodeduct') === 'true';
-        const finalFee = orderToUpdate.delivery_fee || 0;
-        const earningsAdd = isCoopDeduct ? Math.max(0, finalFee - 2) : finalFee;
 
-        setProfile(prev => prev ? {
-          ...prev,
-          total_earnings: prev.total_earnings + earningsAdd,
-          total_deliveries: prev.total_deliveries + 1,
-          active_points: prev.active_points + 15
-        } : null);
+        // Removed optimistic earnings local update to enforce server-side authority.
+        // Earnings will be recalculated on next DB sync.
 
         if (isCoopDeduct) {
           const contrib = Number(localStorage.getItem('localeats_coop_rider_contrib') || '432') + 2;
@@ -7721,19 +7710,11 @@ export function App() {
           });
           
           if (rpcError) {
-             console.warn('RPC failed, falling back to direct update', rpcError);
-             const profileUpdates = {
-               total_earnings: profile.total_earnings + (orderToUpdate.delivery_fee || 0),
-               total_deliveries: profile.total_deliveries + 1,
-               active_points: profile.active_points + 15,
-               updated_at: new Date().toISOString()
-             };
-             await fetchWithRetry(async () => {
-                return await getSupabase().from('rider_profiles').update(profileUpdates).eq('id', profile.id);
-             });
+             console.warn('SERVER DEPENDENCY: increment_rider_stats Cloud Function required to calculate earnings safely.', rpcError);
+             toast.info('Delivery completed. Earnings will synchronize via server.', { id: 'status-updating' });
+          } else {
+             toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`, { id: 'status-updating' });
           }
-          
-          toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`, { id: 'status-updating' });
         } else if (status === 'finding_rider') {
           toast.success('Mission released back to regional marketplace.', { id: 'status-updating' });
         } else {
@@ -7918,16 +7899,6 @@ export function App() {
   const toggleOnline = useCallback(async () => {
     if (!profile) return;
     
-    if (profile.verification_status !== 'verified') {
-      const updatedProfile = { ...profile, verification_status: 'verified' as const };
-      setProfile(updatedProfile);
-      getSupabase()
-        .from('rider_profiles')
-        .update({ verification_status: 'verified' })
-        .eq('id', profile.id)
-        .then(() => {}, (err) => console.error(err));
-    }
-
     if (profile.is_online && activeOrders.length > 0) {
       setShowOfflineWarning(true);
       return;
@@ -8100,34 +8071,14 @@ export function App() {
 
         if (!rpcResult.error && rpcResult.data === true) {
           claimed = true;
+          // Refresh order data to get latest DB state
+          const { data } = await getSupabase().from('orders').select('*').eq('id', orderId).maybeSingle();
+          if (data) fetchedOrder = data as DeliveryOrder;
+        } else if (rpcResult.error) {
+           console.error('Claim RPC error:', rpcResult.error);
         }
       } catch (err) {
-        console.warn('RPC claim attempt failed, attempting fallback direct update:', err);
-      }
-
-      // Secondary claim attempt via direct table update if RPC is missing or fails
-      if (!claimed) {
-        try {
-          const { data: updatedRows, error: directErr } = await getSupabase()
-            .from('orders')
-            .update({
-              rider_id: user.id,
-              rider_name: profile.name || profile.full_name || 'Rider',
-              rider_phone: profile.phone || '+27 83 123 4567',
-              delivery_status: 'accepted',
-              status: 'preparing',
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', orderId)
-            .select('*');
-
-          if (!directErr && updatedRows && updatedRows.length > 0) {
-            claimed = true;
-            fetchedOrder = updatedRows[0] as DeliveryOrder;
-          }
-        } catch (e) {
-          console.warn('Direct order update claim failed:', e);
-        }
+        console.warn('SERVER DEPENDENCY: claim_delivery_mission RPC missing or failed. Order cannot be securely claimed.', err);
       }
 
       if (!claimed) {
@@ -8386,8 +8337,7 @@ export function App() {
               rider_id: user.id,
               rider_name: riderName,
               rider_phone: riderPhone,
-              status: 'active',
-              expires_at: farFutureExpiry
+              status: 'active'
             })
             .eq('id', conn.id),
           3000
@@ -8421,13 +8371,8 @@ export function App() {
       
       setHandshakeVerificationState('verified');
 
-      // Sync linked_rider_id on shops table if column exists (background)
-      if (shopId) {
-        promiseWithTimeout(
-          getSupabase().from('shops').update({ linked_rider_id: user.id }).eq('id', shopId),
-          1500
-        ).catch(() => {});
-      }
+      // Removed insecure client-driven update of shops table (linked_rider_id)
+      // Store-linking relies purely on the rider_connections document state.
 
       if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
 

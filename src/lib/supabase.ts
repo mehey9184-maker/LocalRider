@@ -2,7 +2,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, collection, doc, getDoc, getDocs, setDoc, updateDoc, 
-  deleteDoc, query, where, onSnapshot, limit, orderBy 
+  deleteDoc, query, where, onSnapshot, limit, orderBy, runTransaction 
 } from 'firebase/firestore';
 import { 
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, 
@@ -353,26 +353,46 @@ const fakeSupabase = {
     if (channel && channel.unsubscribe) channel.unsubscribe();
   },
   rpc: async (functionName: string, params?: any) => {
-    if (functionName === 'increment_rider_stats') {
+    if (functionName === 'claim_delivery_mission') {
       try {
-        const riderId = params?.p_rider_id || params?.rider_id;
-        if (riderId) {
-          const docRef = doc(db, 'rider_profiles', riderId);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-            const current = snap.data();
-            await setDoc(docRef, {
-              total_deliveries: (current.total_deliveries || 0) + (params?.p_deliveries || 1),
-              total_earnings: (current.total_earnings || 0) + (params?.p_earnings || 0),
-              updated_at: new Date().toISOString()
-            }, { merge: true });
-          }
+        const orderId = params?.target_order_id;
+        const riderId = auth.currentUser?.uid;
+        if (!orderId || !riderId) throw new Error('Missing order ID or rider ID');
+
+        const success = await runTransaction(db, async (transaction) => {
+          const docRef = doc(db, 'orders', orderId);
+          const snap = await transaction.get(docRef);
+          if (!snap.exists()) return false;
+          
+          const data = snap.data();
+          if (data.delivery_status !== 'finding_rider') return false; // Atomic lock
+          
+          transaction.set(docRef, {
+            rider_id: riderId,
+            rider_name: params?.p_rider_name || 'Rider',
+            rider_phone: params?.p_rider_phone || '',
+            delivery_status: 'accepted',
+            status: 'preparing',
+            updated_at: new Date().toISOString()
+          }, { merge: true });
+          
+          return true;
+        });
+
+        if (success) {
+          return { data: true, error: null };
+        } else {
+          return { data: false, error: new Error('Order already claimed or not available') };
         }
       } catch (e) {
-        console.warn('RPC increment_rider_stats notice:', e);
+        return { data: false, error: e };
       }
-      return { data: null, error: null };
     }
+    
+    if (functionName === 'increment_rider_stats') {
+      return { data: null, error: new Error('SERVER_DEPENDENCY: increment_rider_stats must be a Cloud Function') };
+    }
+    
     return { data: null, error: null };
   },
   storage: {

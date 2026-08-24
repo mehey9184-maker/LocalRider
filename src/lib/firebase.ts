@@ -2,7 +2,11 @@ import { toast } from 'sonner';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, setLogLevel, Firestore } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, Messaging, MessagePayload } from 'firebase/messaging';
-import { getSupabase, isSupabaseMocked } from './supabase';
+// Lazy getter for supabase to prevent circular dependency at module load
+async function getSupabaseClient() {
+  const { getSupabase, isSupabaseMocked } = await import('./supabase');
+  return { supabase: getSupabase(), isMocked: isSupabaseMocked() };
+}
 import { fetchWithRetry } from './appUtils';
 
 // Silence benign internal WebChannel streaming reconnection warnings
@@ -14,16 +18,13 @@ try {
 
 // Firebase configuration with lazy defaults
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBuX3QvWFTWSLoaEsMPE7TsQLEodAaFS1M",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "localeats-5e26e.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "localeats-5e26e",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "localeats-5e26e.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "281496568360",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:281496568360:web:45557127bbd2a352bfeb1d"
+  apiKey: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_API_KEY) || "AIzaSyBuX3QvWFTWSLoaEsMPE7TsQLEodAaFS1M",
+  authDomain: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_AUTH_DOMAIN) || "localeats-5e26e.firebaseapp.com",
+  projectId: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_PROJECT_ID) || "localeats-5e26e",
+  storageBucket: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_STORAGE_BUCKET) || "localeats-5e26e.firebasestorage.app",
+  messagingSenderId: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_MESSAGING_SENDER_ID) || "281496568360",
+  appId: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_APP_ID) || "1:281496568360:web:45557127bbd2a352bfeb1d"
 };
-
-let appInstance: FirebaseApp | null = null;
-let messagingInstance: Messaging | null = null;
 
 const initApp = () => {
   if (getApps().length > 0) return getApp();
@@ -31,6 +32,8 @@ const initApp = () => {
 };
 
 const app = initApp();
+let appInstance: FirebaseApp | null = app;
+let messagingInstance: Messaging | null = null;
 const DB_NAME = "ai-studio-localeatsvendord-a61b068b-3029-4d93-ba41-626b03a23bbe";
 
 let firestoreDb: Firestore;
@@ -45,7 +48,6 @@ try {
 export const db = firestoreDb;
 
 export function getFirebaseApp(): FirebaseApp | null {
-  if (typeof window === 'undefined') return null;
   if (!appInstance) {
     try {
       if (getApps().length > 0) {
@@ -137,7 +139,8 @@ export async function requestNotificationPermissionAndGetToken(customVapidKey?: 
   Upserts the FCM token into public.user_push_tokens on Supabase.
  */
 export async function syncPushTokenToSupabase(userId: string, token: string): Promise<boolean> {
-  if (!userId || !token || isSupabaseMocked()) return false;
+  const { supabase, isMocked } = await getSupabaseClient();
+  if (!userId || !token || isMocked) return false;
 
   try {
     const payload = {
@@ -148,7 +151,7 @@ export async function syncPushTokenToSupabase(userId: string, token: string): Pr
     };
 
     const { error } = await fetchWithRetry(async () => {
-      return await getSupabase()
+      return await supabase
         .from('user_push_tokens')
         .upsert(payload, { onConflict: 'user_id' });
     }, 2, 1000, 5000);
@@ -158,7 +161,7 @@ export async function syncPushTokenToSupabase(userId: string, token: string): Pr
       if (error.code === '42703' || error.message?.includes('column') || error.message?.includes('does not exist')) {
         console.warn('Retrying token sync with minimal column layout:', error.message);
         await fetchWithRetry(async () => {
-          return await getSupabase()
+          return await supabase
             .from('user_push_tokens')
             .upsert({ user_id: userId, token }, { onConflict: 'user_id' });
         }, 2, 1000, 5000);

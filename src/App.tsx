@@ -6854,26 +6854,25 @@ export function App() {
         if (!navigator.onLine) break;
 
         try {
-          const { orderId, status, updates, delivery_fee } = action;
+          const { orderId, status, updates } = action;
           
-          const { error } = await getSupabase()
-            .from('orders')
-            .update(updates)
-            .eq('id', orderId);
-            
-          if (error) throw error;
-          
-          if (status === 'delivered') {
-            const { error: rpcError } = await getSupabase().rpc('increment_rider_stats', {
-              rider_id: profileRef.current?.id,
-              earnings_add: delivery_fee || 0,
-              points_add: 15
+          if (status === 'picked_up') {
+            const { error } = await getSupabase().rpc('mark_order_picked_up', {
+              order_id: orderId
             });
-            
-            if (rpcError) {
-               console.warn('SERVER DEPENDENCY: increment_rider_stats Cloud Function required to calculate earnings safely.', rpcError);
-               toast.info('Delivery logged. Earnings will synchronize via server.');
-            }
+            if (error) throw error;
+          } else if (status === 'delivered') {
+            const { error } = await getSupabase().rpc('complete_delivery', {
+              order_id: orderId,
+              delivery_pin: updates?.delivery_pin
+            });
+            if (error) throw error;
+          } else {
+            const { error } = await getSupabase()
+              .from('orders')
+              .update(updates)
+              .eq('id', orderId);
+            if (error) throw error;
           }
           
           remaining = remaining.filter(item => item.id !== action.id);
@@ -7689,32 +7688,40 @@ export function App() {
         return;
       }
 
-      const { error } = await fetchWithRetry(async () => {
-        return await getSupabase()
-          .from('orders')
-          .update(updates)
-          .eq('id', orderId)
-          .eq('rider_id', user.id); // Secure RLS enforcement: match against current authenticated rider_id
-      });
+      let opError: { message?: string } | null = null;
+      if (status === 'picked_up') {
+        const { error } = await fetchWithRetry(async () => {
+          return await getSupabase().rpc('mark_order_picked_up', {
+            order_id: orderId,
+            rider_id: user.id
+          });
+        });
+        opError = error;
+      } else if (status === 'delivered') {
+        const { error } = await fetchWithRetry(async () => {
+          return await getSupabase().rpc('complete_delivery', {
+            order_id: orderId,
+            rider_id: user.id,
+            delivery_pin: orderToUpdate.delivery_pin
+          });
+        });
+        opError = error;
+      } else {
+        const { error } = await fetchWithRetry(async () => {
+          return await getSupabase()
+            .from('orders')
+            .update(updates)
+            .eq('id', orderId)
+            .eq('rider_id', user.id);
+        });
+        opError = error;
+      }
 
-      if (error) {
-        throw error;
+      if (opError) {
+        throw opError;
       } else {
         if (status === 'delivered') {
-          const { error: rpcError } = await fetchWithRetry(async () => {
-             return await getSupabase().rpc('increment_rider_stats', {
-               rider_id: profile.id,
-               earnings_add: orderToUpdate.delivery_fee,
-               points_add: 15
-             });
-          });
-          
-          if (rpcError) {
-             console.warn('SERVER DEPENDENCY: increment_rider_stats Cloud Function required to calculate earnings safely.', rpcError);
-             toast.info('Delivery completed. Earnings will synchronize via server.', { id: 'status-updating' });
-          } else {
-             toast.success(`Order completed! +${orderToUpdate.delivery_fee} earned.`, { id: 'status-updating' });
-          }
+          toast.success(`Order completed! +${orderToUpdate.delivery_fee || 15} earned.`, { id: 'status-updating' });
         } else if (status === 'finding_rider') {
           toast.success('Mission released back to regional marketplace.', { id: 'status-updating' });
         } else {
@@ -8058,7 +8065,7 @@ export function App() {
       let claimed = false;
       let fetchedOrder: DeliveryOrder | null = null;
 
-      // Primary claim attempt via database RPC
+      // Primary claim attempt via database RPC (calls Cloud Function claimDeliveryMission)
       try {
         const rpcResult = await fetchWithRetry(async () => {
           return await getSupabase()
@@ -8075,58 +8082,14 @@ export function App() {
           const { data } = await getSupabase().from('orders').select('*').eq('id', orderId).maybeSingle();
           if (data) fetchedOrder = data as DeliveryOrder;
         } else if (rpcResult.error) {
-           console.error('Claim RPC error:', rpcResult.error);
+          console.error('Claim RPC error:', rpcResult.error);
         }
       } catch (err) {
-        console.warn('SERVER DEPENDENCY: claim_delivery_mission RPC missing or failed. Order cannot be securely claimed.', err);
+        console.warn('SERVER DEPENDENCY: claim_delivery_mission Callable Cloud Function failed.', err);
       }
 
       if (!claimed) {
-        // Check if the order actually exists in DB and was claimed by a different rider
-        try {
-          const { data: existingDbOrder } = await getSupabase()
-            .from('orders')
-            .select('rider_id')
-            .eq('id', orderId)
-            .maybeSingle();
-
-          if (existingDbOrder && existingDbOrder.rider_id && existingDbOrder.rider_id !== user.id) {
-            console.warn('MISSION PROTOCOL: Claim failed', 'Mission taken by another courier');
-            setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
-            toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
-              style: {
-                background: "#991b1b",
-                color: "#ffffff",
-                border: "2px solid #ef4444",
-                textTransform: "uppercase",
-                fontWeight: 900,
-                fontFamily: "monospace",
-              }
-            });
-            return;
-          }
-        } catch (checkErr) {
-          console.warn('Db check failed:', checkErr);
-        }
-
-        // If not explicitly claimed by another rider, fallback to local state claim
-        const fallbackOrder = availableOrders.find(o => o.id === orderId) || orderToAccept;
-        if (fallbackOrder) {
-          claimed = true;
-          fetchedOrder = {
-            ...fallbackOrder,
-            delivery_status: 'accepted',
-            status: 'preparing',
-            rider_id: user.id,
-            rider_name: profile.name || profile.full_name || 'Rider',
-            rider_phone: profile.phone || '+27 83 123 4567',
-            surge_multiplier: surgeMultiplier
-          } as DeliveryOrder;
-        }
-      }
-
-      if (!claimed) {
-        console.warn('MISSION PROTOCOL: Claim failed', 'Mission taken by another courier');
+        console.warn('MISSION PROTOCOL: Claim failed', 'Mission taken by another courier or unavailable');
         setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
         toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
           style: {

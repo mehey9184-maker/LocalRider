@@ -10,15 +10,15 @@ import {
 } from 'firebase/auth';
 import type { SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 
-import { db, getFirebaseApp } from './firebase';
-const app = getFirebaseApp() || (getApps().length > 0 ? getApp() : initializeApp({
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBuX3QvWFTWSLoaEsMPE7TsQLEodAaFS1M",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "localeats-5e26e.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "localeats-5e26e",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "localeats-5e26e.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "281496568360",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:281496568360:web:45557127bbd2a352bfeb1d"
-}));
+import { db } from './firebase';
+const app = getApps().length > 0 ? getApp() : initializeApp({
+  apiKey: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_API_KEY) || "AIzaSyBuX3QvWFTWSLoaEsMPE7TsQLEodAaFS1M",
+  authDomain: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_AUTH_DOMAIN) || "localeats-5e26e.firebaseapp.com",
+  projectId: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_PROJECT_ID) || "localeats-5e26e",
+  storageBucket: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_STORAGE_BUCKET) || "localeats-5e26e.firebasestorage.app",
+  messagingSenderId: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_MESSAGING_SENDER_ID) || "281496568360",
+  appId: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_APP_ID) || "1:281496568360:web:45557127bbd2a352bfeb1d"
+});
 const auth = getAuth(app);
 
 let isMocked = false;
@@ -355,42 +355,94 @@ const fakeSupabase = {
   rpc: async (functionName: string, params?: any) => {
     if (functionName === 'claim_delivery_mission') {
       try {
-        const orderId = params?.target_order_id;
-        const riderId = auth.currentUser?.uid;
-        if (!orderId || !riderId) throw new Error('Missing order ID or rider ID');
+        const orderId = params?.target_order_id || params?.order_id;
+        const riderId = auth.currentUser?.uid || params?.rider_id;
+        if (!orderId || !riderId) return { data: null, error: new Error('Missing order ID or rider ID') };
 
-        const success = await runTransaction(db, async (transaction) => {
-          const docRef = doc(db, 'orders', orderId);
-          const snap = await transaction.get(docRef);
-          if (!snap.exists()) return false;
-          
-          const data = snap.data();
-          if (data.delivery_status !== 'finding_rider') return false; // Atomic lock
-          
-          transaction.set(docRef, {
-            rider_id: riderId,
-            rider_name: params?.p_rider_name || 'Rider',
-            rider_phone: params?.p_rider_phone || '',
-            delivery_status: 'accepted',
-            status: 'preparing',
-            updated_at: new Date().toISOString()
-          }, { merge: true });
-          
-          return true;
+        const { claimDeliveryMission } = await import('../services/riderDeliveryBackend');
+        const res = await claimDeliveryMission({
+          order_id: orderId,
+          rider_id: riderId,
+          p_rider_name: params?.p_rider_name,
+          p_rider_phone: params?.p_rider_phone
         });
 
-        if (success) {
+        if (res.success) {
           return { data: true, error: null };
         } else {
-          return { data: false, error: new Error('Order already claimed or not available') };
+          return { data: false, error: new Error(res.error?.message || 'Order already claimed or not available') };
         }
-      } catch (e) {
+      } catch (e: any) {
         return { data: false, error: e };
       }
     }
     
+    if (functionName === 'mark_order_picked_up') {
+      try {
+        const orderId = params?.order_id || params?.target_order_id;
+        const riderId = auth.currentUser?.uid || params?.rider_id;
+        if (!orderId) return { data: null, error: new Error('Missing order_id') };
+
+        const { markOrderPickedUp } = await import('../services/riderDeliveryBackend');
+        const res = await markOrderPickedUp({
+          order_id: orderId,
+          rider_id: riderId
+        });
+
+        if (res.success) {
+          return { data: res.data, error: null };
+        } else {
+          return { data: null, error: new Error(res.error?.message || 'Pickup failed') };
+        }
+      } catch (e: any) {
+        return { data: null, error: e };
+      }
+    }
+
+    if (functionName === 'complete_delivery') {
+      try {
+        const orderId = params?.order_id || params?.target_order_id;
+        const riderId = auth.currentUser?.uid || params?.rider_id;
+        const deliveryPin = params?.delivery_pin || params?.pin;
+        if (!orderId) return { data: null, error: new Error('Missing order_id') };
+
+        const { completeDelivery } = await import('../services/riderDeliveryBackend');
+        const res = await completeDelivery({
+          order_id: orderId,
+          delivery_pin: deliveryPin,
+          rider_id: riderId
+        });
+
+        if (res.success) {
+          return { data: res.data, error: null };
+        } else {
+          return { data: null, error: new Error(res.error?.message || 'Delivery completion failed') };
+        }
+      } catch (e: any) {
+        return { data: null, error: e };
+      }
+    }
+
     if (functionName === 'increment_rider_stats') {
-      return { data: null, error: new Error('SERVER_DEPENDENCY: increment_rider_stats must be a Cloud Function') };
+      try {
+        const orderId = params?.order_id;
+        const riderId = params?.rider_id || auth.currentUser?.uid;
+        if (!riderId) return { data: null, error: new Error('Missing rider_id') };
+
+        const { incrementRiderStats } = await import('../services/riderDeliveryBackend');
+        const res = await incrementRiderStats({
+          order_id: orderId,
+          rider_id: riderId
+        });
+
+        if (res.success) {
+          return { data: res.data, error: null };
+        } else {
+          return { data: null, error: new Error(res.error?.message || 'Failed to increment stats') };
+        }
+      } catch (e: any) {
+        return { data: null, error: e };
+      }
     }
     
     return { data: null, error: null };

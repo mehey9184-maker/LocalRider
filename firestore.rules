@@ -1,53 +1,190 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
     function isAuthenticated() {
       return request.auth != null;
     }
-
-    match /orders/{orderId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+    
+    function existing() { return resource.data; }
+    function incoming() { return request.resource.data; }
+    
+    // Checks if the user is the owner of the shop
+    function isShopOwner(shopId) {
+      return shopId != null && isAuthenticated() &&
+             exists(/databases/$(database)/documents/shops/$(shopId)) &&
+             get(/databases/$(database)/documents/shops/$(shopId)).data.owner_id == request.auth.uid;
     }
 
     match /shops/{shopId} {
       allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+      allow create: if isAuthenticated() && incoming().owner_id == request.auth.uid;
+      allow update: if isShopOwner(shopId) && incoming().owner_id == request.auth.uid;
+      allow delete: if isShopOwner(shopId);
+    }
+    
+    // In case menu is a subcollection
+    match /shops/{shopId}/menu/{itemId} {
+      allow read: if true;
+      allow write: if isShopOwner(shopId);
+    }
+    
+    // In case menu items are stored at root
+    match /menu/{itemId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isShopOwner(incoming().get('shop_id', existing().get('shop_id', null)));
     }
 
-    match /rider_connections/{connId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (
+        existing().get('user_id', null) == request.auth.uid || 
+        existing().get('customer_id', null) == request.auth.uid ||
+        existing().get('rider_id', null) == request.auth.uid ||
+        existing().get('delivery_status', null) == 'finding_rider' ||
+        isShopOwner(existing().get('shop_id', null))
+      );
+
+      // 1. All new orders must come through createOrder using Admin SDK.
+      allow create: if false;
+
+      // 2. /orders update
+      allow update: if isAuthenticated() && (
+        ( // CUSTOMER
+          (existing().get('user_id', null) == request.auth.uid || existing().get('customer_id', null) == request.auth.uid) &&
+          !incoming().diff(existing()).affectedKeys().hasAny([
+            'rider_id', 'delivery_status', 'total_price', 'subtotal', 'delivery_fee', 'service_fee', 'shop_id', 'status', 'payment_status', 'is_paid'
+          ])
+        ) ||
+        ( // MERCHANT
+          isShopOwner(existing().get('shop_id', null)) &&
+          !incoming().diff(existing()).affectedKeys().hasAny([
+            'total_price', 'subtotal', 'delivery_fee', 'service_fee', 'shop_id', 'user_id', 'customer_id'
+          ])
+        ) ||
+        ( // RIDER
+          existing().get('rider_id', null) == request.auth.uid &&
+          !incoming().diff(existing()).affectedKeys().hasAny([
+            'rider_id', 'delivery_status', 'total_price', 'subtotal', 'delivery_fee', 'service_fee', 'customer_id', 'user_id', 'shop_id', 'payment_status', 'is_paid', 'status'
+          ])
+        )
+      );
+      
+      allow delete: if false;
     }
 
     match /rider_profiles/{profileId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+      allow read: if isAuthenticated();
+      
+      allow create: if isAuthenticated() && request.auth.uid == profileId && (
+        (!incoming().keys().hasAny(['total_earnings', 'total_deliveries', 'active_points', 'rating', 'verification_status'])) ||
+        (
+          incoming().get('total_earnings', 0) == 0 &&
+          incoming().get('total_deliveries', 0) == 0 &&
+          incoming().get('active_points', 0) == 0 &&
+          incoming().get('rating', 5.0) == 5.0 &&
+          incoming().get('verification_status', 'verified') == 'verified'
+        )
+      );
+
+      allow update: if isAuthenticated() && request.auth.uid == profileId &&
+        !incoming().diff(existing()).affectedKeys().hasAny([
+          'total_earnings', 'total_deliveries', 'active_points', 'rating', 'verification_status'
+        ]);
+        
+      allow delete: if false;
     }
 
     match /rider_locations/{locId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && incoming().get('rider_id', null) == request.auth.uid;
+      allow update: if isAuthenticated() && incoming().get('rider_id', null) == request.auth.uid && existing().get('rider_id', null) == request.auth.uid;
+      allow delete: if isAuthenticated() && existing().get('rider_id', null) == request.auth.uid;
+    }
+
+    match /rider_connections/{connId} {
+      allow read: if isAuthenticated() && (
+        isShopOwner(existing().get('shop_id', null)) ||
+        existing().get('rider_id', null) == request.auth.uid ||
+        existing().get('status', null) == 'pending'
+      );
+      
+      allow create: if isAuthenticated() && isShopOwner(incoming().get('shop_id', null));
+      
+      allow update: if isAuthenticated() && (
+        isShopOwner(existing().get('shop_id', null)) ||
+        (existing().get('rider_id', null) == request.auth.uid && !incoming().diff(existing()).affectedKeys().hasAny(['shop_id']))
+      );
+      
+      allow delete: if isAuthenticated() && (
+        isShopOwner(existing().get('shop_id', null)) ||
+        existing().get('rider_id', null) == request.auth.uid
+      );
+    }
+    
+    // Helper for messages to check order participation
+    function isOrderParticipant(orderId) {
+      return orderId != null && exists(/databases/$(database)/documents/orders/$(orderId)) && (
+        get(/databases/$(database)/documents/orders/$(orderId)).data.get('user_id', null) == request.auth.uid ||
+        get(/databases/$(database)/documents/orders/$(orderId)).data.get('customer_id', null) == request.auth.uid ||
+        get(/databases/$(database)/documents/orders/$(orderId)).data.get('rider_id', null) == request.auth.uid ||
+        isShopOwner(get(/databases/$(database)/documents/orders/$(orderId)).data.get('shop_id', null))
+      );
     }
 
     match /chat_messages/{messageId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+      allow read: if isAuthenticated() && (
+        existing().get('sender_id', null) == request.auth.uid ||
+        existing().get('receiver_id', null) == request.auth.uid ||
+        isOrderParticipant(existing().get('order_id', null))
+      );
+      allow create: if isAuthenticated() && incoming().get('sender_id', null) == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        existing().get('sender_id', null) == request.auth.uid ||
+        existing().get('receiver_id', null) == request.auth.uid ||
+        isOrderParticipant(existing().get('order_id', null))
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['is_read', 'read_at']);
+      allow delete: if false;
     }
 
     match /order_messages/{messageId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+      allow read: if isAuthenticated() && (
+        existing().get('sender_id', null) == request.auth.uid ||
+        existing().get('receiver_id', null) == request.auth.uid ||
+        isOrderParticipant(existing().get('order_id', null))
+      );
+      allow create: if isAuthenticated() && incoming().get('sender_id', null) == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        existing().get('sender_id', null) == request.auth.uid ||
+        existing().get('receiver_id', null) == request.auth.uid ||
+        isOrderParticipant(existing().get('order_id', null))
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['is_read', 'read_at']);
+      allow delete: if false;
     }
 
     match /rider_chat_messages/{messageId} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+      allow read: if isAuthenticated() && (
+        existing().get('sender_id', null) == request.auth.uid ||
+        existing().get('receiver_id', null) == request.auth.uid ||
+        isOrderParticipant(existing().get('order_id', null))
+      );
+      allow create: if isAuthenticated() && incoming().get('sender_id', null) == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        existing().get('sender_id', null) == request.auth.uid ||
+        existing().get('receiver_id', null) == request.auth.uid ||
+        isOrderParticipant(existing().get('order_id', null))
+      ) && incoming().diff(existing()).affectedKeys().hasOnly(['is_read', 'read_at']);
+      allow delete: if false;
+    }
+
+    match /user_push_tokens/{tokenId} {
+      allow read: if isAuthenticated() && existing().get('user_id', null) == request.auth.uid;
+      allow create: if isAuthenticated() && incoming().get('user_id', null) == request.auth.uid;
+      allow update: if isAuthenticated() && existing().get('user_id', null) == request.auth.uid && incoming().get('user_id', null) == request.auth.uid;
+      allow delete: if isAuthenticated() && existing().get('user_id', null) == request.auth.uid;
     }
 
     match /{document=**} {
-      allow read: if true;
-      allow write: if isAuthenticated() || request.resource != null;
+      allow read, write: if false;
     }
   }
 }

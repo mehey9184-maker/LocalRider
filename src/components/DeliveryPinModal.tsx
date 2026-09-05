@@ -6,68 +6,65 @@ import { Html5QrcodePlugin } from './Html5QrcodePlugin';
 interface DeliveryPinModalProps {
   isOpen: boolean;
   onClose: () => void;
-  expectedPin: string;
-  onSuccess: () => void;
+  onSubmit: (proof: string) => Promise<boolean>;
 }
 
 export const DeliveryPinModal: React.FC<DeliveryPinModalProps> = ({
   isOpen,
   onClose,
-  expectedPin,
-  onSuccess
+  onSubmit
 }) => {
   const [pin, setPin] = useState('');
   const [mode, setMode] = useState<'keypad' | 'qr'>('keypad');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isOpen) {
       setPin('');
       setMode('keypad');
-      setError(false);
+      setError('');
+      setIsSubmitting(false);
     } else if (mode === 'keypad') {
       // Auto-focus when modal opens or switches to keypad
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [isOpen, mode]);
 
-  useEffect(() => {
-    if (pin.length === 4) {
-      if (pin === expectedPin) {
-        onSuccess();
-      } else {
-        setError(true);
-        if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
-        setTimeout(() => {
-          setPin('');
-          setError(false);
-          inputRef.current?.focus();
-        }, 1000);
-      }
+  const submitProof = async (proof: string) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setError('');
+    let accepted = false;
+    try {
+      accepted = await onSubmit(proof.trim());
+    } catch {
+      accepted = false;
+    } finally {
+      setIsSubmitting(false);
     }
-  }, [pin, expectedPin, onSuccess]);
+    if (accepted) return;
+    setError('The server did not confirm this delivery. Check the code and try again.');
+    if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
+    setPin('');
+    inputRef.current?.focus();
+  };
 
   const handleKeyPress = (num: string) => {
     if (pin.length < 4) {
       setPin(prev => prev + num);
-      setError(false);
+      setError('');
     }
   };
 
   const handleDelete = () => {
     setPin(prev => prev.slice(0, -1));
-    setError(false);
+    setError('');
   };
 
   const handleQrSuccess = (result: string) => {
-    // Assuming the QR code contains just the 4-digit PIN
-    if (result.trim() === expectedPin) {
-      onSuccess();
-    } else {
-      setError(true);
-      setTimeout(() => setError(false), 2000);
-    }
+    void submitProof(result);
   };
 
   if (!isOpen) return null;
@@ -132,7 +129,7 @@ export const DeliveryPinModal: React.FC<DeliveryPinModalProps> = ({
                     const val = e.target.value.replace(/[^0-9]/g, '');
                     if (val.length <= 4) {
                       setPin(val);
-                      setError(false);
+                      setError('');
                     }
                   }}
                   className="absolute opacity-0 -z-10"
@@ -149,11 +146,11 @@ export const DeliveryPinModal: React.FC<DeliveryPinModalProps> = ({
                       key={i}
                       className={`w-14 h-16 flex items-center justify-center text-3xl font-mono font-bold rounded-xl border-2 transition-all ${
                         pin[i] 
-                          ? error ? 'border-red-500 text-red-500 bg-red-500/10' : 'border-[#f59e0b] text-[#f59e0b] bg-[#f59e0b]/10'
+                      ? error ? 'border-red-500 text-red-500 bg-red-500/10' : 'border-[#f59e0b] text-[#f59e0b] bg-[#f59e0b]/10'
                           : (pin.length === i && !error) ? 'border-[#f59e0b]/50 text-zinc-600 bg-zinc-900 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'border-zinc-800 text-zinc-600 bg-zinc-900/50'
                       }`}
                     >
-                      {pin[i] || ''}
+                      {pin[i] ? '•' : ''}
                     </div>
                   ))}
                 </div>
@@ -161,7 +158,7 @@ export const DeliveryPinModal: React.FC<DeliveryPinModalProps> = ({
                 {error && (
                   <div className="text-red-500 text-xs font-bold mb-4 flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" />
-                    INVALID PIN
+                    {error}
                   </div>
                 )}
 
@@ -190,6 +187,14 @@ export const DeliveryPinModal: React.FC<DeliveryPinModalProps> = ({
                     DEL
                   </button>
                 </div>
+                <button
+                  type="button"
+                  disabled={pin.length !== 4 || isSubmitting}
+                  onClick={() => void submitProof(pin)}
+                  className="mt-5 w-full min-h-12 rounded-xl bg-[#f59e0b] px-4 py-3 text-sm font-black uppercase tracking-wider text-black transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isSubmitting ? 'Confirming with LocalEats…' : 'Confirm delivery'}
+                </button>
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center w-full bg-zinc-900 rounded-2xl overflow-hidden border border-zinc-800 relative min-h-[300px]">
@@ -202,22 +207,13 @@ export const DeliveryPinModal: React.FC<DeliveryPinModalProps> = ({
                 {error && (
                   <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center z-20 backdrop-blur-sm">
                     <span className="bg-red-500 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-xl">
-                      INVALID QR CODE
+                      {error}
                     </span>
                   </div>
                 )}
               </div>
             )}
             
-            {/* Dev Mode Test Helper */}
-            {import.meta.env.DEV && (
-              <button 
-                onClick={() => setPin(expectedPin)}
-                className="mt-6 w-full py-2 bg-zinc-900/80 border border-zinc-800 text-zinc-500 hover:text-zinc-300 text-xs font-bold tracking-wider rounded-lg transition-colors"
-              >
-                DEV: SHOW TEST PIN ({expectedPin})
-              </button>
-            )}
           </div>
         </motion.div>
       </div>

@@ -103,11 +103,10 @@ import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Toaster, toast } from 'sonner';
 import { getSupabase, getFreshChannel, isSupabaseMocked, clearStaleAuthTokens } from './lib/supabase';
-import { getErrorMessage, isTransientError } from './lib/errorHandling';
+import { getErrorMessage } from './lib/errorHandling';
 import {
   registerAndSyncPushToken,
-  onForegroundMessage,
-  sendPushNotification
+  onForegroundMessage
 } from './lib/firebase';
 import { User } from '@supabase/supabase-js';
 import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection, AppView, WeatherData } from './types';
@@ -120,7 +119,6 @@ import { SwipeButton } from './components/SwipeButton';
 import { VoiceController } from './components/VoiceController';
 import { Dashboard } from './components/Dashboard';
 import {
-  haversineDistance,
   safeJsonParse,
   isTodayLocal,
   promiseWithTimeout,
@@ -139,9 +137,17 @@ import { ProfileOnboarding } from './components/ProfileOnboarding';
 import { RiderInteractiveTour } from './components/RiderInteractiveTour';
 import { OrderChatModal } from './components/OrderChatModal';
 import { audioSynth } from './lib/audioSynth';
-import { detectRegion } from './lib/geoContext';
 import { PhoneInput } from './components/PhoneInput';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from './lib/mapStyles';
+import {
+  claimDeliveryMission,
+  completeDelivery,
+  fetchAvailableDeliveries,
+  fetchRiderDeliveries,
+  fetchRiderDelivery,
+  markOrderDelivering,
+  markOrderPickedUp,
+} from './services/riderDeliveryBackend';
 import { OrderCardSkeleton, OrderTrackingSkeleton, MainBootstrapSkeleton } from './components/ShimmerSkeleton';
 import { GlobalLegalModal } from './components/GlobalLegalModal';
 import { TopNavOptionsMenu } from './components/TopNavOptionsMenu';
@@ -1534,7 +1540,7 @@ const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: numbe
 
 const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onShowTracking, profile, isNavVisible, isHighContrastMode, cashOnHand, onDepositCash }: { 
   orders: DeliveryOrder[], 
-  onUpdateStatus: (id: string, status: DeliveryStatus) => void;
+  onUpdateStatus: (id: string, status: DeliveryStatus, deliveryProof?: string) => Promise<boolean>;
   onScreenTap?: () => void;
   onShowTracking?: (id: string) => void;
   profile?: RiderProfile;
@@ -1570,18 +1576,19 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [pinModalOpen, setPinModalOpen] = useState(false);
   const [pinModalOrderId, setPinModalOrderId] = useState<string | null>(null);
-  const [expectedPin, setExpectedPin] = useState('');
-  const handleCompleteDelivery = (orderId: string) => {
+  const handleCompleteDelivery = async (orderId: string, deliveryProof: string): Promise<boolean> => {
+    const confirmed = await onUpdateStatus(orderId, 'delivered', deliveryProof);
+    if (!confirmed) return false;
     if ('vibrate' in navigator) navigator.vibrate([150, 100, 150, 100, 200]);
     setShowSuccessOverlay(true);
     audioSynth.playOrderDelivered();
     setTimeout(() => {
-      onUpdateStatus(orderId, 'delivered');
       setShowSuccessOverlay(false);
       setArrivedAtCustomer(prev => ({ ...prev, [orderId]: false }));
       setArrivedAtMerchant(prev => ({ ...prev, [orderId]: false }));
       setCashCollected(prev => ({ ...prev, [orderId]: false }));
     }, 3000);
+    return true;
   };
 
 
@@ -1612,22 +1619,11 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       console.log('Voice Command:', transcript);
       
       if (transcript.includes('pick up') || transcript.includes('picked up') || transcript.includes('arrived') || transcript.includes('merchant')) {
-        onUpdateStatus(currentOrder.id, 'picked_up');
-        toast.success(`Voice: Pickup confirmed`, {
-          description: `Order picked up at ${currentOrder.restaurant_name}`
-        });
+        void onUpdateStatus(currentOrder.id, 'picked_up');
       } else if (transcript.includes('delivered') || transcript.includes('complete') || transcript.includes('delivery') || transcript.includes('dropped off')) {
-        if (currentOrder.delivery_pin) {
-          setExpectedPin(currentOrder.delivery_pin || '1234');
-          setPinModalOrderId(currentOrder.id);
-          setPinModalOpen(true);
-          toast.info("Voice: Delivery PIN required");
-        } else {
-          handleCompleteDelivery(currentOrder.id);
-          toast.success("Voice: Delivery completed", {
-            description: `Order delivered successfully`
-          });
-        }
+        setPinModalOrderId(currentOrder.id);
+        setPinModalOpen(true);
+        toast.info("Voice: Delivery PIN or QR confirmation required");
       } else if (transcript.includes('optimize') || transcript.includes('shortest') || transcript.includes('route')) {
         optimizeRoute();
         toast.success(`Voice: Route updated`, {
@@ -1658,7 +1654,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const etaDisplay = String(Math.max(0, Math.floor(validDist * 2))).padStart(2, '0');
 
 
-  const isPickedUp = currentOrder?.delivery_status === 'picked_up';
+  const isPickedUp = currentOrder?.delivery_status === 'picked_up' || currentOrder?.delivery_status === 'delivering';
   const targetAddress = `${currentOrder?.address}, ${currentOrder?.city}`;
 
   const optimizeRoute = () => {
@@ -1741,10 +1737,11 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
       <DeliveryPinModal
         isOpen={pinModalOpen}
         onClose={() => setPinModalOpen(false)}
-        expectedPin={expectedPin}
-        onSuccess={() => {
-          setPinModalOpen(false);
-          if (pinModalOrderId) handleCompleteDelivery(pinModalOrderId);
+        onSubmit={async (proof) => {
+          if (!pinModalOrderId) return false;
+          const confirmed = await handleCompleteDelivery(pinModalOrderId, proof);
+          if (confirmed) setPinModalOpen(false);
+          return confirmed;
         }}
       />
       {/* Route deviation alert banner */}
@@ -2387,28 +2384,27 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   : "bg-[#f59e0b] hover:bg-[#d97706] text-black shadow-[0_0_20px_rgba(245,158,11,0.4)] border border-[#f59e0b]"
               )}
               disabled={false}
-              onClick={() => {
+              onClick={async () => {
                 if (!isPickedUp && !arrivedAtMerchant[currentOrder.id]) {
                   setArrivedAtMerchant(prev => ({ ...prev, [currentOrder.id]: true }));
                   audioSynth.playArrivedDestination();
                   toast.success("Status: Arrived at Merchant. Collect food package or validate cipher with merchant.");
                 } else if (!isPickedUp && arrivedAtMerchant[currentOrder.id]) {
                   if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
-                  onUpdateStatus(currentOrder.id, 'picked_up');
-                  audioSynth.playArrivedDestination();
-                  toast.success("Status: Order Picked Up! Navigating to customer address.");
+                  const confirmed = await onUpdateStatus(currentOrder.id, 'picked_up');
+                  if (confirmed) audioSynth.playArrivedDestination();
                 } else if (!arrivedAtCustomer[currentOrder.id]) {
-                  setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
-                  audioSynth.playArrivedDestination();
-                  toast.success("Status: Arrived at Customer address. Hand over food items and finalize payment.");
-                } else {
-                  if (true) {
-                    setExpectedPin(currentOrder.delivery_pin || '1234');
-                    setPinModalOrderId(currentOrder.id);
-                    setPinModalOpen(true);
-                  } else {
-                    handleCompleteDelivery(currentOrder.id);
+                  const confirmed = currentOrder.delivery_status === 'delivering'
+                    ? true
+                    : await onUpdateStatus(currentOrder.id, 'delivering');
+                  if (confirmed) {
+                    setArrivedAtCustomer(prev => ({ ...prev, [currentOrder.id]: true }));
+                    audioSynth.playArrivedDestination();
+                    toast.success("Status: Arrived at Customer address. Hand over food items and finalize payment.");
                   }
+                } else {
+                  setPinModalOrderId(currentOrder.id);
+                  setPinModalOpen(true);
                 }
               }}
             >
@@ -2504,7 +2500,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!landmarkSuggestion.trim()) {
                       toast.error("Please enter a landmark change description.");
                       return;
@@ -2590,7 +2586,7 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!delayReason) {
                       toast.error("Please select a reason for the delay.");
                       return;
@@ -2676,19 +2672,18 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                   Cancel
                 </button>
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!handshakeCipherInput.trim()) {
                       toast.error("Please enter a merchant cipher code.");
                       return;
                     }
                     if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
-                    onUpdateStatus(currentOrder.id, 'picked_up');
-                    audioSynth.playArrivedDestination();
-                    setShowCipherModal(false);
-                    setHandshakeCipherInput('');
-                    toast.success("Merchant Handshake Verified!", {
-                      description: "Order pickup authenticated successfully. Route updated to customer."
-                    });
+                    const confirmed = await onUpdateStatus(currentOrder.id, 'picked_up');
+                    if (confirmed) {
+                      audioSynth.playArrivedDestination();
+                      setShowCipherModal(false);
+                      setHandshakeCipherInput('');
+                    }
                   }}
                   className="flex-1 py-3 bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase tracking-widest text-[9px] rounded-xl transition-all shadow-lg shadow-cyan-500/20 font-mono"
                 >
@@ -4760,87 +4755,27 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
   useEffect(() => {
     const fetchOrder = async () => {
       try {
-        if (!isSupabaseMocked()) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let data: any = null;
-          try {
-            const res = await fetchWithRetry(async () => {
-              let query = getSupabase()
-                .from('orders')
-                .select('*, shops(name)')
-                .eq('id', orderId);
-
-              if (riderId) {
-                query = query.eq('rider_id', riderId);
-              }
-
-              return await query.maybeSingle();
-            }, 1, 500, 4000);
-            data = res.data;
-          } catch {
-            try {
-              const res = await fetchWithRetry(async () => {
-                let query = getSupabase()
-                  .from('orders')
-                  .select('*')
-                  .eq('id', orderId);
-
-                if (riderId) {
-                  query = query.eq('rider_id', riderId);
-                }
-
-                return await query.maybeSingle();
-              }, 1, 500, 4000);
-              data = res.data;
-            } catch {
-              /* fallback to local storage below */
-            }
-          }
-          
-          if (data) {
-            setOrder({ ...data, restaurant_name: data.shops?.name || data.restaurant_name || 'Merchant' });
-            setLoading(false);
-            addDiagLog(`Order record fetched successfully from PostgreSQL: ${orderId}`);
-            return;
-          }
+        const result = await fetchRiderDelivery(orderId);
+        if (!result.success || !result.data) {
+          setOrder(null);
+          addDiagLog(`Authoritative API did not confirm order ${orderId}: ${result.error?.message || 'not found'}`);
+          return;
         }
+        const data = result.data;
+        if (riderId && data.rider_id && String(data.rider_id) !== riderId) {
+          setOrder(null);
+          addDiagLog(`Assigned rider mismatch for order ${orderId}`);
+          return;
+        }
+        setOrder({
+          ...data,
+          id: String(data.id),
+          restaurant_name: String(data.restaurant_name || 'Merchant'),
+        } as unknown as DeliveryOrder);
+        addDiagLog(`Order confirmed by the LocalEats API: ${orderId}`);
       } catch (e) {
-        console.warn(e);
-        addDiagLog(`Supabase fetch warning: ${e instanceof Error ? e.message : 'Unknown'}`);
-      }
-
-      // Local storage / simulated orders fallback
-      try {
-        const localActive = JSON.parse(localStorage.getItem('localeats_active_orders') || '[]');
-        const localSimulated = JSON.parse(localStorage.getItem('localeats_simulated_orders') || '[]');
-        const found = [...localActive, ...localSimulated].find((o: DeliveryOrder) => o.id === orderId);
-        if (found) {
-          setOrder(found);
-          addDiagLog(`Order resolved from LocalStorage cache: ${orderId}`);
-        } else {
-          setOrder({
-            id: orderId,
-            product_name: 'Kota & Chips Special',
-            total_price: 85.00,
-            customer_name: 'Khaya M.',
-            phone: '+27 82 123 4567',
-            address: '142 Vilakazi St, Orlando West, Soweto',
-            city: 'Johannesburg',
-            delivery_fee: 15.00,
-            delivery_status: 'picked_up',
-            status: 'accepted',
-            order_type: 'delivery',
-            rider_id: riderId || 'rider-1',
-            shop_id: 'shop-1',
-            restaurant_name: 'Soweto Braai & Kota Bar',
-            distance_km: 2.4,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          });
-          addDiagLog(`Order generated via active session fallback: ${orderId}`);
-        }
-      } catch {
-        /* ignore */
+        setOrder(null);
+        addDiagLog(`Authoritative API error: ${e instanceof Error ? e.message : 'Unknown'}`);
       } finally {
         setLoading(false);
       }
@@ -5359,10 +5294,7 @@ export function App() {
   });
 
   // --- LocalEats Simulator State ---
-  const [simulatedOrders, setSimulatedOrders] = useState<DeliveryOrder[]>(() => {
-    const saved = localStorage.getItem('localeats_sim_orders');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [simulatedOrders, setSimulatedOrders] = useState<DeliveryOrder[]>([]);
   const [dispatchLog, setDispatchLog] = useState<string[]>(() => {
     const saved = localStorage.getItem('localeats_dispatch_log');
     return saved ? JSON.parse(saved) : ["System Backend initialized. Ready to process Kota and Braai orders..."];
@@ -5723,8 +5655,7 @@ export function App() {
     });
   };
   const [availableOrders, setAvailableOrders] = useState<DeliveryOrder[]>(() => {
-    const saved = localStorage.getItem('localeats_available_orders');
-    return safeJsonParse<DeliveryOrder[]>(saved, []);
+    return [];
   });
   
   useEffect(() => {
@@ -5734,21 +5665,11 @@ export function App() {
   const [declinedOrderIds, setDeclinedOrderIds] = useState<string[]>([]);
   
   const [activeOrders, setActiveOrders] = useState<DeliveryOrder[]>(() => {
-    const saved = localStorage.getItem('localeats_active_orders');
-    return safeJsonParse<DeliveryOrder[]>(saved, []);
+    return [];
   });
 
   const visibleAvailableOrders = useMemo(() => {
-    const activeSimulated = simulatedOrders.filter(o => 
-      o.delivery_status === 'finding_rider'
-    );
-    
-    const routedSimulated = activeSimulated.filter(o => {
-      const state = dispatchState[o.id];
-      return state?.stage === 'rider2_deciding';
-    });
-
-    const combined = [...availableOrders, ...routedSimulated];
+    const combined = availableOrders;
     const activeIds = new Set(activeOrders.map(a => a.id));
     const unexpiredConnections = connections.filter(c => new Date(c.expires_at) > new Date());
     const activeShopIds = unexpiredConnections.map(c => c.shop_id);
@@ -5790,7 +5711,7 @@ export function App() {
 
       return isIncluded;
     });
-  }, [availableOrders, simulatedOrders, dispatchState, activeOrders, connections, profile?.current_latitude, profile?.current_longitude]);
+  }, [availableOrders, activeOrders, connections, profile?.current_latitude, profile?.current_longitude]);
 
   const pendingOverlayOrder = useMemo(() => {
     return visibleAvailableOrders.find(o => !declinedOrderIds.includes(o.id));
@@ -6185,246 +6106,51 @@ export function App() {
     if (!user || isFetchingConnRef.current) return;
     isFetchingConnRef.current = true;
     try {
-      let activeConnections: ShopConnection[] = [];
-
-
-
-      let connData: Record<string, unknown>[] | null = null;
-      try {
-        const res = await fetchWithRetry<{ data: Record<string, unknown>[] | null; error?: unknown }>(async () => {
-          const r = await getSupabase()
-            .from('rider_connections')
-            .select('*, shop_name:shops(name)')
-            .eq('rider_id', user.id)
-            .order('expires_at', { ascending: false });
-          if (r.error) throw r.error;
-          return r as unknown as { data: Record<string, unknown>[] | null; error?: unknown };
-        }, 0, 500, 3000);
-        connData = res.data;
-      } catch {
-        try {
-          const res = await fetchWithRetry<{ data: Record<string, unknown>[] | null; error?: unknown }>(async () => {
-            const r = await getSupabase()
-              .from('rider_connections')
-              .select('*')
-              .eq('rider_id', user.id)
-              .order('expires_at', { ascending: false });
-            if (r.error) throw r.error;
-            return r as unknown as { data: Record<string, unknown>[] | null; error?: unknown };
-          }, 0, 500, 3000);
-          connData = res.data;
-        } catch {
-          // Quiet fallback to cached/local connection code
-        }
-      }
-      
-      if (connData && connData.length > 0) {
-        const localCode = localStorage.getItem('localeats_mock_paired_code');
-        const localExpiry = localStorage.getItem('localeats_mock_paired_expiry');
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        activeConnections = connData.map((c: any) => {
-          let exp = c.expires_at;
-          const codeMatches = localCode && String(c.connection_code).toUpperCase() === localCode.toUpperCase();
-          
-          if (codeMatches) {
-            if (localExpiry && new Date(localExpiry) > new Date()) {
-              exp = localExpiry;
-            } else if (new Date(exp) <= new Date()) {
-              // Auto extend expired DB code to 24h active window when user linked
-              exp = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-            }
-          }
-
-          return {
-            ...c,
-            shop_name: c.shop_name?.name || 'Local Merchant',
-            expires_at: exp
-          };
-        }) as ShopConnection[];
-
-      }
-      setConnections(activeConnections);
-
-      const activeShopIds = activeConnections
-        .filter(c => new Date(c.expires_at) > new Date())
-        .map(c => c.shop_id);
+      const connectionData = await runConnectionDiagnostics();
+      setConnections(connectionData as ShopConnection[]);
 
       if (!profile?.is_online) {
         setAvailableOrders([]);
         return;
       }
 
-      // Fetch with full fields fallback if columns aren't migrated in DB
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let ordersData: any[] | null = null;
-      let ordersError: unknown = null;
-      try {
-        const res = await fetchWithRetry(async () => {
-          const r = await getSupabase()
-            .from('orders')
-            .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
-            .order('created_at', { ascending: false })
-            .limit(100);
-          if (r.error) throw r.error;
-          return r;
-        }, 0, 500, 3000);
-        ordersData = res.data;
-        ordersError = res.error;
-      } catch {
-        try {
-          const res = await fetchWithRetry(async () => {
-            const r = await getSupabase()
-              .from('orders')
-              .select('*, shops(name, updated_at)')
-              .order('created_at', { ascending: false })
-              .limit(100);
-            if (r.error) throw r.error;
-            return r;
-          }, 0, 500, 3000);
-          ordersData = res.data;
-        } catch {
-          try {
-            const res = await fetchWithRetry(async () => {
-              const r = await getSupabase()
-                .from('orders')
-                .select('*, restaurant_name')
-                .order('created_at', { ascending: false })
-                .limit(100);
-              if (r.error) throw r.error;
-              return r;
-            }, 0, 500, 3000);
-            ordersData = res.data;
-          } catch (e3) {
-            const errStr = getErrorMessage(e3);
-            if (/jwt expired|refresh token|invalid refresh token|token_not_found/i.test(errStr)) {
-              clearStaleAuthTokens();
-            }
-            ordersError = e3;
-          }
-        }
-      }
-
-      if (ordersError && !ordersData) {
-        console.warn('Failed to fetch orders:', getErrorMessage(ordersError));
-        throw ordersError;
-      }
-
-      if (ordersData) {
-        const formatted = ordersData
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .map((item: any) => {
-            const shopLat = item.shop_lat || -25.9922;
-            const shopLng = item.shop_lng || 28.2045;
-            const riderLat = profile?.current_latitude || -25.9964; // Regional pilot fallback (Tembisa)
-            const riderLng = profile?.current_longitude || 28.2268;
-            
-            const shopsObj = Array.isArray(item.shops) ? item.shops[0] : item.shops;
-            
-            const dbAllowExternal = shopsObj ? (shopsObj.allow_external_riders === true) : false;
-            const dbCashTrustEnabled = shopsObj ? (shopsObj.cash_trust_enabled === true) : false;
-            const dbDispatchToMarketplace = item.dispatch_to_marketplace === true;
-            const dbAutoLook = shopsObj ? (shopsObj.auto_look_for_rider !== false) : true;
-
-            const finalAllowExternal = dbAllowExternal;
-            const finalCashTrust = dbCashTrustEnabled;
-            const finalAutoLook = dbAutoLook;
-            const finalDispatchToMarketplace = dbDispatchToMarketplace;
-
-            return {
-              ...item,
-              restaurant_name: shopsObj?.name || 'Authorized Merchant',
-              shop_updated_at: shopsObj?.updated_at || item.shop_updated_at,
-              distance_km: item.distance_km || haversineDistance(riderLat, riderLng, shopLat, shopLng),
-              allow_external_riders: finalAllowExternal,
-              cash_trust_enabled: finalCashTrust,
-              auto_look_for_rider: finalAutoLook,
-              dispatch_to_marketplace: finalDispatchToMarketplace
-            };
-          })
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          .filter((order: any) => {
-             // Enforce the Merchant Fleet Filter
-             const riderIdVal = order.rider_id;
-             const isRiderIdEmpty = !riderIdVal || riderIdVal === '' || riderIdVal === 'null';
-             if (!isRiderIdEmpty) return false;
-
-             const activeShopNames = activeConnections.map((c: ShopConnection) => (c.shop_name || '').toLowerCase()).filter(Boolean);
-             const orderShopName = (order.restaurant_name || '').toLowerCase();
-             const isLinked = activeShopIds.includes(order.shop_id) || (orderShopName !== '' && activeShopNames.some((n: string) => n !== '' && orderShopName.includes(n)));
-
-             if (activeShopIds.length > 0) {
-               return isLinked;
-             }
-
-             const isExternal = order.allow_external_riders === true || order.dispatch_to_marketplace === true;
-             return isExternal;
-          });
-        
-        const sorted = [...formatted].map(order => {
-           const priority_multiplier = 1.5; 
-           const distance = order.distance_km || 1;
-           const fee = order.delivery_fee || 0;
-           const match_score = (fee / distance) * priority_multiplier;
-           return { ...order, match_score };
-        }).sort((a, b) => {
-           return b.match_score - a.match_score;
-        });
-
-        console.log("MISSION PROTOCOL [Orders Fetched]:", sorted);
-        setSurgeMultiplier(Math.max(1.0, Math.min(2.5, 1.0 + (sorted.length / 8))));
-
-        setAvailableOrders(prev => {
-           // Defensive State Reconciliation Layer
-           const mergedMap = new Map<string, DeliveryOrder>();
-           
-           // 1. Cleanly apply the incoming REST snapshot
-           for (const o of sorted) {
-              mergedMap.set(o.id, o);
-           }
-
-           // 2. Scan existing state for any unassigned real-time orders 
-           // and merge them into the snapshot to protect from replication lag 
-           // or faulty backend exclusion filters
-           const unassignedRealtimeOrders = prev.filter(o => {
-              if (o.delivery_status !== 'finding_rider' || o.rider_id) return false;
-              const isLinked = activeShopIds.includes(o.shop_id);
-              const isExternal = o.allow_external_riders === true || o.dispatch_to_marketplace === true;
-              return isLinked || isExternal;
-           });
-           for (const o of unassignedRealtimeOrders) {
-              if (!mergedMap.has(o.id)) {
-                 mergedMap.set(o.id, o);
-              }
-           }
-             
-           const merged = (Array.from(mergedMap.values()) as DeliveryOrder[]).sort((a, b) => (b.match_score || 0) - (a.match_score || 0));
-
-           if (merged.length > prev.length) {
-              toast(notificationTitle, { 
-                description: notificationBody,
-                duration: 5000,
-                icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
-                style: { background: '#050505', color: '#f59e0b', border: '1px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900 },
-                action: { label: 'VIEW', onClick: () => setView('feed') }
-              });
-           }
-           return merged as DeliveryOrder[];
-        });
-      } else {
+      const result = await fetchAvailableDeliveries();
+      if (!result.success || !result.data) {
         setAvailableOrders([]);
+        console.warn("Authoritative rider API unavailable:", result.error?.message);
+        return;
       }
-    } catch (e: unknown) {
-      const errMessage = getErrorMessage(e, 'Unknown error');
-      if (isTransientError(errMessage) || /fetch|network|timeout|timed out|abort|connection|failed|permission denied|is_shop_owner|42501/i.test(errMessage)) {
-        console.warn('WARN: NETWORK_FAILURE OR DB_PERMISSION - USING CACHED ORDERS:', errMessage);
-      } else {
-        console.warn('Quietly handling background fetch exception:', errMessage);
-      }
+
+      const confirmedOrders = result.data.map((order) => ({
+        ...order,
+        id: String(order.id),
+        shop_id: String(order.shop_id),
+        total_price: Number(order.total_price ?? 0),
+        delivery_fee: Number(order.delivery_fee ?? 0),
+      })) as unknown as DeliveryOrder[];
+
+      setAvailableOrders((previous) => {
+        if (confirmedOrders.length > previous.length) {
+          toast(notificationTitle, {
+            description: notificationBody,
+            duration: 5000,
+            icon: <Zap className="w-4 h-4 text-[#f59e0b]" />,
+            action: { label: "VIEW", onClick: () => setView("feed") },
+          });
+        }
+        return confirmedOrders;
+      });
+      setSurgeMultiplier(1);
     } finally {
       isFetchingConnRef.current = false;
     }
-  }, [user, profile, notificationTitle, notificationBody, setAvailableOrders, setSurgeMultiplier]);
+  }, [
+    user,
+    profile?.is_online,
+    notificationTitle,
+    notificationBody,
+    runConnectionDiagnostics,
+  ]);
 
   const clearCacheAndRefreshOrders = useCallback(async () => {
     console.log('[Diagnostic] Clearing local order cache due to observed discrepancies...');
@@ -6528,122 +6254,38 @@ export function App() {
   const fetchActiveOrdersAndHistory = useCallback(async () => {
     if (!user) return;
     try {
-      if (isSupabaseMocked()) {
-        setHistory([
-          {
-             id: 'h1',
-             customer_name: 'Recent Client',
-             product_name: 'Double Patty Special',
-             delivery_fee: 5.00,
-             total_price: 180,
-             delivery_status: 'delivered',
-             updated_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-             restaurant_name: 'Burger Palace',
-             created_at: new Date().toISOString()
-          }
-        ] as unknown as DeliveryOrder[]);
-        return;
-      }
-      // Active Orders
-      let active: Record<string, unknown>[] | null = null;
-      try {
-        const res = await fetchWithRetry(async () => {
-          const r = await getSupabase()
-            .from('orders')
-            .select('*, shops(name, allow_external_riders, cash_trust_enabled, updated_at)')
-            .eq('rider_id', user.id)
-            .in('delivery_status', ['accepted', 'picked_up'])
-            .neq('status', 'completed')
-            .neq('status', 'cancelled');
-          if (r.error) throw r.error;
-          return r;
-        }, 2, 1000, 8000);
-        active = res.data as Record<string, unknown>[] | null;
-      } catch {
-        try {
-          const res = await fetchWithRetry(async () => {
-            const r = await getSupabase()
-              .from('orders')
-              .select('*, shops(name, updated_at)')
-              .eq('rider_id', user.id)
-              .in('delivery_status', ['accepted', 'picked_up'])
-              .neq('status', 'completed')
-              .neq('status', 'cancelled');
-            if (r.error) throw r.error;
-            return r;
-          }, 2, 1000, 8000);
-          active = res.data as Record<string, unknown>[] | null;
-        } catch {
-          try {
-            const res = await fetchWithRetry(async () => {
-              const r = await getSupabase()
-                .from('orders')
-                .select('*, restaurant_name')
-                .eq('rider_id', user.id)
-                .in('delivery_status', ['accepted', 'picked_up'])
-                .neq('status', 'completed')
-                .neq('status', 'cancelled');
-              if (r.error) throw r.error;
-              return r;
-            }, 2, 1000, 8000);
-            active = res.data as Record<string, unknown>[] | null;
-          } catch (e2) {
-            const errStr = getErrorMessage(e2);
-            if (/jwt expired|refresh token|invalid refresh token|token_not_found/i.test(errStr)) {
-              clearStaleAuthTokens();
-            } else {
-              console.warn('Quietly handling standby on secondary fallback active order query:', errStr);
-            }
-          }
-        }
-      }
-      
-      if (active) {
-        const fetchedOrders = active.map(order => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const shopsObj = Array.isArray(order.shops) ? order.shops[0] : (order.shops as any);
-          return {
-            ...order,
-            restaurant_name: shopsObj?.name || (order.restaurant_name as string) || 'Local Merchant',
-            shop_updated_at: shopsObj?.updated_at || (order.shop_updated_at as string)
-          } as unknown as DeliveryOrder;
-        });
-        
-        setActiveOrders(prev => {
-          // Reconcile DB payload with local state: preserve recently accepted orders that might not be synced yet
-          const localPending = prev.filter(p => 
-            !fetchedOrders.some(f => f.id === p.id) && 
-            (Date.now() - new Date(p.updated_at || 0).getTime() < 5 * 60000)
-          );
-          return [...fetchedOrders, ...localPending];
-        });
+      const [activeResult, historyResult] = await Promise.all([
+        fetchRiderDeliveries('active'),
+        fetchRiderDeliveries('history'),
+      ]);
+
+      if (!activeResult.success || !activeResult.data) {
+        setActiveOrders([]);
+        console.warn('Authoritative active deliveries unavailable:', activeResult.error?.message);
       } else {
-        // If DB returned nothing, don't blindly clear activeOrders.
-        // Clean out stale un-synced orders (older than 5 mins)
-        setActiveOrders(prev => prev.filter(p => (Date.now() - new Date(p.updated_at || 0).getTime() < 5 * 60000)));
+        setActiveOrders(activeResult.data.map((order) => ({
+          ...order,
+          id: String(order.id),
+          restaurant_name: String(order.restaurant_name || 'Local Merchant'),
+        })) as unknown as DeliveryOrder[]);
       }
 
-      // History
-      const { data: historyData } = await fetchWithRetry(async () => {
-        const res = await getSupabase()
-          .from('orders')
-          .select('*, restaurant_name')
-          .eq('rider_id', user.id)
-          .eq('delivery_status', 'delivered')
-          .order('updated_at', { ascending: false });
-        return res as unknown as { data: DeliveryOrder[] | null; error: Error | null };
-      }, 2, 1000, 8000); // 2 retries, 8s timeout
-      
-      if (historyData) {
-        setHistory(historyData.map(item => ({
-          ...item,
-          restaurant_name: item.restaurant_name || 'Local Merchant'
-        })) as DeliveryOrder[]);
+      if (!historyResult.success || !historyResult.data) {
+        setHistory([]);
+        console.warn('Authoritative delivery history unavailable:', historyResult.error?.message);
+        return;
       }
-    } catch {
-      // Quietly tolerating sync timeout
+      setHistory(historyResult.data.map((order) => ({
+        ...order,
+        id: String(order.id),
+        restaurant_name: String(order.restaurant_name || 'Local Merchant'),
+      })) as unknown as DeliveryOrder[]);
+    } catch (error) {
+      setActiveOrders([]);
+      setHistory([]);
+      console.warn('Authoritative rider delivery refresh failed:', getErrorMessage(error));
     }
-  }, [user, setActiveOrders, setHistory]);
+  }, [user]);
 
   // Granular Notifications Protocol
   useEffect(() => {
@@ -6704,20 +6346,7 @@ export function App() {
   const isMockedRef = useRef<boolean>(false);
   const stationaryTicksRef = useRef<number>(0);
   const isSyncingLocationRef = useRef<boolean>(false);
-  const isSyncingOrderRef = useRef<boolean>(false);
-
-  interface QueuedOrderSyncItem {
-    id: string;
-    orderId: string;
-    status: DeliveryStatus;
-    updates: {
-      delivery_status: DeliveryStatus;
-      updated_at: string;
-      rider_id?: string | null;
-    };
-    delivery_fee: number;
-    timestamp: string;
-  }
+  const hasWarnedLegacyOrderQueueRef = useRef<boolean>(false);
 
   // Robust Network-Agnostic Transactional Queue Replay System
   
@@ -6820,100 +6449,13 @@ export function App() {
     }
   }, [user]);
 
-  const syncOrderStateQueue = useCallback(async () => {
-    if (!navigator.onLine || isSupabaseMocked() || isSyncingOrderRef.current) return;
-    isSyncingOrderRef.current = true;
-
-    try {
-      const queueStr = localStorage.getItem('order_sync_queue');
-      if (!queueStr) {
-        isSyncingOrderRef.current = false;
-        return;
-      }
-      
-      // Safely parse local storage queue elements following typings guidelines
-      const parsedQueue = (() => {
-        try {
-          return JSON.parse(queueStr);
-        } catch {
-          return null;
-        }
-      })();
-      
-      if (!Array.isArray(parsedQueue) || parsedQueue.length === 0) {
-        isSyncingOrderRef.current = false;
-        return;
-      }
-      const queue: QueuedOrderSyncItem[] = parsedQueue;
-
-      addBootLog(`SYNC_PROCESSOR: Initiating replay of ${queue.length} cached transaction(s).`);
-      
-      let remaining = [...queue];
-      
-      for (const action of queue) {
-        if (!navigator.onLine) break;
-
-        try {
-          const { orderId, status, updates } = action;
-          
-          if (status === 'picked_up') {
-            const { error } = await getSupabase().rpc('mark_order_picked_up', {
-              order_id: orderId
-            });
-            if (error) throw error;
-          } else if (status === 'delivered') {
-            const { error } = await getSupabase().rpc('complete_delivery', {
-              order_id: orderId,
-              delivery_pin: updates?.delivery_pin
-            });
-            if (error) throw error;
-          } else {
-            const { error } = await getSupabase()
-              .from('orders')
-              .update(updates)
-              .eq('id', orderId);
-            if (error) throw error;
-          }
-          
-          remaining = remaining.filter(item => item.id !== action.id);
-          if (remaining.length > 0) {
-            localStorage.setItem('order_sync_queue', JSON.stringify(remaining));
-          } else {
-            localStorage.removeItem('order_sync_queue');
-          }
-          addBootLog(`SYNC_SUCCESS: Replayed order transition ${status} for #${orderId.slice(-4)}`);
-        } catch (err: any) {
-          console.error('Failed to replay offline order sync item:', err);
-          const isPermanentError = err.code === 'permission-denied' || err.message?.includes('permission') || err.message?.includes('validation');
-          
-          if (isPermanentError) {
-             console.error('Permanent error syncing offline order item (permission/validation). Dropping item from queue.');
-             remaining = remaining.filter(item => item.id !== action.id);
-             if (remaining.length > 0) {
-               localStorage.setItem('order_sync_queue', JSON.stringify(remaining));
-             } else {
-               localStorage.removeItem('order_sync_queue');
-             }
-             continue; // Move to the next item
-          } else {
-             addBootLog('SYNC_REPLAY_SUSPENDED: Connection lost during dispatch sync replay');
-             break; // Stop and retry later on next online trigger
-          }
-        }
-      }
-      
-      if (remaining.length === 0) {
-        localStorage.removeItem('order_sync_queue');
-        addBootLog('SYNC_COMPLETED: Dispatch queues fully unified with Central DB.');
-        toast.success('Sync complete: Offline orders synchronized with central terminal.');
-        fetchActiveOrdersAndHistory();
-      }
-    } catch (e) {
-      console.error('Error in order state sync replay:', e);
-    } finally {
-      isSyncingOrderRef.current = false;
-    }
-  }, [fetchActiveOrdersAndHistory]);
+  const warnAboutLegacyOrderQueue = useCallback(() => {
+    const queuedActions = safeJsonParse<unknown[]>(localStorage.getItem('order_sync_queue'), []);
+    if (!Array.isArray(queuedActions) || queuedActions.length === 0 || hasWarnedLegacyOrderQueueRef.current) return;
+    hasWarnedLegacyOrderQueueRef.current = true;
+    addBootLog(`SAFETY_BLOCK: ${queuedActions.length} legacy offline order action(s) will not be replayed.`);
+    console.warn('Legacy offline order actions were preserved for review and were not sent to the server.');
+  }, []);
   useEffect(() => {
     if (!user || !profile?.is_online || activeOrders.length === 0) return;
 
@@ -7101,13 +6643,13 @@ export function App() {
            }, () => {}, { enableHighAccuracy: true, maximumAge: 0 });
          }
          syncLocationQueue();
-         syncOrderStateQueue();
+         warnAboutLegacyOrderQueue();
       }
     };
     
     const handleOnline = () => {
       syncLocationQueue();
-      syncOrderStateQueue();
+      warnAboutLegacyOrderQueue();
     };
 
     let fallbackIntervalId: NodeJS.Timeout | null = null;
@@ -7209,7 +6751,7 @@ export function App() {
       window.removeEventListener('online', handleOnline);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, profile?.is_online, activeOrders, isEcoMode, syncOrderStateQueue]);
+  }, [user, profile?.is_online, activeOrders, isEcoMode, warnAboutLegacyOrderQueue]);
 
   const loadingRef = useRef(loading);
   useEffect(() => {
@@ -7322,67 +6864,8 @@ export function App() {
         .subscribe();
     }
 
-    // Protocol: Sector Missions (Filtered public open-pool orders)
-    if (!channelsRef.current['public_orders']) {
-      channelsRef.current['public_orders'] = getFreshChannel(`rider_dispatch_pool:${user.id}`)
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'orders', 
-          filter: 'delivery_status=in.(pending,accepted,finding_rider)'
-        }, (payload) => {
-           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-             const newOrder = payload.new as DeliveryOrder;
-             if (!newOrder.rider_id && newOrder.delivery_status === 'finding_rider') {
-               const activeShopIds = connections
-                 .filter(c => new Date(c.expires_at) > new Date())
-                 .map(c => c.shop_id);
-               const activeShopNames = connections
-                 .filter(c => new Date(c.expires_at) > new Date())
-                 .map(c => (c.shop_name || '').toLowerCase())
-                 .filter(Boolean);
-
-               const orderShopName = (newOrder.restaurant_name || '').toLowerCase();
-               const isLinked = activeShopIds.includes(newOrder.shop_id) || (orderShopName !== '' && activeShopNames.some(n => n !== '' && orderShopName.includes(n)));
-
-               const qualifies = activeShopIds.length > 0
-                 ? isLinked
-                 : (newOrder.allow_external_riders === true || newOrder.dispatch_to_marketplace === true);
-
-               if (qualifies) {
-                 audioSynth.playOrderAssigned();
-                 toast.success(`NEW MISSION DETECTED: Tap to view details.`, {
-                   duration: 5000,
-                   icon: <Zap className="w-5 h-5 text-[#f59e0b] animate-pulse" />,
-                   style: { background: '#050505', color: '#f59e0b', border: '2px solid #f59e0b', textTransform: 'uppercase', fontStyle: 'italic', fontWeight: 900, boxShadow: '0 0 20px rgba(245, 158, 11, 0.4)' },
-                   action: { label: 'VIEW', onClick: () => setView('feed') }
-                 });
-                 setAvailableOrders(prev => {
-                   const formatted: DeliveryOrder = {
-                     ...newOrder,
-                     restaurant_name: newOrder.restaurant_name || 'Authorized Merchant',
-                     delivery_fee: Number(newOrder.delivery_fee) || 5.0,
-                     distance_km: Number(newOrder.distance_km) || 2.0,
-                     allow_external_riders: newOrder.allow_external_riders === true,
-                   };
-                   if (prev.some(o => o.id === formatted.id)) {
-                     return prev.map(o => o.id === formatted.id ? { ...o, ...formatted } : o);
-                   }
-                   return [formatted, ...prev];
-                 });
-               } else {
-                 setAvailableOrders(prev => prev.filter(o => o.id !== newOrder.id));
-               }
-               refHolder.fetchConnectionsAndOrders();
-             } else {
-               setAvailableOrders(prev => prev.filter(o => o.id !== newOrder.id));
-             }
-           } else if (payload.eventType === 'DELETE') {
-             setAvailableOrders(prev => prev.filter(o => o.id !== payload.old.id));
-           }
-        })
-        .subscribe();
-    }
+    // Available missions are loaded only from the authoritative LocalEats API.
+    // A short poll below replaces the legacy frontend database listener.
 
     // Protocol: Relay Connections
     if (!channelsRef.current['connections']) {
@@ -7521,7 +7004,7 @@ export function App() {
   useEffect(() => {
     const init = async () => {
       await fetchActiveOrdersAndHistory();
-      syncOrderStateQueue();
+      warnAboutLegacyOrderQueue();
     };
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7576,194 +7059,62 @@ export function App() {
   }, [user?.id, profile?.is_online]);
 
   // Actions
-  const handleUpdateStatus = useCallback(async (orderId: string, status: DeliveryStatus) => {
-    if (!profile) return;
-    
-    // Find the order being updated
+  const handleUpdateStatus = useCallback(async (
+    orderId: string,
+    status: DeliveryStatus,
+    deliveryProof?: string,
+  ): Promise<boolean> => {
+    if (!profile || !user) return false;
     const orderToUpdate = activeOrders.find(o => o.id === orderId);
-    if (!orderToUpdate) return;
-
-    // Strict Isolation: Only complete order status handshakes for shops they are actively connected with
-    const hasActiveConnection = isSupabaseMocked() || 
-                                (orderToUpdate.rider_id === user?.id) || 
-                                connections.some(c => c.shop_id === orderToUpdate.shop_id && new Date(c.expires_at) > new Date());
-    if (!hasActiveConnection) {
-      toast.error('Cannot update status: Active store connection expired or unauthorized. Please re-pair with the store.');
-      return;
+    if (!orderToUpdate) return false;
+    if (!navigator.onLine) {
+      toast.error('Connect to the internet before changing a delivery. No change was saved.');
+      return false;
     }
-    
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updates: any = { 
-      delivery_status: status, 
-      updated_at: new Date().toISOString() 
-    };
-
-    if (status === 'finding_rider') {
-      updates.rider_id = null;
-    }
-
-    // Integrity Check: Block delivery if mock GPS detected
     if (status === 'delivered' && isMockedRef.current) {
       toast.error('Real location required. Cannot confirm arrival with mocked GPS.', { duration: 5000 });
-      return;
+      return false;
     }
 
-    try {
-      // OPTIMISTIC LOCAL ACTION:
-      // Instantly transition local state to eliminate cell signal wait-time bottlenecks (3G/LTE towers dropouts)
-      if (status === 'delivered') {
-        setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-        setHistory(prev => [{...orderToUpdate, delivery_status: 'delivered', updated_at: new Date().toISOString()}, ...prev]);
-        
-        // Spoor & Tube Cooperative Fund Auto-Deduction support
-        const isCoopDeduct = localStorage.getItem('localeats_coop_autodeduct') === 'true';
-
-        // Removed optimistic earnings local update to enforce server-side authority.
-        // Earnings will be recalculated on next DB sync.
-
-        if (isCoopDeduct) {
-          const contrib = Number(localStorage.getItem('localeats_coop_rider_contrib') || '432') + 2;
-          const pool = Number(localStorage.getItem('localeats_coop_balance') || '48150') + 2;
-          localStorage.setItem('localeats_coop_rider_contrib', contrib.toString());
-          localStorage.setItem('localeats_coop_balance', pool.toString());
-          toast.info("R2.00 Spoor & Tube Cooperative Fund auto-contribution processed.", {
-            description: `Your contributions: R${contrib} • Co-op Balance: R${pool}`
-          });
-        }
-
-        // Cash-on-hand Limit Tracker support
-        if (false) {
-          const cashAmount = orderToUpdate.total_price || 0;
-          setCashOnHand(prev => {
-            const nextCash = prev + cashAmount;
-            if (nextCash >= 200) {
-              toast.error(`⚠️ CASH LIMIT EXCEEDED: You are holding R${nextCash.toFixed(2)} cash-on-hand. Maximum security limit is R200! Please make a hub cash deposit immediately.`, {
-                duration: 9000
-              });
-            } else {
-              toast.success(`Cash collected: R${cashAmount.toFixed(2)} added to Cash-on-Hand register.`);
-            }
-            return nextCash;
-          });
-        }
-
-        toast.info("Processing order arrival protocol...", { id: 'status-updating' });
-      } else if (status === 'finding_rider') {
-        setActiveOrders(prev => prev.filter(o => o.id !== orderId));
-        toast.info("Releasing mission to marketplace...", { id: 'status-updating' });
-      } else {
-        setActiveOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_status: status } : o));
-        toast.info(`Advancing mission phase to ${status}...`, { id: 'status-updating' });
+    const toastId = toast.loading('Confirming delivery state with LocalEats…');
+    let result;
+    if (status === 'picked_up') {
+      result = await markOrderPickedUp({ order_id: orderId });
+    } else if (status === 'delivering') {
+      result = await markOrderDelivering({ order_id: orderId });
+    } else if (status === 'delivered') {
+      if (!deliveryProof?.trim()) {
+        toast.error('Enter the customer PIN or scan the delivery QR code.', { id: toastId });
+        return false;
       }
-
-      // Dispatch Push Notification to Customer / Merchant if applicable
-      const customerUserId = orderToUpdate.user_id || (orderToUpdate as unknown as { customer_id?: string }).customer_id;
-      if (orderToUpdate && customerUserId) {
-        const targetUserId = customerUserId;
-        const statusMessages: Record<string, string> = {
-          accepted: 'Rider accepted your delivery mission! 🛵',
-          preparing: 'Order is being prepared by the merchant 👨‍🍳',
-          ready_for_pickup: 'Order is ready for pickup! ⚡',
-          picked_up: 'Rider picked up your order and is heading your way! 📦',
-          on_the_way: 'Rider is en route to your delivery location! 🛵💨',
-          arrived: 'Rider has arrived at your delivery address! 📍',
-          delivered: 'Order delivered! Enjoy your meal! 🎉'
-        };
-        const bodyMsg = statusMessages[status] || `Order status updated to ${status.replace('_', ' ')}.`;
-        sendPushNotification({
-          user_id: targetUserId,
-          title: `📦 Order #${orderToUpdate.id.slice(-4)} Update`,
-          body: bodyMsg,
-          data: {
-            order_id: orderToUpdate.id,
-            status: status
-          }
-        }).catch((err) => {
-          console.warn('Non-blocking customer push notification failed:', err);
-        });
-      }
-
-      if (isSupabaseMocked()) {
-        toast.success(`Success: Phase changed to ${status}`, { id: 'status-updating' });
-        return;
-      }
-
-      let opError: { message?: string } | null = null;
-      if (status === 'picked_up') {
-        const { error } = await fetchWithRetry(async () => {
-          return await getSupabase().rpc('mark_order_picked_up', {
-            order_id: orderId,
-            rider_id: user.id
-          });
-        });
-        opError = error;
-      } else if (status === 'delivered') {
-        const { error } = await fetchWithRetry(async () => {
-          return await getSupabase().rpc('complete_delivery', {
-            order_id: orderId,
-            rider_id: user.id,
-            delivery_pin: orderToUpdate.delivery_pin
-          });
-        });
-        opError = error;
-      } else {
-        const { error } = await fetchWithRetry(async () => {
-          return await getSupabase()
-            .from('orders')
-            .update(updates)
-            .eq('id', orderId)
-            .eq('rider_id', user.id);
-        });
-        opError = error;
-      }
-
-      if (opError) {
-        throw opError;
-      } else {
-        if (status === 'delivered') {
-          toast.success(`Order completed! +${orderToUpdate.delivery_fee || 15} earned.`, { id: 'status-updating' });
-        } else if (status === 'finding_rider') {
-          toast.success('Mission released back to regional marketplace.', { id: 'status-updating' });
-        } else {
-          toast.success('Order status updated.', { id: 'status-updating' });
-        }
-      }
-    } catch (e: unknown) {
-      console.error('Failed to update status live, caching offline:', e);
-      addBootLog(`OFFLINE_TRANSITION: Queueing state [${status}] for Order #${orderId.slice(-4)}`);
-      
-      try {
-        const queueStr = localStorage.getItem('order_sync_queue');
-        const queue: QueuedOrderSyncItem[] = safeJsonParse<QueuedOrderSyncItem[]>(queueStr, []);
-        
-        // Anti-splitting mechanism: remove prior status changes for this same order in queue
-        const filteredQueue = queue.filter((item: QueuedOrderSyncItem) => !(item.orderId === orderId && item.status === status));
-        
-        filteredQueue.push({
-          id: Math.random().toString(36).substring(2, 9),
-          orderId,
-          status,
-          updates,
-          delivery_fee: orderToUpdate.delivery_fee || 0,
-          timestamp: new Date().toISOString()
-        });
-        
-        localStorage.setItem('order_sync_queue', JSON.stringify(filteredQueue));
-        
-        const _isSysOffline = !navigator.onLine;
-        const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
-        if (!_isSysOffline && !_isSimOffline) {
-          toast.info("offline: State cached locally. Syncing when connection restores.", {
-            duration: 6000,
-            id: 'status-updating'
-          });
-        }
-      } catch (storageErr) {
-        console.error("Failed to queue offline state change", storageErr);
-        toast.error("Could not save locally. Using temporary memory.", { id: 'status-updating' });
-      }
+      result = await completeDelivery({ order_id: orderId, delivery_pin: deliveryProof.trim() });
+    } else {
+      toast.error('This delivery action needs a server-side support workflow and was not changed.', { id: toastId });
+      return false;
     }
-  }, [profile, activeOrders, setActiveOrders, setHistory, setProfile, user, connections]);
+
+    const confirmedOrder = result.data?.order as unknown as DeliveryOrder | undefined;
+    if (!result.success || !confirmedOrder?.id) {
+      toast.error(result.error?.message || 'The server did not confirm this delivery change.', { id: toastId });
+      return false;
+    }
+
+    if (status === 'delivered') {
+      setActiveOrders(prev => prev.filter(order => order.id !== orderId));
+      setHistory(prev => [confirmedOrder, ...prev.filter(order => order.id !== orderId)]);
+      const earnings = 'earnings_awarded' in (result.data ?? {})
+        ? Number((result.data as { earnings_awarded?: number }).earnings_awarded ?? 0)
+        : 0;
+      toast.success(
+        earnings > 0 ? `Delivery completed. R${earnings.toFixed(2)} credited by the server.` : 'Delivery completed.',
+        { id: toastId },
+      );
+    } else {
+      setActiveOrders(prev => prev.map(order => order.id === orderId ? confirmedOrder : order));
+      toast.success(status === 'picked_up' ? 'Pickup confirmed by the server.' : 'Delivery started and was confirmed by the server.', { id: toastId });
+    }
+    return true;
+  }, [activeOrders, profile, setActiveOrders, setHistory, user]);
 
   const [isListening, setIsListening] = useState(false);
 
@@ -7982,174 +7333,29 @@ export function App() {
     if (!profile || !user) return;
 
     if (activeOrders.length >= 2) {
-      toast.error('Active load limit reached (2/2 active deliveries max). Complete an active order before accepting new missions.');
+      toast.error("Active load limit reached. Complete an active delivery first.");
+      return;
+    }
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      toast.error("You must be online to claim a delivery.");
       return;
     }
 
-    const isSimulated = simulatedOrders.some(o => o.id === orderId);
-    if (isSimulated) {
-      const order = simulatedOrders.find(o => o.id === orderId);
-      if (order) {
-        const accepted = {
-          ...order,
-          delivery_status: 'accepted' as const,
-          status: 'preparing' as const,
-          rider_id: user.id,
-          rider_name: profile.name || profile.full_name || 'Rider',
-          rider_phone: profile.phone || '+27 83 123 4567'
-        };
-        setSimulatedOrders(prev => prev.map(o => o.id === orderId ? accepted : o));
-        setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), accepted as DeliveryOrder]);
-        setDispatchState(prev => ({
-          ...prev,
-          [orderId]: {
-            ...prev[orderId],
-            stage: 'accepted'
-          }
-        }));
-        setDispatchLog(prev => [
-          `[${new Date().toLocaleTimeString()}] ✅ Order accepted by You (Rider). Merchant chef notified to begin meal preparation!`,
-          ...prev
-        ]);
-        if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]);
-        toast.success("Order accepted. Starting navigation.", {
-          description: "Merchant Dashboard and Customer UI updated."
-        });
-        setView('move');
-      }
-      return;
-    }
-    
-    // 1 & 2. Database-Level Isolation & Pairing Protocol
-    const orderToAccept = availableOrders.find(o => o.id === orderId);
-    if (!orderToAccept && !isSupabaseMocked()) {
-      toast.error('Store connection unavailable.');
+    const result = await claimDeliveryMission({ order_id: orderId });
+    if (!result.success || !result.data?.order) {
+      toast.error(result.error?.message || "This delivery could not be claimed.");
       return;
     }
 
-    if (orderToAccept && !isSupabaseMocked()) {
-      // Check if the rider is explicitly paired with the merchant or order is external
-      const isPaired = connections.some(c => c.shop_id === orderToAccept.shop_id && new Date(c.expires_at) > new Date());
-      const isExternal = orderToAccept.allow_external_riders === true;
-
-      if (!isPaired && !isExternal) {
-        toast.error('Store link expired or unauthorized. Please pair with the store or enter their connection code.');
-        return;
-      }
-    }
-
-    try {
-      if (isSupabaseMocked() || (orderToAccept as { is_mocked?: boolean })?.is_mocked || orderId.toLowerCase().includes('mock') || orderId.toLowerCase().includes('sim')) {
-        const order = availableOrders.find(o => o.id === orderId) || orderToAccept;
-        if (order) {
-          const accepted = { 
-            ...order, 
-            delivery_status: 'accepted' as const, 
-            status: 'preparing' as const,
-            rider_id: user.id,
-            rider_name: profile.name || profile.full_name || 'Rider',
-            rider_phone: profile.phone || '+27 83 123 4567',
-            surge_multiplier: surgeMultiplier 
-          };
-          setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
-          setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), accepted as DeliveryOrder]);
-          if ('vibrate' in navigator) navigator.vibrate([100, 50, 100]); // Short vibration pattern for accept
-          toast.success('Order accepted. Starting navigation.', {
-            description: surgeMultiplier > 1 ? `Bonus active: x${surgeMultiplier.toFixed(1)}` : undefined
-          });
-          setView('move');
-        }
-        return;
-      }
-
-      let claimed = false;
-      let fetchedOrder: DeliveryOrder | null = null;
-
-      // Primary claim attempt via database RPC (calls Cloud Function claimDeliveryMission)
-      try {
-        const rpcResult = await fetchWithRetry(async () => {
-          return await getSupabase()
-            .rpc('claim_delivery_mission', {
-              target_order_id: orderId,
-              p_rider_name: profile.name || profile.full_name || 'Rider',
-              p_rider_phone: profile.phone || '+27 83 123 4567'
-            });
-        }, 2, 500, 3000);
-
-        if (!rpcResult.error && rpcResult.data === true) {
-          claimed = true;
-          // Refresh order data to get latest DB state
-          const { data } = await getSupabase().from('orders').select('*').eq('id', orderId).maybeSingle();
-          if (data) fetchedOrder = data as DeliveryOrder;
-        } else if (rpcResult.error) {
-          console.error('Claim RPC error:', rpcResult.error);
-        }
-      } catch (err) {
-        console.warn('SERVER DEPENDENCY: claim_delivery_mission Callable Cloud Function failed.', err);
-      }
-
-      if (!claimed) {
-        console.warn('MISSION PROTOCOL: Claim failed', 'Mission taken by another courier or unavailable');
-        setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
-        toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
-          style: {
-            background: "#991b1b",
-            color: "#ffffff",
-            border: "2px solid #ef4444",
-            textTransform: "uppercase",
-            fontWeight: 900,
-            fontFamily: "monospace",
-          }
-        });
-        return;
-      }
-
-      // Successfully claimed!
-      if (!fetchedOrder) {
-        const orderFetch = await getSupabase().from('orders').select('*').eq('id', orderId).maybeSingle();
-        fetchedOrder = orderFetch.data as DeliveryOrder | null;
-      }
-
-      const customerUserId = (fetchedOrder as { user_id?: string; customer_id?: string } | null)?.user_id || (fetchedOrder as { user_id?: string; customer_id?: string } | null)?.customer_id;
-      if (customerUserId) {
-        sendPushNotification({
-          user_id: customerUserId,
-          title: `🛵 Order #${orderId.slice(-4)} Accepted`,
-          body: `Rider ${profile.name || 'Courier'} accepted your delivery mission!`,
-          data: { order_id: orderId, status: 'accepted' }
-        }).catch(console.warn);
-      }
-      toast.success('Order accepted. Starting navigation.');
-      
-      setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
-      if (fetchedOrder) {
-        setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), fetchedOrder as DeliveryOrder]);
-      } else {
-        const orderToAcceptFallback = availableOrders.find(o => o.id === orderId) || orderToAccept;
-        if (orderToAcceptFallback) {
-          setActiveOrders(prev => [...prev.filter(o => o.id !== orderId), { ...orderToAcceptFallback, delivery_status: 'accepted', status: 'preparing', rider_id: user.id } as DeliveryOrder]);
-        }
-      }
-      setView('move');
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Accept failed';
-      if (/fetch|network|timeout|timed out|abort/i.test(message)) {
-        toast.error('You must be online to accept an order.');
-      } else {
-        // Clear order from availableOrders so it's instantly wiped from the screen on generic failures
-        setAvailableOrders(prev => prev.filter(o => o.id !== orderId));
-        toast.error("SIGNAL HIJACKED - MISSION TAKEN BY ANOTHER COURIER!", {
-          style: {
-            background: "#991b1b",
-            color: "#ffffff",
-            border: "2px solid #ef4444",
-            textTransform: "uppercase",
-            fontWeight: 900,
-            fontFamily: "monospace",
-          }
-        });
-      }
-    }
+    const confirmedOrder = result.data.order as unknown as DeliveryOrder;
+    setAvailableOrders((current) => current.filter((order) => order.id !== orderId));
+    setActiveOrders((current) => [
+      ...current.filter((order) => order.id !== orderId),
+      confirmedOrder,
+    ]);
+    if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
+    toast.success("Delivery claimed. The server confirmed your assignment.");
+    setView("move");
   };
 
   const handlePair = async (code: string) => {
@@ -8591,7 +7797,7 @@ export function App() {
                         "px-2 py-0.5 rounded-full text-[8px]", 
                         forceOffline ? "bg-black/20" : "bg-black/30"
                       )}>
-                        {orderQueueCount + locQueueCount} Pending
+                        {orderQueueCount + locQueueCount} Local records
                       </span>
                     )}
                     {isHudExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -8609,7 +7815,7 @@ export function App() {
                 >
                   <div className="p-5 grid grid-cols-2 gap-4 border-b border-zinc-800">
                     <div className="bg-black/50 p-3 rounded-xl border border-zinc-800/50">
-                      <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Queued Orders</p>
+                      <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Blocked legacy actions</p>
                       <p className="text-xl font-mono text-white">{orderQueueCount}</p>
                     </div>
                     <div className="bg-black/50 p-3 rounded-xl border border-zinc-800/50">
@@ -8642,12 +7848,11 @@ export function App() {
                         Restore Uplink
                       </button>
                     )}
-                    {(orderQueueCount > 0 || locQueueCount > 0) && (
+                    {locQueueCount > 0 && (
                       <button 
                         onClick={() => {
-                          syncOrderStateQueue();
                           syncLocationQueue();
-                          toast.info("Forcing sync of local queues...");
+                          toast.info("Syncing cached location updates...");
                         }}
                         className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase text-[9px] tracking-widest rounded-lg transition-colors flex items-center justify-center gap-2"
                       >

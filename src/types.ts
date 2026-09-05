@@ -32,7 +32,7 @@ export interface ShopConnection {
   connection_code?: string;
 }
 
-export type DeliveryStatus = 'finding_rider' | 'accepted' | 'picked_up' | 'delivered' | 'cancelled' | 'none';
+export type DeliveryStatus = 'finding_rider' | 'rider_assigned' | 'accepted' | 'picked_up' | 'delivering' | 'delivered' | 'cancelled' | 'none';
 
 export interface DeliveryOrder {
   id: string;
@@ -113,5 +113,4 @@ export interface OrderChatMessage {
   is_read?: boolean;
   is_delivered?: boolean;
 }
-
 

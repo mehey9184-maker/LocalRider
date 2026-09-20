@@ -151,14 +151,14 @@ export const Dashboard = React.memo(({
                <ShieldAlert className="w-6 h-6" />
             </div>
             <div className="flex-1">
-               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">No Connections Found</h4>
-               <p className="text-sm font-bold text-white/70 italic leading-tight">You haven't connected to any stores yet. Go to the Hub to link your account.</p>
+               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">No Approved Shop Relationship</h4>
+               <p className="text-sm font-bold text-white/70 italic leading-tight">Request a shop relationship or wait for the merchant to approve your pending request.</p>
             </div>
             <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-red-500 transition-colors" />
          </motion.div>
       )}
 
-      {profile.verification_status !== 'verified' && connectionCount > 0 && (
+      {profile.verification_status !== 'approved' && connectionCount > 0 && (
         <BentoCard className="bg-orange-500/10 border-orange-500/20 text-orange-500 py-5">
           <div className="flex items-center gap-4">
             <ShieldAlert className="w-6 h-6 shrink-0" />
@@ -214,7 +214,7 @@ export const Dashboard = React.memo(({
               <span className={cn("text-[11px] font-sans font-semibold uppercase tracking-wider transition-colors duration-300", profile.is_online ? "text-emerald-400/80" : "text-zinc-500")}>
                 {profile.is_online ? 'Looking for orders...' : 'Tap to go online'}
               </span>
-              {profile.verification_status === 'verified' && (
+              {profile.verification_status === 'approved' && (
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 backdrop-blur-sm shadow-[0_2px_10px_rgba(16,185,129,0.05)]">
                   <ShieldCheck className="w-3 h-3 text-emerald-400" />
                   <span className="text-[8px] font-black text-emerald-400 tracking-wider">VERIFIED</span>
@@ -527,8 +527,12 @@ export const Dashboard = React.memo(({
                     <div 
                       key={route.id || idx} 
                       onClick={() => {
-                        const originLat = profile?.current_latitude || -25.9964;
-                        const originLng = profile?.current_longitude || 28.2268;
+                        const originLat = profile?.current_latitude;
+                        const originLng = profile?.current_longitude;
+                        if (originLat == null || originLng == null) {
+                          toast.error('Location unavailable', { description: 'Enable device location before starting navigation.' });
+                          return;
+                        }
                         const provider = localStorage.getItem('localeats_nav_pref') || 'google';
                         let url;
                         if (provider === 'waze') {

@@ -98,13 +98,24 @@ import {
   Camera,
   Loader2
 } from 'lucide-react';
-import { uploadRiderProfilePic, uploadDeliveryProofPhoto } from './lib/storage';
+import { uploadDeliveryProofPhoto } from './lib/storage';
 import MapboxMap, { Marker } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Toaster, toast } from 'sonner';
-import { getSupabase, getFreshChannel, isSupabaseMocked, clearStaleAuthTokens } from './lib/supabase';
+import { getSupabase, getFreshChannel, isSupabaseMocked } from './lib/supabase';
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  type User as FirebaseUser,
+} from 'firebase/auth';
 import { getErrorMessage } from './lib/errorHandling';
 import {
+  getFirebaseApp,
   registerAndSyncPushToken,
   onForegroundMessage
 } from './lib/firebase';
@@ -121,7 +132,6 @@ import { Dashboard } from './components/Dashboard';
 import {
   safeJsonParse,
   isTodayLocal,
-  promiseWithTimeout,
   fetchWithRetry,
   useBatteryStatus,
   getMerchantHeartbeatStatus,
@@ -148,6 +158,15 @@ import {
   markOrderDelivering,
   markOrderPickedUp,
 } from './services/riderDeliveryBackend';
+import {
+  getRiderConnections,
+  getRiderProfile,
+  requestRiderConnection,
+  RiderAccessError,
+  saveRiderProfile,
+  setRiderAvailability,
+  type RiderAccessProfile,
+} from './services/riderAccessBackend';
 import { OrderCardSkeleton, OrderTrackingSkeleton, MainBootstrapSkeleton } from './components/ShimmerSkeleton';
 import { GlobalLegalModal } from './components/GlobalLegalModal';
 import { TopNavOptionsMenu } from './components/TopNavOptionsMenu';
@@ -237,11 +256,29 @@ interface SavedProfile {
   lastUsedAt: number;
 }
 
-const AuthView = ({ 
-  onMockLogin 
-}: { 
-  onMockLogin?: (userData?: { id?: string; email?: string; fullName?: string; phone?: string; vehicleType?: UserVehicle }) => void 
-}) => {
+const mapFirebaseUser = (firebaseUser: FirebaseUser): User => ({
+  id: firebaseUser.uid,
+  email: firebaseUser.email,
+  phone: firebaseUser.phoneNumber ?? undefined,
+  user_metadata: {
+    full_name: firebaseUser.displayName ?? undefined,
+    name: firebaseUser.displayName ?? undefined,
+    phone: firebaseUser.phoneNumber ?? undefined,
+  },
+} as unknown as User);
+
+const mapAccessProfile = (profile: RiderAccessProfile): RiderProfile => ({
+  id: String(profile.id),
+  name: profile.full_name.trim() || 'Rider',
+  full_name: profile.full_name,
+  phone: profile.phone,
+  is_online: profile.is_online,
+  status: profile.status,
+  vehicle_type: profile.vehicle_type,
+  verification_status: profile.verification_status,
+});
+
+const AuthView = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -252,143 +289,42 @@ const AuthView = ({
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSupabaseMocked()) {
-      toast.success('Welcome! Logged in successfully.');
-      if (onMockLogin) onMockLogin({ email, fullName, phone, vehicleType });
-      return;
-    }
-
     setLoading(true);
     try {
+      const app = getFirebaseApp();
+      if (!app) throw new Error('Firebase authentication is unavailable.');
+      const auth = getAuth(app);
       if (isSignUp) {
-        const res = await promiseWithTimeout(
-          getSupabase().auth.signUp({ 
-            email, 
-            password,
-            options: {
-              data: {
-                full_name: fullName,
-                phone: phone,
-                vehicle_type: vehicleType
-              }
-            }
-          }),
-          5000
-        ).catch((err) => ({ data: null, error: err }));
-        
-        const { data, error } = res || {};
-
-        if (error) {
-          const errMsg = error?.message || 'Unknown error';
-          console.warn('Supabase sign up error:', errMsg);
-          if (errMsg.includes('already registered') || errMsg.includes('already in use')) {
-             toast.error(errMsg);
-             return;
-          }
-          // Only fallback to mock if it's a network/timeout issue and we want to allow offline
-          if (errMsg.includes('timeout') || errMsg.includes('network')) {
-             toast.success('Offline mode: Logged in locally.');
-             if (onMockLogin) {
-               onMockLogin({
-                 id: 'local-user-' + Math.random().toString(36).substring(2, 9),
-                 email,
-                 fullName: fullName || 'New Rider',
-                 phone: phone || '+27 83 123 4567',
-                 vehicleType
-               });
-             }
-          } else {
-             toast.error('Sign up failed: ' + errMsg);
-          }
-          return;
+        if (!fullName.trim() || !phone.trim()) throw new Error('Enter your full name and phone number.');
+        await createUserWithEmailAndPassword(auth, email.trim(), password);
+        try {
+          await saveRiderProfile({ full_name: fullName.trim(), phone: phone.trim(), vehicle_type: vehicleType });
+          toast.success('Account and rider profile created successfully.');
+        } catch (profileError) {
+          toast.error(profileError instanceof Error ? profileError.message : 'Account created. Complete your rider profile to continue.');
         }
-        
-        if (!data?.session) {
-          toast.error('No session created. Please try again.');
-          return;
-        }
-
-        toast.success('Account created successfully! Welcome to your dashboard.');
       } else {
-        const res = await promiseWithTimeout(
-          getSupabase().auth.signInWithPassword({ email, password }),
-          5000
-        ).catch((err) => ({ data: null, error: err }));
-
-        const { data, error } = res || {};
-
-        if (error || !data?.session) {
-          console.warn('Supabase sign-in error or timeout, logging in locally:', error?.message || 'No session returned');
-          toast.success('Logged in successfully!');
-          if (onMockLogin) {
-            onMockLogin({
-              id: 'local-user-' + Math.random().toString(36).substring(2, 9),
-              email: email || 'rider@localeats.io',
-              fullName: fullName || 'Local Rider',
-              phone: phone || '+27 83 123 4567',
-              vehicleType
-            });
-          }
-          return;
-        }
-
+        await signInWithEmailAndPassword(auth, email.trim(), password);
         toast.success('Logged in successfully!');
       }
     } catch (err: unknown) {
-      console.warn('Auth error caught, logging in locally:', err);
-      toast.success('Logged in successfully!');
-      if (onMockLogin) {
-        onMockLogin({
-          id: 'local-user-' + Math.random().toString(36).substring(2, 9),
-          email: email || 'rider@localeats.io',
-          fullName: fullName || 'Local Rider',
-          phone: phone || '+27 83 123 4567',
-          vehicleType
-        });
-      }
+      toast.error(err instanceof Error ? err.message : 'Authentication failed.');
     } finally {
       setLoading(false);
     }
   };
 
   const signInWithGoogle = async () => {
-    if (isSupabaseMocked()) {
-      toast.success('Logged in with Google.');
-      if (onMockLogin) onMockLogin({ email, fullName, phone, vehicleType });
-      return;
-    }
-
+    setLoading(true);
     try {
-      const { error: authError } = await promiseWithTimeout(
-        getSupabase().auth.signInWithOAuth({
-          provider: 'google',
-          options: { redirectTo: window.location.origin }
-        }),
-        5000
-      );
-      if (authError) {
-        toast.success('Connected via Google bypass.');
-        if (onMockLogin) {
-          onMockLogin({
-            id: 'google-user-' + Math.random().toString(36).substring(2, 9),
-            email: email || 'google-rider@localeats.io',
-            fullName: fullName || 'Google Rider',
-            phone: phone || '+27 83 123 4567',
-            vehicleType
-          });
-        }
-      }
-    } catch {
-      toast.success('Connected via Google bypass.');
-      if (onMockLogin) {
-        onMockLogin({
-          id: 'google-user-' + Math.random().toString(36).substring(2, 9),
-          email: email || 'google-rider@localeats.io',
-          fullName: fullName || 'Google Rider',
-          phone: phone || '+27 83 123 4567',
-          vehicleType
-        });
-      }
+      const app = getFirebaseApp();
+      if (!app) throw new Error('Firebase authentication is unavailable.');
+      await signInWithPopup(getAuth(app), new GoogleAuthProvider());
+      toast.success('Logged in with Google.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Google sign-in failed.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -520,26 +456,6 @@ const AuthView = ({
 
             <button 
               type="button"
-              onClick={() => {
-                toast.success('Instant bypass activated! Welcome to the testing sandbox.');
-                if (onMockLogin) {
-                  onMockLogin({
-                    id: 'express-user-' + Math.random().toString(36).substring(2, 9),
-                    email: email || 'fast-rider@localeats.io',
-                    fullName: fullName || 'Express Tester',
-                    phone: phone || '+27 83 456 7890',
-                    vehicleType: vehicleType
-                  });
-                }
-              }}
-              className="w-full py-4 bg-zinc-950 hover:bg-zinc-900 border border-amber-500/30 hover:border-amber-500/60 text-[#f59e0b] hover:text-white font-black uppercase italic tracking-widest rounded-xl flex items-center justify-center gap-3 active:scale-95 transition-all shadow-[0_0_15px_rgba(245,158,11,0.08)] cursor-pointer font-sans mb-3"
-            >
-              <Zap className="w-5 h-5 text-[#f59e0b] animate-pulse" />
-              Instant Express Log In
-            </button>
-
-            <button 
-              type="button"
               onClick={() => setIsSignUp(!isSignUp)}
               className="w-full mt-6 text-[10px] font-bold text-zinc-500 uppercase tracking-widest hover:text-white transition-colors cursor-pointer"
             >
@@ -567,6 +483,66 @@ const getDistanceBetween = (lat1?: number, lon1?: number, lat2?: number, lon2?: 
     Math.sin(dLon/2) * Math.sin(dLon/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   return R * c;
+};
+
+const ProfileCompletionView = ({
+  user,
+  onSaved,
+}: {
+  user: User;
+  onSaved: (profile: RiderAccessProfile) => void;
+}) => {
+  const [fullName, setFullName] = useState(user.user_metadata?.full_name || user.user_metadata?.name || '');
+  const [phone, setPhone] = useState(user.user_metadata?.phone || '');
+  const [vehicleType, setVehicleType] = useState<UserVehicle>('Road');
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!fullName.trim() || !phone.trim()) {
+      toast.error('Enter your full name and phone number.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await saveRiderProfile({
+        full_name: fullName.trim(),
+        phone: phone.trim(),
+        vehicle_type: vehicleType,
+      });
+      onSaved(saved);
+      toast.success('Rider profile saved.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to save your rider profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+      <form onSubmit={submit} className="w-full max-w-md rounded-3xl border border-zinc-800 bg-zinc-950 p-6 space-y-5">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]">Profile required</p>
+          <h1 className="mt-2 text-2xl font-black uppercase italic">Complete your rider profile</h1>
+          <p className="mt-2 text-xs text-zinc-400">Your Firebase account is signed in. Complete these details before using rider operations.</p>
+        </div>
+        <label className="block text-xs font-bold text-zinc-300">Full name
+          <input value={fullName} onChange={(event) => setFullName(event.target.value)} required className="mt-2 w-full rounded-xl border border-zinc-800 bg-black px-4 py-3 text-sm outline-none focus:border-[#f59e0b]" />
+        </label>
+        <label className="block text-xs font-bold text-zinc-300">Phone number
+          <input value={phone} onChange={(event) => setPhone(event.target.value)} required className="mt-2 w-full rounded-xl border border-zinc-800 bg-black px-4 py-3 text-sm outline-none focus:border-[#f59e0b]" />
+        </label>
+        <label className="block text-xs font-bold text-zinc-300">Vehicle type
+          <select value={vehicleType} onChange={(event) => setVehicleType(event.target.value as UserVehicle)} className="mt-2 w-full rounded-xl border border-zinc-800 bg-black px-4 py-3 text-sm outline-none focus:border-[#f59e0b]">
+            <option value="Road">Road</option><option value="MTB">MTB</option><option value="E-Bike">E-Bike</option><option value="Motor">Motor</option>
+          </select>
+        </label>
+        <button type="submit" disabled={saving} className="w-full rounded-xl bg-[#f59e0b] py-3 text-sm font-black uppercase text-black disabled:opacity-50">{saving ? 'Saving…' : 'Save rider profile'}</button>
+        <button type="button" onClick={() => { const app = getFirebaseApp(); if (app) void firebaseSignOut(getAuth(app)); }} className="w-full py-2 text-xs font-bold text-zinc-400">Sign out</button>
+      </form>
+    </div>
+  );
 };
 
 const RouteMiniMap = ({ 
@@ -687,15 +663,6 @@ const OrdersFeed = React.memo(({
     });
   };
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [localNow, setLocalNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLocalNow(Date.now());
-    }, 60000); // Update every minute
-    return () => clearInterval(interval);
-  }, []);
-
   const [showNearbyMap, setShowNearbyMap] = useState(true);
 
   const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
@@ -768,19 +735,12 @@ const OrdersFeed = React.memo(({
   const activeConnectionInfo = useMemo(() => {
     if (!connections || connections.length === 0) return null;
     const primaryConnection = connections[0];
-    const expiresAtTime = new Date(primaryConnection.expires_at).getTime();
-    const timeLeft = expiresAtTime - localNow;
-    const isExpired = timeLeft <= 0;
-    const hoursLeft = Math.max(0, Math.floor(timeLeft / (1000 * 60 * 60)));
-    const minsLeft = Math.max(0, Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60)));
     return {
       primaryConnection,
-      shopName: primaryConnection.shop_name || 'Merchant ' + primaryConnection.shop_id.slice(0, 4),
-      isExpired,
-      hoursLeft,
-      minsLeft
+      shopName: primaryConnection.shop.name || `Merchant ${String(primaryConnection.shop.id).slice(0, 4)}`,
+      status: primaryConnection.status,
     };
-  }, [connections, localNow]);
+  }, [connections]);
 
   const handleMarkerClick = useCallback((id: string) => {
     setHighlightedOrderId(id);
@@ -882,17 +842,23 @@ const OrdersFeed = React.memo(({
                </div>
             </div>
         
-        {/* Active Store Connection & Time Remaining Bar */}
+        {/* Authoritative store connection status */}
         {activeConnectionInfo && (
           <div className="bg-zinc-900/90 border border-zinc-800 rounded-2xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded-xl text-[#f59e0b]">
+              <div className={cn(
+                "p-2 border rounded-xl",
+                activeConnectionInfo.status === 'approved' ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" : activeConnectionInfo.status === 'pending' ? "bg-amber-500/10 border-amber-500/20 text-amber-400" : "bg-red-500/10 border-red-500/20 text-red-400"
+              )}>
                 <Globe className="w-4 h-4" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-[#f59e0b]">Active Store Link</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Store Relationship</span>
+                  <span className={cn(
+                    "w-1.5 h-1.5 rounded-full",
+                    activeConnectionInfo.status === 'approved' ? "bg-emerald-500 animate-pulse" : activeConnectionInfo.status === 'pending' ? "bg-amber-500" : "bg-red-500"
+                  )} />
                 </div>
                 <p className="text-xs font-mono font-bold text-white mt-0.5">
                   {activeConnectionInfo.shopName}
@@ -902,11 +868,11 @@ const OrdersFeed = React.memo(({
             
             <div className="flex items-center justify-between sm:justify-end w-full sm:w-auto gap-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-zinc-800">
               <div className="flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-xl border border-zinc-800">
-                <Clock className={cn("w-3.5 h-3.5", activeConnectionInfo.isExpired ? "text-red-500 animate-pulse" : "text-[#f59e0b]")} />
+                <ShieldAlert className={cn("w-3.5 h-3.5", activeConnectionInfo.status === 'approved' ? "text-emerald-400" : activeConnectionInfo.status === 'pending' ? "text-[#f59e0b]" : "text-red-500")} />
                 <div className="flex flex-col">
-                  <span className="text-[8px] font-black uppercase text-zinc-500">Pass Expires In</span>
-                  <span className={cn("text-xs font-mono font-bold", activeConnectionInfo.isExpired ? "text-red-500" : "text-[#f59e0b]")}>
-                    {activeConnectionInfo.isExpired ? "EXPIRED - RENEW LINK" : `${activeConnectionInfo.hoursLeft}h ${activeConnectionInfo.minsLeft}m`}
+                  <span className="text-[8px] font-black uppercase text-zinc-500">Merchant decision</span>
+                  <span className={cn("text-xs font-mono font-bold", activeConnectionInfo.status === 'approved' ? "text-emerald-400" : activeConnectionInfo.status === 'pending' ? "text-[#f59e0b]" : "text-red-500")}>
+                    {activeConnectionInfo.status === 'approved' ? 'APPROVED / CONNECTED' : activeConnectionInfo.status === 'pending' ? 'WAITING FOR MERCHANT APPROVAL' : 'REJECTED / REVOKED'}
                   </span>
                 </div>
               </div>
@@ -1060,7 +1026,7 @@ const OrdersFeed = React.memo(({
               {!isOnline 
                 ? "CONNECTION LOST - GO ONLINE TO SEE ORDERS." 
                 : connectionCount === 0 
-                ? "NO STORES LINKED - CONNECT WITH A STORE TO START RECEIVING ORDERS." 
+                ? "NO APPROVED SHOP RELATIONSHIP - REQUEST OR WAIT FOR MERCHANT APPROVAL."
                 : "WAITING FOR NEW MISSIONS..."}
             </p>
             {!isOnline && onToggleOnline && (
@@ -1254,12 +1220,12 @@ const OrdersFeed = React.memo(({
                                  <Activity size={10} className="text-emerald-500 animate-pulse" />
                                  <span className="text-[9px] font-black text-emerald-400 uppercase tracking-tighter">
                                    {(() => {
-                                      const isAccepted = order.delivery_status === 'accepted' || order.delivery_status === 'picked_up';
+                                      const isCustomerLeg = order.delivery_status === 'picked_up' || order.delivery_status === 'delivering';
                                       let totalDist = Number(order.distance_km || 1);
-                                      
-                                      if (isAccepted && riderLat && riderLng && order.lat && order.lng) {
+
+                                      if (isCustomerLeg && riderLat && riderLng && order.lat && order.lng) {
                                         totalDist = getDistanceBetween(riderLat, riderLng, order.lat, order.lng);
-                                      } else if (!isAccepted && riderLat && riderLng && order.shop_lat && order.shop_lng && order.lat && order.lng) {
+                                      } else if (order.delivery_status === 'rider_assigned' && riderLat && riderLng && order.shop_lat && order.shop_lng && order.lat && order.lng) {
                                         totalDist = getDistanceBetween(riderLat, riderLng, order.shop_lat, order.shop_lng) + getDistanceBetween(order.shop_lat, order.shop_lng, order.lat, order.lng);
                                       }
 
@@ -1505,7 +1471,14 @@ const OrdersFeed = React.memo(({
 });
 
 const SimpleMap = ({ lat, lng, isHighContrastMode }: { lat?: number, lng?: number, isHighContrastMode?: boolean }) => {
-  const center: [number, number] = lat && lng ? [lat, lng] : [-25.9894, 28.2148];
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return (
+      <div className="w-full h-full bg-zinc-950 flex items-center justify-center text-[10px] font-black uppercase tracking-widest text-zinc-500">
+        Order coordinates unavailable
+      </div>
+    );
+  }
+  const center: [number, number] = [lat as number, lng as number];
   return (
     <div className="w-full h-full bg-zinc-950 flex items-center justify-center overflow-hidden">
        <MapboxMap 
@@ -1682,10 +1655,10 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
   const handleStartNav = useCallback((e: React.MouseEvent, provider: 'google' | 'waze' = 'google') => {
     e.stopPropagation();
     
-    const originLat = profile?.current_latitude || -25.9964; // Regional rider fallback (Tembisa)
-    const originLng = profile?.current_longitude || 28.2268;
+    const originLat = profile?.current_latitude;
+    const originLng = profile?.current_longitude;
     
-    if (!originLat || !originLng) {
+    if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) {
       toast.error('Location Unavailable', { description: 'Missing rider coordinates.' });
       return;
     }
@@ -1693,18 +1666,18 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
     let destLat: number | undefined;
     let destLng: number | undefined;
 
-    if (currentOrder?.delivery_status === 'accepted') {
-      destLat = currentOrder.shop_lat || -25.9922; // Ivory Park merchant fallback
-      destLng = currentOrder.shop_lng || 28.2045;
-    } else if (currentOrder?.delivery_status === 'picked_up') {
-      destLat = currentOrder.lat || -25.9933; // Kaalfontein customer fallback
-      destLng = currentOrder.lng || 28.2125;
+    if (currentOrder?.delivery_status === 'rider_assigned') {
+      destLat = currentOrder.shop_lat;
+      destLng = currentOrder.shop_lng;
+    } else if (currentOrder?.delivery_status === 'picked_up' || currentOrder?.delivery_status === 'delivering') {
+      destLat = currentOrder.lat;
+      destLng = currentOrder.lng;
     } else {
       toast.error('Navigation is not available for this delivery right now.');
       return;
     }
 
-    if (!destLat || !destLng) {
+    if (!Number.isFinite(destLat) || !Number.isFinite(destLng)) {
       toast.error('Location Unavailable', { description: 'Missing destination coordinates.' });
       return;
     }
@@ -1715,7 +1688,9 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
     
     // Save to Pending Route (Minimum Viable Trip filter: must be active for >2 minutes)
     try {
-      const destName = currentOrder?.delivery_status === 'accepted' ? currentOrder.restaurant_name : currentOrder?.address;
+      const destName = currentOrder?.delivery_status === 'rider_assigned'
+        ? currentOrder.restaurant_name
+        : currentOrder?.address || currentOrder?.customer_name || 'Customer drop-off';
       const pendingRoute = {
         name: destName,
         lat: destLat,
@@ -2139,8 +2114,8 @@ const ActiveMissionView = React.memo(({ orders, onUpdateStatus, onScreenTap, onS
                       : "bg-zinc-900 text-zinc-500 border-zinc-800"
                   )}
                 >
-                  <div className={cn("w-1 h-1 rounded-full", activeIndex === idx ? "bg-black" : (o.delivery_status === 'picked_up' ? "bg-emerald-500" : "bg-zinc-600"))} />
-                  {o.delivery_status === 'picked_up' ? 'DROP' : 'PICK'}
+                  <div className={cn("w-1 h-1 rounded-full", activeIndex === idx ? "bg-black" : ((o.delivery_status === 'picked_up' || o.delivery_status === 'delivering') ? "bg-emerald-500" : "bg-zinc-600"))} />
+                  {o.delivery_status === 'picked_up' || o.delivery_status === 'delivering' ? 'DROP' : 'PICK'}
                 </button>
               ))}
             </HorizontalScrollHint>
@@ -3402,9 +3377,7 @@ const SettingToggle = React.memo(({
 const ProfileView = React.memo(({ 
   profile, 
   connections, 
-  now, 
   onUpdateVehicle, 
-  onUpdateProfile,
   onLogout, 
   onPair, 
   onToggleOnline, 
@@ -3419,14 +3392,11 @@ const ProfileView = React.memo(({
   onUpdateNotificationBody,
   onShowOnboarding,
   onShowLegal,
-  onDisconnect,
   onClearCache
 }: { 
   profile: RiderProfile, 
   connections: ShopConnection[],
-  now: number,
   onUpdateVehicle: (v: UserVehicle) => void,
-  onUpdateProfile: (fields: Partial<RiderProfile>) => void,
   onLogout: () => void,
   onPair: (code?: string) => void,
   onToggleOnline: () => void,
@@ -3434,14 +3404,13 @@ const ProfileView = React.memo(({
   isEcoMode: boolean,
   onToggleEcoMode: () => void,
   isHighContrastMode: boolean,
-  onToggleHighContrastMode: boolean,
+  onToggleHighContrastMode: () => void,
   notificationTitle: string,
   onUpdateNotificationTitle: (title: string) => void,
   notificationBody: string,
   onUpdateNotificationBody: (body: string) => void,
   onShowOnboarding?: () => void,
   onShowLegal?: () => void,
-  onDisconnect?: (connectionId: string) => Promise<void>,
   onClearCache?: () => void
 }) => {
   const [cachedTileCount, setCachedTileCount] = useState<number>(0);
@@ -3569,7 +3538,7 @@ const ProfileView = React.memo(({
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const uploadingAvatar = false;
   const avatarFileRef = useRef<HTMLInputElement | null>(null);
 
   const saveSpecs = () => {
@@ -3684,22 +3653,11 @@ const ProfileView = React.memo(({
             accept="image/*"
             capture="user"
             className="hidden"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              setUploadingAvatar(true);
-              const toastId = toast.loading('Compressing photo (<200KB) & uploading avatar...');
-              try {
-                const publicUrl = await uploadRiderProfilePic(profile.id, file);
-                onUpdateProfile({ photo_url: publicUrl });
-                toast.success('Profile picture updated successfully!', { id: toastId, icon: <Check className="w-4 h-4 text-emerald-400" /> });
-              } catch (err: unknown) {
-                const msg = err instanceof Error ? err.message : 'Upload failed';
-                toast.error(`Avatar upload error: ${msg}`, { id: toastId });
-              } finally {
-                setUploadingAvatar(false);
-                if (e.target) e.target.value = '';
+            onChange={(e) => {
+              if (e.target.files?.[0]) {
+                toast.info('Profile photo saving is parked until an authoritative Rider API is available.');
               }
+              e.target.value = '';
             }}
           />
 
@@ -3756,7 +3714,7 @@ const ProfileView = React.memo(({
 
       {activeTab === 'overview' && (
         <div className="space-y-6 animate-fade-in">
-          {profile.verification_status !== 'verified' && (
+          {profile.verification_status !== 'approved' && (
             <motion.div 
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -3773,30 +3731,9 @@ const ProfileView = React.memo(({
                   </p>
                 </div>
               </div>
-              <button
-                onClick={async () => {
-                  if (profile) {
-                    onUpdateProfile({ verification_status: 'verified' });
-                    toast.success('Account instantly verified successfully!');
-                    
-                    // Also save to savedProfiles switcher local recollection so it's remembered right
-                    try {
-                      const savedProfilesStr = localStorage.getItem('localeats_saved_profiles');
-                      const savedProfiles: SavedProfile[] = savedProfilesStr ? JSON.parse(savedProfilesStr) : [];
-                      const idx = savedProfiles.findIndex(p => p.id === profile.id);
-                      if (idx > -1) {
-                        savedProfiles[idx].verification_status = 'verified';
-                        localStorage.setItem('localeats_saved_profiles', JSON.stringify(savedProfiles));
-                      }
-                    } catch (e) {
-                      console.error(e);
-                    }
-                  }
-                }}
-                className="w-full sm:w-auto px-4 py-2 bg-red-500 hover:bg-red-600 active:scale-95 text-white font-black uppercase text-[9px] tracking-widest rounded-xl transition-all shadow-md shrink-0 cursor-pointer"
-              >
-                Instant Verify
-              </button>
+              <span className="w-full sm:w-auto px-4 py-2 bg-zinc-900 text-zinc-300 border border-zinc-700 text-[9px] font-black uppercase tracking-widest rounded-xl text-center">
+                Server review required
+              </span>
             </motion.div>
           )}
 
@@ -3996,85 +3933,33 @@ const ProfileView = React.memo(({
           </BentoCard>
         ) : (
           <div className="space-y-2">
-            {connections.map(conn => {
-              const timeLeft = new Date(conn.expires_at).getTime() - now;
-              const isExpired = timeLeft <= 0;
-              const hoursLeft = Math.max(0, Math.floor(timeLeft / (1000 * 60 * 60)));
-              const minsLeft = Math.max(0, Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60)));
-              
-              return (
+            {connections.map(conn => (
                 <div 
-                  key={conn.id} 
-                  className={cn(
-                    "w-full min-h-[60px] px-4 py-3 rounded-xl flex items-center justify-between transition-colors active:bg-zinc-800 hover:bg-zinc-800/70",
-                    isExpired ? "bg-zinc-900/40 border border-red-900/30 grayscale" : "bg-zinc-900 border border-zinc-800"
-                  )}
+                  key={String(conn.id)}
+                  className="w-full min-h-[60px] px-4 py-3 rounded-xl flex items-center justify-between bg-zinc-900 border border-zinc-800"
                 >
                   <div className="flex items-center justify-start gap-3 flex-1 min-w-0">
                     <div className="flex items-center justify-center shrink-0">
-                      <Globe className={cn("w-6 h-6", isExpired ? "text-red-500" : "text-[#f59e0b]")} />
+                      <Globe className={cn("w-6 h-6", conn.status === 'approved' ? "text-emerald-400" : conn.status === 'pending' ? "text-[#f59e0b]" : "text-red-500")} />
                     </div>
                     <div className="flex flex-col items-start leading-[1.2] truncate w-full">
-                      <span className={cn(
-                        "text-[16px] font-sans font-medium tracking-normal truncate w-full",
-                        isExpired ? "text-zinc-500" : "text-white"
-                      )}>
-                        {conn.shop_name || 'Merchant ' + conn.shop_id.slice(0, 4)}
+                      <span className="text-[16px] font-sans font-medium tracking-normal truncate w-full text-white">
+                        {conn.shop.name || `Merchant ${String(conn.shop.id).slice(0, 4)}`}
                       </span>
                       <div className="flex items-center gap-2 mt-0.5">
-                         <span className={cn(
-                           "text-[13px] font-sans tracking-normal",
-                           isExpired ? "text-red-500/80" : "text-zinc-400"
-                         )}>
-                           {isExpired ? 'Link needs renewal' : 'Store link active'}
+                         <span className={cn("text-[13px] font-sans tracking-normal", conn.status === 'approved' ? "text-emerald-400" : conn.status === 'pending' ? "text-amber-400" : "text-red-400")}>
+                           {conn.status === 'approved' ? 'Approved / Connected' : conn.status === 'pending' ? 'Waiting for merchant approval' : 'Rejected / Revoked'}
                          </span>
-                         {isExpired && (
-                           <button 
-                             onClick={() => {
-                               onPair(conn.connection_code);
-                               if (navigator.vibrate) navigator.vibrate(50);
-                             }}
-                             className="text-[11px] font-sans font-medium text-red-400 bg-red-400/10 px-2 py-0.5 rounded animate-pulse"
-                           >
-                             Renew
-                           </button>
-                         )}
                       </div>
                     </div>
                   </div>
-                  <div className="text-right flex items-center gap-3 pl-3 shrink-0">
-                    <div className="flex flex-col items-end leading-tight">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-zinc-500">
-                        {isExpired ? 'Link Expired' : 'Time Remaining'}
-                      </span>
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <Clock className={cn("w-3 h-3", isExpired ? "text-red-500 animate-pulse" : "text-[#f59e0b]")} />
-                        <span className={cn(
-                          "text-xs font-mono font-bold tracking-tight",
-                          isExpired ? "text-red-500" : "text-[#f59e0b]"
-                        )}>
-                          {isExpired ? '0h 0m' : `${hoursLeft}h ${minsLeft}m`}
-                        </span>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (window.confirm("Are you sure you want to disconnect from this store?")) {
-                          if (onDisconnect) {
-                            await onDisconnect(conn.id);
-                          }
-                        }
-                      }}
-                      className="p-1 hover:bg-red-500/10 text-red-500/70 hover:text-red-500 rounded-lg transition-colors"
-                      title="Disconnect Store"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                  <div className="text-right pl-3 shrink-0">
+                    <span className="text-[9px] font-black uppercase tracking-wider text-zinc-500">Requested</span>
+                    <p className="text-[10px] text-zinc-400">{new Date(conn.created_at).toLocaleDateString('en-ZA')}</p>
                   </div>
                 </div>
-              );
-            })}
+            ))}
+            <p className="px-1 text-[10px] text-zinc-600">Merchant controls revocation during the pilot.</p>
           </div>
         )}
       </section>
@@ -4365,7 +4250,11 @@ const ProfileView = React.memo(({
                     <button
                       onClick={() => {
                         if (customSectorInput.trim()) {
-                          downloadSectorTiles(customSectorInput, profile.current_latitude || -25.9964, profile.current_longitude || 28.2268);
+                          if (profile.current_latitude == null || profile.current_longitude == null) {
+                            toast.error('Location unavailable', { description: 'Enable device location before caching a custom sector.' });
+                            return;
+                          }
+                          downloadSectorTiles(customSectorInput, profile.current_latitude, profile.current_longitude);
                           setCustomSectorInput('');
                         }
                       }}
@@ -4994,14 +4883,11 @@ const OrderTrackingScreen = ({ orderId, onBack, isHighContrastMode, riderId }: {
 const PairingView = ({ 
   onBack, 
   onComplete, 
-  connections = [], 
-  onDisconnect 
+  connections = []
 }: { 
   onBack: () => void, 
   onComplete: (code: string) => Promise<void>,
-  connections?: ShopConnection[],
-  now?: number,
-  onDisconnect?: (id?: string) => Promise<void>
+  connections?: ShopConnection[]
 }) => {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -5010,9 +4896,9 @@ const PairingView = ({
   const activeConn = connections && connections.length > 0 ? connections[0] : null;
 
   const handlePair = async () => {
-    const cleanCode = code.trim().toUpperCase();
-    if (!cleanCode) {
-      toast.error('Please enter a shop pairing code');
+    const cleanCode = code.trim();
+    if (!/^\d{6}$/.test(cleanCode)) {
+      toast.error('Enter the six-digit code from the merchant.');
       return;
     }
     setLoading(true);
@@ -5048,7 +4934,11 @@ const PairingView = ({
   };
 
   const handleScan = useCallback(async (scannedCode: string) => {
-    if (!scannedCode) return;
+    const cleanCode = scannedCode.trim();
+    if (!/^\d{6}$/.test(cleanCode)) {
+      toast.error('The scanned pairing code must contain exactly six digits.');
+      return;
+    }
     setShowScanner(false);
     setLoading(true);
     const safetyTimer = setTimeout(() => {
@@ -5056,7 +4946,7 @@ const PairingView = ({
     }, 5000);
 
     try {
-      await onComplete(scannedCode.trim().toUpperCase());
+      await onComplete(cleanCode);
     } catch (err) {
       console.error("Scan Error", err);
       const msg = err instanceof Error ? err.message : 'Connection failed.';
@@ -5109,19 +4999,19 @@ const PairingView = ({
         </div>
 
         {activeConn && (
-          <div className="mb-8 bg-gradient-to-r from-zinc-900 to-black border border-emerald-500/40 rounded-3xl p-5 shadow-[0_0_25px_rgba(16,185,129,0.15)] relative overflow-hidden">
+          <div className="mb-8 bg-gradient-to-r from-zinc-900 to-black border border-zinc-700 rounded-3xl p-5 relative overflow-hidden">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3.5">
                 <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                   <Globe className="w-6 h-6 animate-pulse" />
                 </div>
                 <div>
-                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-emerald-400 block">Currently Linked Store</span>
+                  <span className="text-[9px] font-black uppercase tracking-[0.2em] text-[#f59e0b] block">Merchant relationship</span>
                   <h3 className="text-lg font-black italic uppercase text-white tracking-wide">
-                    {activeConn.shop_name || 'Merchant Store'}
+                    {activeConn.shop.name || 'Merchant Store'}
                   </h3>
                   <p className="text-xs font-mono text-zinc-400 mt-0.5">
-                    Shop ID: <span className="text-zinc-200 font-bold">{activeConn.shop_id || 's1'}</span> • Code: <span className="text-[#f59e0b] font-bold">{activeConn.connection_code || 'LOCAL1'}</span>
+                    Shop ID: <span className="text-zinc-200 font-bold">{activeConn.shop.id}</span> • Requested {new Date(activeConn.created_at).toLocaleDateString()}
                   </p>
                 </div>
               </div>
@@ -5129,20 +5019,15 @@ const PairingView = ({
               <div className="flex items-center justify-between sm:justify-end gap-3 bg-black/60 p-3 rounded-2xl border border-zinc-800">
                 <div className="text-right">
                   <span className="text-[8px] font-black uppercase text-zinc-500 tracking-wider">Status</span>
-                  <div className="text-xs font-mono font-bold text-emerald-400 flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>ACTIVE LINK</span>
+                  <div className={cn(
+                    "text-xs font-mono font-bold flex items-center gap-1.5",
+                    activeConn.status === 'approved' ? "text-emerald-400" : activeConn.status === 'pending' ? "text-amber-400" : "text-red-400"
+                  )}>
+                    <span className="w-2 h-2 rounded-full bg-current" />
+                    <span>{activeConn.status === 'approved' ? 'APPROVED / CONNECTED' : activeConn.status === 'pending' ? 'WAITING FOR MERCHANT APPROVAL' : 'REJECTED / REVOKED'}</span>
                   </div>
+                  <p className="mt-1 text-[8px] text-zinc-500">Merchant controls revocation during the pilot.</p>
                 </div>
-                {onDisconnect && (
-                  <button
-                    type="button"
-                    onClick={() => onDisconnect(activeConn.id)}
-                    className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-black uppercase rounded-xl transition-all active:scale-95"
-                  >
-                    Unlink
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -5179,22 +5064,22 @@ const PairingView = ({
             <div className="flex gap-2">
               <input 
                 type="text" 
-                maxLength={12}
+                maxLength={6}
                 value={code}
                 disabled={loading}
-                onChange={(e) => setCode(e.target.value.replace(/[^A-Za-z0-9-]/g, '').toUpperCase())}
-                placeholder="e.g. LE-8921 or 8921"
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="123456"
                 className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-4 text-xl sm:text-2xl font-mono font-bold tracking-widest text-center text-white outline-none focus:border-[#f59e0b] transition-all placeholder:tracking-normal placeholder:text-zinc-600 placeholder:text-sm"
               />
               <button 
                 onClick={handlePair}
-                disabled={loading || !code.trim()}
+                disabled={loading || !/^\d{6}$/.test(code)}
                 className="px-6 py-4 bg-[#f59e0b] text-black rounded-xl font-black uppercase tracking-widest disabled:opacity-50 hover:bg-amber-400 active:scale-95 transition-all"
               >
-                {loading ? '...' : 'LINK'}
+                {loading ? '...' : 'REQUEST'}
               </button>
             </div>
-            <p className="mt-4 text-[9px] text-zinc-500 font-bold uppercase text-center leading-tight">Enter the shop pairing code provided by the merchant (e.g. LE-8921).</p>
+            <p className="mt-4 text-[9px] text-zinc-500 font-bold uppercase text-center leading-tight">Enter the six-digit code from the merchant. The request remains pending until the merchant approves it.</p>
           </div>
         </div>
       </div>
@@ -5273,9 +5158,16 @@ const refHolder = {
   establishRealtimeChannels: () => {}
 };
 
+// The legacy visual dispatch simulator is compiled out of production builds and
+// never participates in API-backed rider authority or delivery mutations.
+const allowVisualSimulator = import.meta.env.DEV;
+
 export function App() {
   const [user, setUser] = useState<User | null>(null);
+  const firebaseUidRef = useRef<string | null>(null);
   const [profile, setProfile] = useState<RiderProfile | null>(null);
+  const [profileMissing, setProfileMissing] = useState(false);
+  const [profileLoadError, setProfileLoadError] = useState<string | null>(null);
   const profileRef = useRef<RiderProfile | null>(null);
   useEffect(() => {
     profileRef.current = profile;
@@ -5296,6 +5188,7 @@ export function App() {
   // --- LocalEats Simulator State ---
   const [simulatedOrders, setSimulatedOrders] = useState<DeliveryOrder[]>([]);
   const [dispatchLog, setDispatchLog] = useState<string[]>(() => {
+    if (!allowVisualSimulator) return [];
     const saved = localStorage.getItem('localeats_dispatch_log');
     return saved ? JSON.parse(saved) : ["System Backend initialized. Ready to process Kota and Braai orders..."];
   });
@@ -5304,23 +5197,28 @@ export function App() {
     rider1Timer: number;
     rider2Timer: number;
   }>>(() => {
+    if (!allowVisualSimulator) return {};
     const saved = localStorage.getItem('localeats_dispatch_state');
     return saved ? JSON.parse(saved) : {};
   });
 
   useEffect(() => {
+    if (!allowVisualSimulator) return;
     localStorage.setItem('localeats_sim_orders', JSON.stringify(simulatedOrders));
   }, [simulatedOrders]);
 
   useEffect(() => {
+    if (!allowVisualSimulator) return;
     localStorage.setItem('localeats_dispatch_log', JSON.stringify(dispatchLog));
   }, [dispatchLog]);
 
   useEffect(() => {
+    if (!allowVisualSimulator) return;
     localStorage.setItem('localeats_dispatch_state', JSON.stringify(dispatchState));
   }, [dispatchState]);
 
   useEffect(() => {
+    if (!allowVisualSimulator) return;
     const interval = setInterval(() => {
       let changed = false;
       const newLogs: string[] = [];
@@ -5336,7 +5234,7 @@ export function App() {
             newLogs.push(`[${new Date().toLocaleTimeString()}] Private driver accepted. Merchant chef triggers meal preparation!`);
             return {
               ...order,
-              delivery_status: 'accepted' as const,
+              delivery_status: 'rider_assigned' as const,
               status: 'preparing' as const,
               rider_name: 'In-House Driver',
               rider_phone: '+27 11 000 0000',
@@ -5434,7 +5332,7 @@ export function App() {
 
             return {
               ...order,
-              delivery_status: 'accepted' as const,
+              delivery_status: 'rider_assigned' as const,
               status: 'preparing' as const,
               rider_id: 'mock-rider-sipho',
               rider_name: 'Sipho (Scooter)',
@@ -5669,49 +5567,9 @@ export function App() {
   });
 
   const visibleAvailableOrders = useMemo(() => {
-    const combined = availableOrders;
     const activeIds = new Set(activeOrders.map(a => a.id));
-    const unexpiredConnections = connections.filter(c => new Date(c.expires_at) > new Date());
-    const activeShopIds = unexpiredConnections.map(c => c.shop_id);
-    const activeShopNames = unexpiredConnections
-      .map(c => (c.shop_name || '').toLowerCase())
-      .filter(Boolean);
-
-    const riderLat = profile?.current_latitude || -25.9964;
-    const riderLng = profile?.current_longitude || 28.2268;
-
-    return combined.filter(o => {
-      const isActive = activeIds.has(o.id);
-      const isPotential = o.delivery_status === 'potential';
-      const orderShopName = (o.restaurant_name || '').toLowerCase();
-      const isLinked = activeShopIds.includes(o.shop_id) || (orderShopName !== '' && activeShopNames.some(name => name !== '' && orderShopName.includes(name)));
-      const isExternal = o.allow_external_riders === true || o.dispatch_to_marketplace === true;
-
-      const shopLat = o.shop_lat || o.lat || -25.9922;
-      const shopLng = o.shop_lng || o.lng || 28.2045;
-      const pickupDistanceKm = getDistanceBetween(riderLat, riderLng, shopLat, shopLng);
-
-      let isIncluded = true;
-
-      if (isActive) {
-        isIncluded = false;
-      } else if (isPotential) {
-        isIncluded = false;
-      } else if (pickupDistanceKm > 5.0) {
-        isIncluded = false;
-      } else if (activeShopIds.length > 0) {
-        if (!isLinked) {
-          isIncluded = false;
-        }
-      } else {
-        if (!isExternal) {
-          isIncluded = false;
-        }
-      }
-
-      return isIncluded;
-    });
-  }, [availableOrders, activeOrders, connections, profile?.current_latitude, profile?.current_longitude]);
+    return availableOrders.filter(order => !activeIds.has(order.id));
+  }, [availableOrders, activeOrders]);
 
   const pendingOverlayOrder = useMemo(() => {
     return visibleAvailableOrders.find(o => !declinedOrderIds.includes(o.id));
@@ -5903,201 +5761,41 @@ export function App() {
     if (!user || isFetchingProfileRef.current) return;
     isFetchingProfileRef.current = true;
     addBootLog('INIT PROTOCOL: PROFILE_SYNC');
+    setProfileLoadError(null);
     try {
-      if (isSupabaseMocked()) {
-        addBootLog('DEBUG: USING_LOCAL_SIMULATOR');
-        
-        const metadata = user.user_metadata || {};
-        const savedProfilesStr = localStorage.getItem('localeats_saved_profiles');
-        const savedProfiles: SavedProfile[] = savedProfilesStr ? JSON.parse(savedProfilesStr) : [];
-        const savedProfile = savedProfiles.find(p => p.id === user.id);
-
-        setProfile({
-          id: user.id,
-          name: savedProfile?.name || metadata.full_name?.split(' ')[0]?.toLowerCase() || user.email?.split('@')[0] || 'elite_rider',
-          full_name: savedProfile?.full_name || metadata.full_name || 'Tata Rider',
-          phone: savedProfile?.phone || metadata.phone || '+27 83 456 7890',
-          is_online: true,
-          status: 'online',
-          vehicle_type: (savedProfile?.vehicle_type || metadata.vehicle_type || 'Road') as UserVehicle,
-          verification_status: 'verified',
-          rating: savedProfile?.rating || 4.8,
-          total_earnings: savedProfile?.total_earnings || 1250,
-          total_deliveries: savedProfile?.total_deliveries || 42,
-          active_points: savedProfile?.active_points || 156,
-          updated_at: new Date().toISOString()
-        } as unknown as RiderProfile);
-        setLoading(false);
-        return;
-      }
-      
-      addBootLog('FETCH: RIDER_TELEMETRY...');
-      const { data, error } = await fetchWithRetry<{ data: RiderProfile | null; error: { code: string; message: string } | null }>(async () => {
-        const res = await getSupabase()
-          .from('rider_profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-        return res as { data: RiderProfile | null; error: { code: string; message: string } | null };
-      }, 2, 1000, 8000); // 2 retries, 8s timeout to protect from hanging DB
-
-      if (error && error.code === 'PGRST116') {
-        addBootLog('WARN: NO_PROFILE - INITIALIZING...');
-        // Build initial profile
-        const newProfile: Partial<RiderProfile> = {
-          id: user.id,
-          name: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Rider',
-          full_name: user.user_metadata?.full_name || user.user_metadata?.name || '',
-          phone: user.user_metadata?.phone || '',
-          is_online: false,
-          status: 'offline',
-          vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
-          verification_status: 'verified',
-          rating: 5.0,
-          total_earnings: 0,
-          total_deliveries: 0,
-          active_points: 0,
-          current_latitude: -25.9864,
-          current_longitude: 28.2198,
-          updated_at: new Date().toISOString()
-        };
-        const { data: created, error: insertError } = await fetchWithRetry(async () => {
-          return await getSupabase().from('rider_profiles').upsert(newProfile).select().single();
-        }, 2, 1000, 8000); // Fail-safe 8s timeout on upsert
-        if (created) {
-          addBootLog('SYNC: NEW_PROFILE_READY');
-          setProfile(created as RiderProfile);
-          // If profile created, and not seen in localStorage, show it
-          if (localStorage.getItem('localeats_onboarding_seen') !== 'true') {
-            setShowOnboarding(true);
+      const authoritativeProfile = await getRiderProfile();
+      const serverProfile = mapAccessProfile(authoritativeProfile);
+      setProfile(current => current?.current_latitude != null && current.current_longitude != null
+        ? {
+            ...serverProfile,
+            current_latitude: current.current_latitude,
+            current_longitude: current.current_longitude,
           }
-        }
-        if (insertError) {
-          addBootLog('ERR: PROFILE_INIT_FAIL - ENGAGING INTERN PROTOCOL');
-          const fallbackProfile: RiderProfile = {
-            id: user.id,
-            name: user.email?.split('@')[0] || 'elite_rider',
-            full_name: user.user_metadata?.full_name || 'VIP Rider',
-            phone: user.user_metadata?.phone || '+27 83 123 4567',
-            is_online: true,
-            status: 'online',
-            vehicle_type: 'Road',
-            verification_status: 'verified',
-            rating: 5.0,
-            total_earnings: 1250,
-            total_deliveries: 42,
-            active_points: 156,
-            current_latitude: -25.9964,
-            current_longitude: 28.2268,
-            updated_at: new Date().toISOString()
-          } as unknown as RiderProfile;
-          setProfile(fallbackProfile);
-        }
-      } else if (data) {
-        addBootLog('SYNC: TELEMETRY_COMPLETE');
-        const sanitizedData = { ...data };
-        // Fallback for null coordinates to prevent Inter-City routing errors (Default: Region Center)
-        if (!sanitizedData.current_latitude) sanitizedData.current_latitude = -25.9964;
-        if (!sanitizedData.current_longitude) sanitizedData.current_longitude = 28.2268;
-        
-        // Auto-verify rider account on load to prevent roadblock
-        // Removed insecure client-controlled verification_status update
-        
-        setProfile(sanitizedData as RiderProfile);
-        if (!data.onboarding_complete && localStorage.getItem('localeats_onboarding_seen') !== 'true') {
-          setShowOnboarding(true);
-        } else if (data.onboarding_complete) {
-          // Sync localStorage if DB says we are done
-          localStorage.setItem('localeats_onboarding_seen', 'true');
-          setShowOnboarding(false);
-        }
-      } else if (error) {
-        addBootLog('ERR: PROFILE_FETCH_FAILED - USING_AUTH_METADATA');
-        const fallbackProfile: RiderProfile = {
-          id: user.id,
-          name: user.email?.split('@')[0] || 'rider',
-          full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Local Rider',
-          phone: user.user_metadata?.phone || '',
-          is_online: true,
-          status: 'online',
-          vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
-          verification_status: 'verified',
-          rating: 5.0,
-          total_earnings: 0,
-          total_deliveries: 0,
-          active_points: 0,
-          current_latitude: -25.9964,
-          current_longitude: 28.2268,
-          updated_at: new Date().toISOString()
-        } as unknown as RiderProfile;
-        setProfile(fallbackProfile);
+        : serverProfile);
+      setProfileMissing(false);
+      if (localStorage.getItem('localeats_onboarding_seen') !== 'true') setShowOnboarding(true);
+    } catch (error) {
+      setProfile(null);
+      if (error instanceof RiderAccessError && error.status === 404) {
+        setProfileMissing(true);
+      } else {
+        setProfileMissing(false);
+        setProfileLoadError(error instanceof Error ? error.message : 'Unable to load your rider profile.');
       }
-    } catch (e: unknown) {
-      const errMessage = e instanceof Error ? e.message : 'Unknown error';
-      addBootLog(`WARN: DB_OFFLINE (${errMessage})`);
-      const fallbackProfile: RiderProfile = {
-        id: user.id,
-        name: user.email?.split('@')[0] || 'rider',
-        full_name: user.user_metadata?.full_name || user.user_metadata?.name || 'Local Rider',
-        phone: user.user_metadata?.phone || '',
-        is_online: true,
-        status: 'online',
-        vehicle_type: (user.user_metadata?.vehicle_type as UserVehicle) || 'Road',
-        verification_status: 'verified',
-        rating: 5.0,
-        total_earnings: 0,
-        total_deliveries: 0,
-        active_points: 0,
-        current_latitude: -25.9964,
-        current_longitude: 28.2268,
-        updated_at: new Date().toISOString()
-      } as unknown as RiderProfile;
-      setProfile(fallbackProfile);
     } finally {
       isFetchingProfileRef.current = false;
       setLoading(false);
-      setProfile(prev => {
-        if (prev) return prev;
-        return {
-          id: user.id,
-          name: user.email?.split('@')[0] || 'rider',
-          full_name: user.user_metadata?.full_name || 'Local Rider',
-          phone: user.user_metadata?.phone || '',
-          is_online: true,
-          status: 'online',
-          vehicle_type: 'Road',
-          verification_status: 'verified',
-          rating: 5.0,
-          total_earnings: 0,
-          total_deliveries: 0,
-          active_points: 0,
-          current_latitude: -25.9964,
-          current_longitude: 28.2268,
-          updated_at: new Date().toISOString()
-        } as unknown as RiderProfile;
-      });
     }
   }, [user]);
 
   const isFetchingConnRef = useRef(false);
 
   const runConnectionDiagnostics = useCallback(async () => {
-    if (!user) {
-      return [];
-    }
+    if (!user) return [];
     try {
-      const { data, error } = await getSupabase()
-        .from('rider_connections')
-        .select('*')
-        .eq('rider_id', user.id);
-
-      if (error) {
-        console.error('[runConnectionDiagnostics] Database query error:', error);
-        return [];
-      }
-      return data || [];
-    } catch (err) {
-      console.error('[runConnectionDiagnostics] Exception during query execution:', err);
+      return await getRiderConnections();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to refresh shop connections.');
       return [];
     }
   }, [user]);
@@ -6167,89 +5865,6 @@ export function App() {
       icon: <Zap className="w-4 h-4 text-[#39FF14]" />
     });
   }, [runConnectionDiagnostics, fetchConnectionsAndOrders, setAvailableOrders, setSimulatedOrders, setDeclinedOrderIds]);
-
-  const invalidatePairing = useCallback(async (connectionId?: string) => {
-    try {
-      if (connectionId) {
-        setConnections(prev => prev.filter(c => c.id !== connectionId));
-      } else {
-        setConnections([]);
-      }
-
-      if (isSupabaseMocked()) {
-        localStorage.removeItem('localeats_mock_paired_code');
-        const keysToRemove = [
-          'localeats_merchant_allow_external',
-          'localeats_merchant_cash_trust',
-          'localeats_merchant_auto_look',
-          'localeats_dispatch_to_marketplace'
-        ];
-        keysToRemove.forEach(k => localStorage.removeItem(k));
-        setAvailableOrders([]);
-        toast.success("Disconnected and keys purged from local storage.");
-        return;
-      }
-
-      if (connectionId) {
-        // Disconnect a specific connection
-        const { error } = await fetchWithRetry(async () => {
-          return await getSupabase()
-            .from('rider_connections')
-            .update({
-              rider_id: null,
-              status: 'disconnected',
-              expires_at: new Date(0).toISOString(),
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', connectionId)
-            .eq('rider_id', user?.id);
-        }, 2, 1000, 5000);
-
-        if (error) {
-          console.error("Error disconnecting connection:", error);
-          toast.error("Failed to disconnect store on backend.");
-          return;
-        }
-      } else {
-        // Disconnect all connections for this rider
-        if (user?.id) {
-          const { error } = await fetchWithRetry(async () => {
-            return await getSupabase()
-              .from('rider_connections')
-              .update({
-                rider_id: null,
-                status: 'disconnected',
-                expires_at: new Date(0).toISOString(),
-                updated_at: new Date().toISOString()
-              })
-              .eq('rider_id', user.id);
-          }, 2, 1000, 5000);
-
-          if (error) {
-            console.error("Error disconnecting all connections:", error);
-          }
-        }
-      }
-
-      // Nuke cached keys/tokens from localStorage
-      const keysToRemove = [
-        'localeats_mock_paired_code',
-        'localeats_mock_paired_expiry',
-        'localeats_merchant_allow_external',
-        'localeats_merchant_cash_trust',
-        'localeats_merchant_auto_look',
-        'localeats_dispatch_to_marketplace'
-      ];
-      keysToRemove.forEach(k => localStorage.removeItem(k));
-
-      // Refresh connections and orders
-      await fetchConnectionsAndOrders();
-      toast.success("Disconnected successfully.");
-    } catch (e) {
-      console.error("Error in invalidatePairing:", e);
-      toast.error("An error occurred while unpairing.");
-    }
-  }, [user, fetchConnectionsAndOrders, setAvailableOrders]);
 
   const fetchActiveOrdersAndHistory = useCallback(async () => {
     if (!user) return;
@@ -6377,23 +5992,6 @@ export function App() {
         return;
       }
       
-      const latest = queue[queue.length - 1];
-      try {
-        const { error: profileError } = await fetchWithRetry(async () => {
-          return await getSupabase()
-            .from('rider_profiles')
-            .update({ 
-              current_latitude: latest.lat, 
-              current_longitude: latest.lng, 
-              updated_at: new Date().toISOString() 
-            })
-            .eq('id', user.id);
-        }, 2, 1000, 5000);
-        if (profileError) throw profileError;
-      } catch (err) {
-        console.warn('Rider profile status sync postponed:', err);
-      }
-      
       const remainingQueue = [...queue];
       
       for (const item of queue) {
@@ -6457,7 +6055,7 @@ export function App() {
     console.warn('Legacy offline order actions were preserved for review and were not sent to the server.');
   }, []);
   useEffect(() => {
-    if (!user || !profile?.is_online || activeOrders.length === 0) return;
+    if (!user || !profile?.is_online) return;
 
     let watchId: number | null = null;
 
@@ -6564,36 +6162,16 @@ export function App() {
         if (isSupabaseMocked()) {
           return;
         }
-        // Strict Isolation: Only transmit GPS coordinates if actively connected to at least one unexpired store connection
-        const hasActiveConnection = connections.some(c => new Date(c.expires_at) > new Date());
+        // Telemetry is separate from profile authority and requires an approved shop relationship.
+        const hasActiveConnection = connections.some(connection => connection.status === 'approved');
         if (!hasActiveConnection) {
-          // console.warn('GPS_ABORT...');
           return;
         }
-        // Update master profile telemetry with explicit payload fields (id, lat, lng, last_online_at)
-        try {
-          await fetchWithRetry(async () => {
-            return await getSupabase()
-              .from('rider_profiles')
-              .update({ 
-                id: user.id,
-                current_latitude: lat, 
-                current_longitude: lng, 
-                lat,
-                lng,
-                last_online_at: new Date().toISOString(),
-                updated_at: new Date().toISOString() 
-              })
-              .eq('id', user.id);
-          }, 1, 1000, 3000);
-        } catch {
-          /* ignore profile update error */
-        }
 
-        // Share real-time vector with customers for picked_up missions
-        const pickedUpOrders = activeOrders.filter(o => o.delivery_status === 'picked_up');
-        if (pickedUpOrders.length > 0) {
-          const locationPushes = pickedUpOrders.map(async (order) => {
+        // Share real-time vector only while travelling to the customer.
+        const customerTravelOrders = activeOrders.filter(o => o.delivery_status === 'picked_up' || o.delivery_status === 'delivering');
+        if (customerTravelOrders.length > 0) {
+          const locationPushes = customerTravelOrders.map(async (order) => {
             return getSupabase()
               .from('rider_locations')
               .insert({
@@ -6623,7 +6201,7 @@ export function App() {
           const queue = queueStr ? JSON.parse(queueStr) : [];
           queue.push({
             lat, lng, heading, speed, captured_at, is_mocked, suspicious,
-            orders: activeOrders.filter(o => o.delivery_status === 'picked_up').map(o => o.id)
+            orders: activeOrders.filter(o => o.delivery_status === 'picked_up' || o.delivery_status === 'delivering').map(o => o.id)
           });
           if (queue.length > 50) queue.shift();
           localStorage.setItem('loc_sync_queue', JSON.stringify(queue));
@@ -6652,7 +6230,6 @@ export function App() {
       warnAboutLegacyOrderQueue();
     };
 
-    let fallbackIntervalId: NodeJS.Timeout | null = null;
     let gpsRetryTimeoutId: NodeJS.Timeout | null = null;
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -6670,11 +6247,6 @@ export function App() {
 
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
-          if (fallbackIntervalId) {
-            clearInterval(fallbackIntervalId);
-            fallbackIntervalId = null;
-            addBootLog('GPS_LOCK: Live satellite connection recovered.');
-          }
           updateLocation(pos).catch(err => console.warn('Telemetry stream update error:', err));
         },
         (err) => {
@@ -6683,7 +6255,7 @@ export function App() {
              const _isSysOffline = !navigator.onLine;
              const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
              if (!_isSysOffline && !_isSimOffline) {
-               toast.error('Location permission denied. Operating on mock coordinates.', { id: 'gps-error' });
+               toast.error('Location permission denied. Live location is unavailable.', { id: 'gps-error' });
              }
           } else if (err.code === 2) { // Position Unavailable
              addBootLog('SIGNAL_LOST: HIGH_DENSITY_INTERFERENCE');
@@ -6692,35 +6264,6 @@ export function App() {
              addBootLog('GPS_TIMEOUT: RECALIBRATING...');
           }
           
-          // Regional Fallback if NO initial position found (Kopanong Shopping Centre Centerpoint)
-          const startLat = profile?.current_latitude || -25.9964; 
-          const startLng = profile?.current_longitude || 28.2268;
-          updateLocation({ coords: { latitude: startLat, longitude: startLng, accuracy: 50 }, timestamp: Date.now(), isFallback: true })
-            .catch(err => console.warn('GPS signal failure fallback location error:', err));
-
-          // Establish a high-fidelity real-time simulation interval to continuously supply movement vectors
-          if (!fallbackIntervalId) {
-            const curLat = startLat;
-            const curLng = startLng;
-            const angle = Math.random() * Math.PI * 2;
-            
-            fallbackIntervalId = setInterval(() => {
-              // Drift disabled to prevent the app from "controlling itself"
-              // Only slightly jitter accuracy to simulate GPS polling
-              updateLocation({
-                coords: { 
-                  latitude: curLat, 
-                  longitude: curLng, 
-                  accuracy: 10 + Math.random() * 5,
-                  heading: (angle * 180) / Math.PI,
-                  speed: 0 
-                }, 
-                timestamp: Date.now(), 
-                isFallback: true 
-              }).catch(err => console.warn('Simulation vector update error:', err));
-            }, isEcoMode ? 15000 : 6000); // Trigger a location tick every 15s in battery saver mode or 6s in performance mode
-          }
-
           // Schedule a auto-retry to re-acquire high-accuracy satellite signals after 30 seconds
           if (err.code !== 1 && !gpsRetryTimeoutId) {
             gpsRetryTimeoutId = setTimeout(() => {
@@ -6745,7 +6288,6 @@ export function App() {
 
     return () => {
       if (watchId) navigator.geolocation.clearWatch(watchId);
-      if (fallbackIntervalId) clearInterval(fallbackIntervalId);
       if (gpsRetryTimeoutId) clearTimeout(gpsRetryTimeoutId);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('online', handleOnline);
@@ -6769,58 +6311,46 @@ export function App() {
     }, 3000); // Fast 3s safety timeout per integration rules
 
     try {
-      if (isSupabaseMocked()) {
-        setTimeout(() => {
-          addBootLog('AUTH: MOCKED_MODE_ACTIVE');
-          setLoading(false);
-          clearTimeout(bootTimeout);
-        }, 0);
-        return () => clearTimeout(bootTimeout);
-      }
+      const app = getFirebaseApp();
+      if (!app) throw new Error('Firebase authentication is unavailable.');
+      const unsubscribe = onAuthStateChanged(getAuth(app), (firebaseUser) => {
+        const nextFirebaseUid = firebaseUser?.uid ?? null;
+        const identityChanged = firebaseUidRef.current !== nextFirebaseUid;
+        firebaseUidRef.current = nextFirebaseUid;
 
-      promiseWithTimeout(getSupabase().auth.getSession(), 3000).then(({ data, error }) => {
-        if (error) {
-          const msg = error.message || '';
-          if (msg.includes('Refresh Token') || msg.includes('refresh_token') || msg.includes('token_not_found') || msg.includes('Invalid Refresh Token')) {
-            addBootLog('ERR: INVALID_REFRESH_TOKEN - RESETTING LOCAL SESSION');
-            clearStaleAuthTokens();
-          }
+        if (identityChanged) {
+          setProfile(null);
+          setProfileMissing(false);
+          setProfileLoadError(null);
+          setConnections([]);
+          setAvailableOrders([]);
+          setActiveOrders([]);
+          setHistory([]);
+          setDeclinedOrderIds([]);
+          setLoading(Boolean(firebaseUser));
         }
-        const session = data?.session ?? null;
-        addBootLog(session ? 'AUTH: SESSION_RESTORED' : 'AUTH: NO_SESSION_DETECTED');
-        if (session) {
-          addBootLog('INITIALIZING TACTICAL OVERLAY');
-          addBootLog('CALIBRATING GEOLOCALIZATION VECTORS');
-          addBootLog('ESTABLISHING ENCRYPTED UPLINK');
-        }
-        setUser(session?.user ?? null);
-        if (!session) {
+
+        setUser(firebaseUser ? mapFirebaseUser(firebaseUser) : null);
+        if (!firebaseUser) {
           setLoading(false);
-          clearTimeout(bootTimeout);
         }
-      }).catch((err) => {
-        addBootLog('ERR: AUTH_FETCH_FAILED');
-        const msg = getErrorMessage(err, '');
-        const lowerMsg = msg.toLowerCase();
-        if (lowerMsg.includes('refresh token') || lowerMsg.includes('refresh_token') || lowerMsg.includes('token_not_found') || lowerMsg.includes('jwt expired')) {
-          clearStaleAuthTokens();
-        }
+        clearTimeout(bootTimeout);
+      }, () => {
+        firebaseUidRef.current = null;
         setUser(null);
+        setProfile(null);
+        setProfileMissing(false);
+        setProfileLoadError(null);
+        setConnections([]);
+        setAvailableOrders([]);
+        setActiveOrders([]);
+        setHistory([]);
+        setDeclinedOrderIds([]);
         setLoading(false);
         clearTimeout(bootTimeout);
       });
-
-      const { data: { subscription } } = getSupabase().auth.onAuthStateChange((_event, session) => {
-        addBootLog(`EVENT: ${_event.toUpperCase()}`);
-        setUser(session?.user ?? null);
-        if (!session) {
-          setProfile(null);
-          setLoading(false);
-        }
-      });
-
       return () => {
-        subscription.unsubscribe();
+        unsubscribe();
         clearTimeout(bootTimeout);
       };
     } catch {
@@ -6848,38 +6378,8 @@ export function App() {
   const establishRealtimeChannels = useCallback(() => {
     if (!user || isSupabaseMocked()) return;
 
-    // Protocol: Profile Synchronization
-    if (!channelsRef.current['profile']) {
-      channelsRef.current['profile'] = getFreshChannel(`profile:${user.id}`)
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'rider_profiles', 
-          filter: `id=eq.${user.id}` 
-        }, (payload) => {
-          if (payload.new && typeof payload.new === 'object' && 'id' in payload.new) {
-            setProfile(payload.new as RiderProfile);
-          }
-        })
-        .subscribe();
-    }
-
     // Available missions are loaded only from the authoritative LocalEats API.
     // A short poll below replaces the legacy frontend database listener.
-
-    // Protocol: Relay Connections
-    if (!channelsRef.current['connections']) {
-      channelsRef.current['connections'] = getFreshChannel(`rider_connections:${user.id}`)
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'rider_connections', 
-          filter: `rider_id=eq.${user.id}` 
-        }, () => {
-          refHolder.fetchConnectionsAndOrders();
-        })
-        .subscribe();
-    }
 
     // Protocol: Active Mission Directives
     if (!channelsRef.current['active_orders']) {
@@ -6899,7 +6399,7 @@ export function App() {
                    copy[exists] = { ...copy[exists], ...updatedOrder };
                    return copy;
                 }
-                if (updatedOrder.delivery_status === 'accepted' || updatedOrder.delivery_status === 'picked_up') {
+                if (updatedOrder.delivery_status === 'rider_assigned' || updatedOrder.delivery_status === 'picked_up' || updatedOrder.delivery_status === 'delivering') {
                    return [...prev, updatedOrder];
                 }
                 return prev;
@@ -6944,7 +6444,7 @@ export function App() {
         })
         .subscribe();
     }
-  }, [user, connections, setActiveOrders, setAvailableOrders]);
+  }, [user, setActiveOrders, setAvailableOrders]);
 
   useEffect(() => {
     refHolder.establishRealtimeChannels = establishRealtimeChannels;
@@ -6999,6 +6499,16 @@ export function App() {
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, profile?.is_online]);
+
+  useEffect(() => {
+    if (!user) return;
+    const refreshOnFocus = () => {
+      void fetchProfile();
+      void fetchConnectionsAndOrders();
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    return () => window.removeEventListener('focus', refreshOnFocus);
+  }, [user, fetchProfile, fetchConnectionsAndOrders]);
 
   // Active Mission & History Sync
   useEffect(() => {
@@ -7190,69 +6700,21 @@ export function App() {
   const confirmOnlineToggle = useCallback(async () => {
     if (!profile) return;
     const newStatus = !profile.is_online;
-    
-    // Always update state locally first (optimistic UI flow / failsafe fallback)
-    const updatedProfile = { 
-      ...profile, 
-      is_online: newStatus,
-      last_online: newStatus ? new Date().toISOString() : profile.last_online,
-      status: newStatus ? 'online' : 'offline',
-      updated_at: new Date().toISOString()
-    };
-    setProfile(updatedProfile);
-
     try {
-      if (newStatus && user?.id) {
-        subscribeToPushNotifications(user.id).catch(console.warn);
-      }
-      if (isSupabaseMocked()) {
-        if (newStatus) {
-          toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
-          fetchConnectionsAndOrders();
-        } else {
-          toast.info('System Standby. Taking a break.');
-        }
-        return;
-      }
-
-       const { error } = await fetchWithRetry(async () => {
-         return await getSupabase()
-           .from('rider_profiles')
-           .update({ 
-             is_online: newStatus, 
-             status: newStatus ? 'online' : 'offline',
-             updated_at: new Date().toISOString() 
-           })
-           .eq('id', profile.id);
-       }, 3, 1000, 10000);
-      if (error) {
-        console.warn('Failed to sync system status with active database range:', error);
-        const _isSysOffline = !navigator.onLine;
-        const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
-        if (!_isSysOffline && !_isSimOffline) {
-          toast.info("Database write bypassed (Local Fallback)", {
-            description: "Online state updated locally. You are ready for live dispatch simulations."
-          });
-        }
+      const confirmed = await setRiderAvailability(newStatus);
+      setProfile(current => current ? { ...current, ...mapAccessProfile(confirmed) } : mapAccessProfile(confirmed));
+      if (newStatus) {
+        if (user?.id) subscribeToPushNotifications(user.id).catch(console.warn);
+        toast.success('System Online! Eligible missions will appear here.', { duration: 4000 });
+        await fetchConnectionsAndOrders();
       } else {
-        if (newStatus) {
-          toast.success('System Online! New missions from paired shops will appear here.', { duration: 4000 });
-          fetchConnectionsAndOrders();
-        } else {
-          toast.success('System Standby. Taking a break.');
-        }
+        setAvailableOrders([]);
+        toast.success('System Standby. Taking a break.');
       }
-    } catch (e: unknown) {
-      console.warn('Online status sync exception, falling back:', e);
-      const _isSysOffline = !navigator.onLine;
-      const _isSimOffline = localStorage.getItem('localeats_force_offline') === 'true';
-      if (!_isSysOffline && !_isSimOffline) {
-        toast.info("Database connection bypassed (Local Fallback)", {
-          description: "Your session state has been initialized successfully."
-        });
-      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Availability could not be updated.');
     }
-  }, [profile, user, fetchConnectionsAndOrders]);
+  }, [profile, user, fetchConnectionsAndOrders, setAvailableOrders]);
 
   const toggleOnline = useCallback(async () => {
     if (!profile) return;
@@ -7267,63 +6729,24 @@ export function App() {
 
   const updateVehicle = async (type: UserVehicle) => {
     if (!profile) return;
-    // Update local state first (optimistic)
-    setProfile(prev => prev ? { ...prev, vehicle_type: type, updated_at: new Date().toISOString() } : null);
-
     try {
-      if (isSupabaseMocked()) return;
-      const { error } = await fetchWithRetry(async () => {
-        return await getSupabase()
-          .from('rider_profiles')
-          .update({ vehicle_type: type, updated_at: new Date().toISOString() })
-          .eq('id', profile.id);
-      }, 3, 1000, 10000);
-      if (error) {
-        console.warn('Sync vehicle database error:', error);
-      }
-    } catch (e: unknown) {
-      console.warn('Vehicle sync exception, local change retained:', e);
-    }
-  };
-
-  const updateProfileFields = async (fields: Partial<RiderProfile>) => {
-    if (!profile) return;
-    setProfile(prev => prev ? { ...prev, ...fields, updated_at: new Date().toISOString() } : null);
-    try {
-      if (isSupabaseMocked()) return;
-      const { error } = await fetchWithRetry(async () => {
-        return await getSupabase()
-          .from('rider_profiles')
-          .update({ ...fields, updated_at: new Date().toISOString() })
-          .eq('id', profile.id);
-      }, 3, 1000, 10000);
-      if (error) {
-        console.warn('Sync profile database error:', error);
-      }
-    } catch (e: unknown) {
-      console.warn('Profile sync exception, local change retained:', e);
+      const confirmed = await saveRiderProfile({
+        full_name: profile.full_name || profile.name,
+        phone: profile.phone || '',
+        vehicle_type: type,
+      });
+      setProfile(current => current ? { ...current, ...mapAccessProfile(confirmed) } : mapAccessProfile(confirmed));
+      toast.success('Vehicle type updated.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Vehicle type could not be updated.');
     }
   };
 
   const handleOnboardingComplete = async () => {
     if (onboardingMode === 'onboarding') {
       localStorage.setItem('localeats_onboarding_seen', 'true');
-      if (user) {
-        try {
-          if (!isSupabaseMocked()) {
-            await fetchWithRetry(async () => {
-              return await getSupabase()
-                .from('rider_profiles')
-                .update({ onboarding_complete: true })
-                .eq('id', user.id);
-            }, 3, 1000, 5000);
-          }
-          setProfile(prev => prev ? { ...prev, onboarding_complete: true } : null);
-          addBootLog('SYS_READY: OPERATOR_CERTIFIED');
-        } catch (e) {
-          console.warn(e);
-        }
-      }
+      setProfile(prev => prev ? { ...prev, onboarding_complete: true } : null);
+      addBootLog('SYS_READY: OPERATOR_CERTIFIED');
       setShowRiderTour(true);
     }
     setShowOnboarding(false);
@@ -7360,200 +6783,30 @@ export function App() {
 
   const handlePair = async (code: string) => {
     if (!user || !profile) return;
-    const cleanCode = code.trim().toUpperCase();
-    if (!cleanCode) {
-      throw new Error("Please enter a valid pairing code.");
-    }
-    
+    const cleanCode = code.trim();
+    if (!/^\d{6}$/.test(cleanCode)) throw new Error('Enter the six-digit code from the merchant.');
     addBootLog(`HANDSHAKE_INIT: CODE_${cleanCode}`);
     setHandshakeVerificationState('pending');
-    
     try {
-      if (isSupabaseMocked()) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        if (cleanCode === '000000') {
-          setHandshakeVerificationState('failed');
-          toast.error("Invalid pairing code. Please check the 6-digit code and try again.");
-          throw new Error('Invalid pairing code. Please check the 6-digit code and try again.');
-        }
-        
-        setHandshakeVerificationState('verified');
-        toast.success(`Successfully linked to shop!`);
-        setView('hub');
-        fetchConnectionsAndOrders().catch(console.warn);
-        return;
-      }
-
-      // 1. Query rider_connections directly by matching connection_code
-      let conn: (ShopConnection & { shops?: { name: string } | null; shop_name?: string }) | null = null;
-
-      try {
-        const { data, error } = await promiseWithTimeout(
-          getSupabase()
-            .from('rider_connections')
-            .select('*, shops(name)')
-            .eq('connection_code', cleanCode)
-            .maybeSingle(),
-          3000
-        );
-        if (error) console.warn('Rider connections query returned error:', error);
-        if (data) conn = data as unknown as (ShopConnection & { shops?: { name: string } | null; shop_name?: string });
-      } catch (e1) {
-        console.warn('Direct query on rider_connections with shops join failed:', e1);
-      }
-
-      if (!conn) {
-        try {
-          const { data, error } = await promiseWithTimeout(
-            getSupabase()
-              .from('rider_connections')
-              .select('*')
-              .eq('connection_code', cleanCode)
-              .maybeSingle(),
-            3000
-          );
-          if (error) console.warn('Fallback rider connections query error:', error);
-          if (data) conn = data as ShopConnection;
-        } catch (e2) {
-          console.warn('Direct query on rider_connections failed:', e2);
-        }
-      }
-
-
-
-      // Rule 1: Code Validation Check
-      if (!conn) {
-        setHandshakeVerificationState('failed');
-        throw new Error("Invalid pairing code. Please check the 6-digit code and try again.");
-      }
-
-      // Rule 2: Prevent Duplicate Pairing
-      if (conn.rider_id === user.id) {
-        setHandshakeVerificationState('failed');
-        throw new Error("You are already paired with this shop!");
-      }
-
-      const shopId = conn.shop_id;
-
-      // Check if rider is already linked to this shop via another active connection
-      if (shopId) {
-        try {
-          const { data: existingPairing } = await promiseWithTimeout(
-            getSupabase()
-              .from('rider_connections')
-              .select('id')
-              .eq('shop_id', shopId)
-              .eq('rider_id', user.id)
-              .neq('status', 'disconnected')
-              .maybeSingle(),
-            3000
-          );
-
-          if (existingPairing && existingPairing.id !== conn.id) {
-            setHandshakeVerificationState('failed');
-            throw new Error("You are already paired with this shop!");
-          }
-        } catch (eDup) {
-          const dupErr = eDup as Error;
-          if (dupErr.message === "You are already paired with this shop!") {
-            throw eDup;
-          }
-          console.warn('Duplicate pairing check error:', eDup);
-        }
-
-        // Rule 3: Enforce Maximum Courier Capacity (Max 10 per shop)
-        try {
-          const { data: shopCouriers } = await promiseWithTimeout(
-            getSupabase()
-              .from('rider_connections')
-              .select('id, rider_id, connection_code, status')
-              .eq('shop_id', shopId)
-              .neq('status', 'disconnected'),
-            3000
-          );
-
-          const activeCouriers = Array.isArray(shopCouriers)
-            ? (shopCouriers as Array<{ rider_id?: string | null; connection_code?: string }>).filter(c => (c.rider_id != null && c.rider_id !== '') || c.connection_code === 'IN-HOUSE')
-            : [];
-          const shopCourierCount = activeCouriers.length;
-
-          if (shopCourierCount >= 10 && conn.rider_id !== user.id) {
-            setHandshakeVerificationState('failed');
-            throw new Error("This shop has reached its maximum capacity of 10 couriers.");
-          }
-        } catch (eCap) {
-          const capErr = eCap as Error;
-          if (capErr.message?.includes("maximum capacity")) {
-            throw eCap;
-          }
-          console.warn('Shop capacity check error:', eCap);
-        }
-      }
-
-      // Rule 4: Claim the Code Safely
-      const riderName = user.user_metadata?.full_name || profile?.full_name || user.email || 'Rider';
-      const riderPhone = user.phone || user.user_metadata?.phone || profile?.phone || '';
-      const farFutureExpiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-
-      let updateSuccess = false;
-      let updateErrorMsg: string | null = null;
-
-      try {
-        const { error: updateErr } = await promiseWithTimeout(
-          getSupabase()
-            .from('rider_connections')
-            .update({
-              rider_id: user.id,
-              rider_name: riderName,
-              rider_phone: riderPhone,
-              status: 'active'
-            })
-            .eq('id', conn.id),
-          3000
-        );
-
-        if (!updateErr) {
-          updateSuccess = true;
-        } else {
-          updateErrorMsg = updateErr.message;
-          console.error("Supabase connection update error:", updateErr);
-        }
-      } catch (uErr) {
-        const updateEx = uErr as Error;
-        updateErrorMsg = updateEx?.message || "Timeout or network issue updating pairing code";
-        console.error("Failed updating rider_connections with rider payload:", uErr);
-      }
-
-      // Fallback for fallback/offline demo connection objects
-      if (!updateSuccess && String(conn.id).startsWith('conn_fallback_')) {
-        updateSuccess = true;
-      }
-
-      // Rule 5: Error Fallback
-      if (!updateSuccess) {
-        console.warn(`Supabase claim update failed: ${updateErrorMsg}. Falling back to local storage sync.`);
-        toast.info("Pairing registered locally for assigned shop orders.", {
-          description: "Database update timed out or encountered an issue."
-        });
-      }
-
-      
-      setHandshakeVerificationState('verified');
-
-      // Removed insecure client-driven update of shops table (linked_rider_id)
-      // Store-linking relies purely on the rider_connections document state.
-
+      const requested = await requestRiderConnection(cleanCode);
+      setConnections(current => [
+        requested as ShopConnection,
+        ...current.filter(connection => String(connection.id) !== String(requested.id)),
+      ]);
+      setHandshakeVerificationState(requested.status === 'approved' ? 'verified' : 'pending');
       if (navigator.vibrate) navigator.vibrate([50, 100, 50]);
-
-      const shopName = conn.shops?.name || conn.shop_name || 'Store';
-      toast.success(`Connected!`, {
-        description: `Successfully linked with ${shopName}.`,
+      toast.success('Pairing request sent.', {
+        description: requested.status === 'approved'
+          ? `Approved connection to ${requested.shop.name || 'the shop'}.`
+          : `Waiting for ${requested.shop.name || 'the merchant'} to approve your request.`,
         style: { background: '#050505', color: '#10b981', border: '1px solid #10b981' }
       });
-      
       setView('hub');
-      fetchConnectionsAndOrders().catch(console.warn);
-
+      try {
+        setConnections(await getRiderConnections() as ShopConnection[]);
+      } catch {
+        toast.error('Request saved, but shop connections could not be refreshed.');
+      }
     } catch (err) {
       setHandshakeVerificationState('failed');
       throw err;
@@ -7564,60 +6817,41 @@ export function App() {
     return <MainBootstrapSkeleton isHighContrastMode={isHighContrastMode} />;
   }
 
-  if (!user) return (
-    <AuthView 
-      onMockLogin={(userData) => {
-        setUser({
-          id: userData?.id || 'mock-user-123',
-          email: userData?.email || 'mock@simulator.local',
-          user_metadata: {
-            full_name: userData?.fullName || 'VIP Rider',
-            phone: userData?.phone || '+27 83 123 4567',
-            vehicle_type: userData?.vehicleType || 'Road'
-          }
-        } as unknown as User);
-      }} 
-    />
-  );
+  if (!user) return <AuthView />;
 
   if (!profile) {
-    const fallbackProfile: RiderProfile = {
-      id: user.id,
-      name: user.email?.split('@')[0] || 'elite_rider',
-      full_name: user.user_metadata?.full_name || 'VIP Rider',
-      phone: user.user_metadata?.phone || '+27 83 123 4567',
-      is_online: true,
-      status: 'online',
-      vehicle_type: 'Road',
-      verification_status: 'verified',
-      rating: 5.0,
-      total_earnings: 1250,
-      total_deliveries: 42,
-      active_points: 156,
-      current_latitude: -25.9964,
-      current_longitude: 28.2268,
-      updated_at: new Date().toISOString()
-    } as unknown as RiderProfile;
+    if (profileMissing) {
+      return (
+        <ProfileCompletionView
+          user={user}
+          onSaved={(savedProfile) => {
+            setProfile(mapAccessProfile(savedProfile));
+            setProfileMissing(false);
+            setProfileLoadError(null);
+          }}
+        />
+      );
+    }
 
-    setTimeout(() => {
-      setProfile(fallbackProfile);
-      toast.success("Simulator Overlay Active", {
-         description: "Database connection bypassed using simulated telemetry."
-      });
-    }, 0);
+    if (profileLoadError) {
+      return (
+        <div className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+          <div className="w-full max-w-md rounded-3xl border border-red-500/30 bg-zinc-950 p-6 text-center">
+            <ShieldAlert className="mx-auto mb-4 h-10 w-10 text-red-400" />
+            <h1 className="text-xl font-black uppercase italic">Rider profile unavailable</h1>
+            <p className="mt-3 text-sm text-zinc-400">{profileLoadError}</p>
+            <button type="button" onClick={() => void fetchProfile()} className="mt-6 w-full rounded-xl bg-[#f59e0b] py-3 text-sm font-black uppercase text-black">Retry profile load</button>
+            <button type="button" onClick={() => { const app = getFirebaseApp(); if (app) void firebaseSignOut(getAuth(app)); }} className="mt-3 w-full py-2 text-xs font-bold text-zinc-400">Sign out</button>
+          </div>
+        </div>
+      );
+    }
 
-    return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center p-6 text-center font-mono">
-        <motion.div 
-          animate={{ opacity: [0.3, 1, 0.3] }} 
-          transition={{ duration: 1.5, repeat: Infinity }}
-          className="text-[#f59e0b] text-[10px] font-black uppercase tracking-[0.6em] mb-4"
-        >
-          ENGAGING_FALLBACK_SIMULATOR...
-        </motion.div>
-      </div>
-    );
+    return <MainBootstrapSkeleton isHighContrastMode={isHighContrastMode} />;
   }
+
+  const primaryConnectionStatus = connections[0]?.status;
+  const approvedConnectionCount = connections.filter(connection => connection.status === 'approved').length;
 
   return (
     <div className={cn(
@@ -7628,7 +6862,7 @@ export function App() {
 
 
       {/* Sticky Corner Banner for Pending Kota/Braai Orders */}
-      {simulatedOrders.some(o => o.delivery_status === 'finding_rider') && (
+      {allowVisualSimulator && simulatedOrders.some(o => o.delivery_status === 'finding_rider') && (
         <div className="fixed top-24 right-4 z-[999] max-w-sm w-80 bg-zinc-950/95 backdrop-blur-md border border-amber-500/30 rounded-2xl p-4 shadow-[0_0_30px_rgba(245,158,11,0.2)] pointer-events-auto text-left">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
@@ -7702,7 +6936,7 @@ export function App() {
                         onClick={() => {
                           setSimulatedOrders(prev => prev.map(o => o.id === pendingOrder.id ? {
                             ...o,
-                            delivery_status: 'accepted' as const,
+                            delivery_status: 'rider_assigned' as const,
                             status: 'preparing' as const,
                             rider_id: 'mock-rider-thabo',
                             rider_name: 'Thabo (Rider 1)',
@@ -7735,7 +6969,7 @@ export function App() {
                         onClick={() => {
                           setSimulatedOrders(prev => prev.map(o => o.id === pendingOrder.id ? {
                             ...o,
-                            delivery_status: 'accepted' as const,
+                            delivery_status: 'rider_assigned' as const,
                             status: 'preparing' as const,
                             rider_id: 'mock-rider-sipho',
                             rider_name: 'Sipho (Rider 2)',
@@ -7956,35 +7190,23 @@ export function App() {
               {/* Shop Handshake Visual Indicator Badge */}
               {(() => {
                 const activeConn = connections && connections.length > 0 ? connections[0] : null;
-                const expiryMs = activeConn ? new Date(activeConn.expires_at).getTime() - now : 0;
-                
                 let badgeStyle = "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20";
                 let dotStyle = "bg-red-500";
                 let label = "NO HANDSHAKE";
 
-                if (activeConn && expiryMs > 0) {
-                  const hoursLeft = Math.floor(expiryMs / (1000 * 60 * 60));
-                  const minsLeft = Math.floor((expiryMs % (1000 * 60 * 60)) / (1000 * 60));
-                  const secsLeft = Math.floor((expiryMs % (1000 * 60)) / 1000);
-                  const timeStr = hoursLeft > 0 ? `${hoursLeft}h ${minsLeft}m` : `${minsLeft}m ${secsLeft}s`;
-                  const sName = (activeConn.shop_name || 'Merchant Store').toUpperCase();
-
-                  if (expiryMs > 2 * 60 * 60 * 1000) {
-                    // Active (Green)
-                    badgeStyle = "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20 shadow-[0_0_12px_rgba(16,185,129,0.15)]";
-                    dotStyle = "bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]";
-                    label = `${sName} • ${timeStr}`;
+                if (activeConn) {
+                  const shopName = (activeConn.shop.name || 'Merchant Store').toUpperCase();
+                  if (activeConn.status === 'approved') {
+                    badgeStyle = "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20";
+                    dotStyle = "bg-emerald-500 animate-pulse";
+                    label = `${shopName} • APPROVED`;
+                  } else if (activeConn.status === 'pending') {
+                    badgeStyle = "bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20";
+                    dotStyle = "bg-amber-500 animate-pulse";
+                    label = `${shopName} • PENDING`;
                   } else {
-                    // Nearing Expiration (Yellow)
-                    badgeStyle = "bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20 shadow-[0_0_12px_rgba(245,158,11,0.15)]";
-                    dotStyle = "bg-amber-500 animate-pulse shadow-[0_0_8px_#f59e0b]";
-                    label = `${sName} • SOON (${timeStr})`;
+                    label = `${shopName} • REJECTED`;
                   }
-                } else if (activeConn) {
-                  // Expired (Red)
-                  badgeStyle = "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20";
-                  dotStyle = "bg-red-500";
-                  label = `${(activeConn.shop_name || 'Merchant Store').toUpperCase()} • EXPIRED`;
                 }
 
                 return (
@@ -7999,7 +7221,7 @@ export function App() {
                     <div className={cn("w-2 h-2 rounded-full shrink-0", dotStyle)} />
                     <span className="hidden xs:inline truncate max-w-[110px] sm:max-w-[150px]">{label}</span>
                     <span className="xs:hidden font-mono text-[9px]">
-                      {activeConn && expiryMs > 0 ? "LINKED 🟢" : "UNLINKED 🔴"}
+                      {activeConn?.status === 'approved' ? "APPROVED" : activeConn?.status === 'pending' ? "PENDING" : "UNLINKED"}
                     </span>
                   </button>
                 );
@@ -8007,7 +7229,6 @@ export function App() {
 
               <TopNavOptionsMenu 
                 connections={connections} 
-                now={now} 
                 batteryLevel={batteryLevel}
                 batteryCharging={batteryCharging}
                 onClearCache={clearCacheAndRefreshOrders}
@@ -8179,10 +7400,13 @@ export function App() {
                 {/* Active Linked Merchant Store Card */}
                 {connections && connections.length > 0 && (() => {
                   const activeConn = connections[0];
-                  const connId = String(activeConn.id);
-                  const sName = activeConn.shop_name || 'Merchant Terminal Store';
-                  const sId = activeConn.shop_id || 's1';
-                  const cCode = activeConn.connection_code || 'LOCAL1';
+                  const sName = activeConn.shop.name || 'Merchant Store';
+                  const sId = activeConn.shop.id;
+                  const statusLabel = activeConn.status === 'approved'
+                    ? 'Approved / Connected'
+                    : activeConn.status === 'pending'
+                      ? 'Waiting for merchant approval'
+                      : 'Rejected / Revoked';
 
                   return (
                     <BentoCard className="bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-black border-zinc-800 p-4 sm:p-5 relative overflow-hidden shadow-xl">
@@ -8193,16 +7417,19 @@ export function App() {
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]">Active Linked Store</span>
-                              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shadow-[0_0_8px_rgba(16,185,129,0.2)]">
-                                Permanent Active
+                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]">Merchant relationship</span>
+                              <span className={cn(
+                                "text-[9px] font-black uppercase px-2 py-0.5 rounded-full border",
+                                activeConn.status === 'approved' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : activeConn.status === 'pending' ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-red-500/10 text-red-400 border-red-500/30"
+                              )}>
+                                {statusLabel}
                               </span>
                             </div>
                             <h3 className="text-lg font-black italic uppercase text-white tracking-wide mt-0.5">
                               {sName}
                             </h3>
                             <p className="text-xs font-mono text-zinc-400 mt-0.5">
-                              Shop ID: <span className="text-zinc-200 font-bold">{sId}</span> • Pairing Code: <span className="text-[#f59e0b] font-bold">{cCode}</span>
+                              Shop ID: <span className="text-zinc-200 font-bold">{sId}</span> • Requested {new Date(activeConn.created_at).toLocaleDateString()}
                             </p>
                           </div>
                         </div>
@@ -8211,9 +7438,9 @@ export function App() {
                         <div className="bg-black/80 border border-zinc-800 rounded-2xl p-3 sm:px-4 flex items-center justify-between sm:justify-end gap-3 shrink-0 shadow-inner">
                           <div className="flex flex-col text-right">
                             <span className="text-[9px] font-black uppercase tracking-wider text-zinc-500">Handshake Link</span>
-                            <div className="flex items-center gap-1.5 font-mono text-sm font-black tracking-tight text-emerald-400 mt-0.5">
-                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                              <span>CONNECTED</span>
+                            <div className={cn("flex items-center gap-1.5 font-mono text-sm font-black tracking-tight mt-0.5", activeConn.status === 'approved' ? "text-emerald-400" : activeConn.status === 'pending' ? "text-amber-400" : "text-red-400")}>
+                              <span className="w-2 h-2 rounded-full bg-current" />
+                              <span>{activeConn.status.toUpperCase()}</span>
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 pl-3 border-l border-zinc-800">
@@ -8224,14 +7451,6 @@ export function App() {
                               title="Re-scan QR code to change store link"
                             >
                               <QrCode className="w-4 h-4 text-[#f59e0b]" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => invalidatePairing(connId)}
-                              className="p-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl transition-colors active:scale-95"
-                              title="Disconnect / Unlink store"
-                            >
-                              <X className="w-4 h-4" />
                             </button>
                           </div>
                         </div>
@@ -8261,15 +7480,15 @@ export function App() {
                            <span className="text-[9px] font-black tracking-wider text-zinc-500 uppercase">Uplink:</span>
                            <span className={cn(
                              "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded flex items-center gap-1",
-                             handshakeVerificationState === 'verified' && "text-[#10b981] bg-[#10b981]/10",
-                             handshakeVerificationState === 'pending' && "text-[#f59e0b] bg-[#f59e0b]/10 animate-pulse",
-                             handshakeVerificationState === 'failed' && "text-red-500 bg-red-500/10",
-                             handshakeVerificationState === 'idle' && "text-zinc-400 bg-zinc-400/10"
+                             primaryConnectionStatus === 'approved' && "text-[#10b981] bg-[#10b981]/10",
+                             primaryConnectionStatus === 'pending' && "text-[#f59e0b] bg-[#f59e0b]/10 animate-pulse",
+                             primaryConnectionStatus === 'rejected' && "text-red-500 bg-red-500/10",
+                             !primaryConnectionStatus && "text-zinc-400 bg-zinc-400/10"
                            )}>
-                             {handshakeVerificationState === 'verified' && "Verified Handshake"}
-                             {handshakeVerificationState === 'pending' && "Pending..."}
-                             {handshakeVerificationState === 'failed' && "Link Compromised / Failed"}
-                             {handshakeVerificationState === 'idle' && (connections.length > 0 ? "Uplink Secured" : "Not Connected")}
+                             {primaryConnectionStatus === 'approved' && "Approved / Connected"}
+                             {primaryConnectionStatus === 'pending' && "Waiting for merchant approval"}
+                             {primaryConnectionStatus === 'rejected' && "Rejected / Revoked"}
+                             {!primaryConnectionStatus && "Not Connected"}
                            </span>
                            <button 
                              type="button"
@@ -8342,7 +7561,7 @@ export function App() {
                   history={history}
                   onToggleOnline={toggleOnline} 
                   setView={setView}
-                  connectionCount={connections.length}
+                  connectionCount={approvedConnectionCount}
                   isListening={isListening}
                   onStartListening={startListening}
                   weather={weather}
@@ -8420,7 +7639,7 @@ export function App() {
                   onAccept={handleOrderAccept} 
                   isOnline={profile?.is_online || false} 
                   surgeMultiplier={surgeMultiplier} 
-                  connectionCount={connections.length} 
+                  connectionCount={approvedConnectionCount}
                   onRefresh={fetchConnectionsAndOrders}
                   activeOrdersCount={activeOrders.length}
                   riderName={profile?.name}
@@ -8493,20 +7712,16 @@ export function App() {
                 <ProfileView 
                   profile={profile} 
                   connections={connections}
-                  now={now}
                   onUpdateVehicle={updateVehicle} 
-                  onUpdateProfile={updateProfileFields} 
                   onLogout={async () => {
                     try {
-                      await invalidatePairing();
-                      await getSupabase().auth.signOut();
+                      const app = getFirebaseApp();
+                      if (!app) throw new Error('Firebase authentication is unavailable.');
+                      await firebaseSignOut(getAuth(app));
                     } catch (e) {
-                      console.warn("Sign out err", e);
-                      localStorage.clear();
-                      window.location.reload();
+                      toast.error(e instanceof Error ? e.message : 'Sign out failed.');
                     }
                   }} 
-                  onDisconnect={invalidatePairing}
                   onPair={() => {
                     setView('pair');
                   }}
@@ -8542,10 +7757,8 @@ export function App() {
             {view === 'pair' && (
               <PairingView 
                 connections={connections}
-                now={now}
                 onBack={() => setView('hub')} 
                 onComplete={handlePair} 
-                onDisconnect={invalidatePairing}
               />
             )}
           </motion.div>

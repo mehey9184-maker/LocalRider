@@ -6,10 +6,11 @@ import useSupercluster from 'use-supercluster';
 import { DeliveryOrder } from '../types';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from '../lib/mapStyles';
 
-const useWeatherService = (lat: number, lng: number) => {
+const useWeatherService = (lat: number | null, lng: number | null) => {
   const [hasPrecipitation, setHasPrecipitation] = useState(false);
 
   useEffect(() => {
+    if (lat == null || lng == null) return;
     const fetchWeather = async () => {
       try {
         const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true`);
@@ -35,6 +36,7 @@ const useWeatherService = (lat: number, lng: number) => {
 };
 
 const EMPTY_ORDERS_ARRAY: DeliveryOrder[] = [];
+const DEFAULT_MAP_CENTER: [number, number] = [-25.9964, 28.2268];
 
 export const AppMapBackground = React.memo(function AppMapBackground({
   activeOrder,
@@ -136,27 +138,40 @@ export const AppMapBackground = React.memo(function AppMapBackground({
   }, [forceOffline]);
 
   const [riderPos, setRiderPos] = useState<[number, number] | null>(
-    riderLocation || (riderProfileLat && riderProfileLng ? [riderProfileLat, riderProfileLng] : [-25.9964, 28.2268])
+    riderLocation || (riderProfileLat != null && riderProfileLng != null ? [riderProfileLat, riderProfileLng] : null)
   );
 
   const [routeCoordinates, setRouteCoordinates] = useState<number[][]>([]);
-  const hasPrecipitation = useWeatherService(riderPos ? riderPos[0] : -25.9964, riderPos ? riderPos[1] : 28.2268);
+  const hasPrecipitation = useWeatherService(riderPos?.[0] ?? null, riderPos?.[1] ?? null);
   
-  // Simulated GPS updater for demo
+  // Keep the map synchronized only with an actual device/profile position.
   useEffect(() => {
-    if (riderLocation) {
-      const timer = setTimeout(() => {
-        setRiderPos(riderLocation);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [riderLocation]);
+    const validRiderLocation = riderLocation && riderLocation.every(Number.isFinite)
+      ? riderLocation
+      : null;
+    const validProfileLocation = Number.isFinite(riderProfileLat) && Number.isFinite(riderProfileLng)
+      ? [riderProfileLat as number, riderProfileLng as number] as [number, number]
+      : null;
+    const nextPosition = validRiderLocation ?? validProfileLocation;
+    const timer = setTimeout(() => {
+      setRiderPos(nextPosition);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [riderLocation, riderProfileLat, riderProfileLng]);
 
   const targetPos: [number, number] | null = useMemo(() => {
     if (!activeOrder) return null;
-    return activeOrder.delivery_status === 'picked_up' 
-      ? [activeOrder.lat || -25.9933, activeOrder.lng || 28.2125] 
-      : [activeOrder.shop_lat || -25.9922, activeOrder.shop_lng || 28.2045];
+    if (activeOrder.delivery_status === 'rider_assigned') {
+      return Number.isFinite(activeOrder.shop_lat) && Number.isFinite(activeOrder.shop_lng)
+        ? [activeOrder.shop_lat as number, activeOrder.shop_lng as number]
+        : null;
+    }
+    if (activeOrder.delivery_status === 'picked_up' || activeOrder.delivery_status === 'delivering') {
+      return Number.isFinite(activeOrder.lat) && Number.isFinite(activeOrder.lng)
+        ? [activeOrder.lat as number, activeOrder.lng as number]
+        : null;
+    }
+    return null;
   }, [activeOrder]);
 
   // Fetch Route from OSRM
@@ -215,8 +230,8 @@ export const AppMapBackground = React.memo(function AppMapBackground({
 
 
   const [viewState, setViewState] = useState({
-    longitude: riderPos?.[1] || 28.2268,
-    latitude: riderPos?.[0] || -25.9964,
+    longitude: riderPos?.[1] ?? DEFAULT_MAP_CENTER[1],
+    latitude: riderPos?.[0] ?? DEFAULT_MAP_CENTER[0],
     zoom: 15,
     pitch: activeOrder ? 45 : 0, 
     bearing: activeOrder ? 0 : 0

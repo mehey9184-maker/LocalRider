@@ -6,7 +6,6 @@ import { ShopConnection, AppView } from '../types';
 
 interface TopNavOptionsMenuProps {
   connections: ShopConnection[];
-  now: number;
   batteryLevel: number | null;
   batteryCharging: boolean;
   onClearCache: () => void;
@@ -37,11 +36,10 @@ export const TopNavOptionsMenu: React.FC<TopNavOptionsMenuProps> = ({
 
   const hasConnections = connections && connections.length > 0;
   const activeConn = hasConnections ? connections[0] : null;
-  const shopName = activeConn?.shop_name || 'Merchant Store';
-  const connectionCode = activeConn?.connection_code;
+  const shopName = activeConn?.shop.name || 'Merchant Store';
 
-  const statusTextColor = !hasConnections ? "text-zinc-500" : activeConn?.status === 'revoked' ? "text-red-500" : "text-emerald-400";
-  const statusLabel = !hasConnections ? "UNLINKED" : activeConn?.status === 'revoked' ? "REVOKED" : "CONNECTED";
+  const statusTextColor = !hasConnections ? "text-zinc-500" : activeConn?.status === 'approved' ? "text-emerald-400" : activeConn?.status === 'pending' ? "text-amber-400" : "text-red-500";
+  const statusLabel = !hasConnections ? "UNLINKED" : activeConn?.status.toUpperCase();
 
   return (
     <div className="relative" ref={menuRef}>
@@ -65,7 +63,7 @@ export const TopNavOptionsMenu: React.FC<TopNavOptionsMenuProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Globe className={cn("w-4 h-4", statusTextColor)} />
-                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Linked Shop</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-zinc-400">Shop Relationship</span>
                 </div>
                 <span className={cn("text-[9px] font-black uppercase px-2 py-0.5 rounded border border-current", statusTextColor)}>
                   {statusLabel}
@@ -75,16 +73,12 @@ export const TopNavOptionsMenu: React.FC<TopNavOptionsMenuProps> = ({
               <div className="flex items-center justify-between pt-0.5">
                 <div>
                   <h4 className="text-xs font-bold text-white group-hover:text-[#f59e0b] transition-colors">{shopName}</h4>
-                  {connectionCode && (
-                    <p className="text-[10px] font-mono text-zinc-400 mt-0.5">
-                      Code: <span className="text-white font-bold">{connectionCode}</span>
-                    </p>
-                  )}
+                  <p className="text-[10px] font-mono text-zinc-400 mt-0.5">Shop {String(activeConn?.shop.id ?? '')}</p>
                 </div>
                 <div className="flex items-center gap-1.5 bg-black/60 px-2.5 py-1 rounded-lg border border-zinc-800 shrink-0">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase">
-                    Active
+                  <span className={cn("w-2 h-2 rounded-full", activeConn?.status === 'approved' ? "bg-emerald-400 animate-pulse" : activeConn?.status === 'pending' ? "bg-amber-400" : "bg-red-500")} />
+                  <span className={cn("text-[10px] font-mono font-bold uppercase", statusTextColor)}>
+                    {statusLabel}
                   </span>
                 </div>
               </div>

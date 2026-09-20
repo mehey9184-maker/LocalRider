@@ -1,7 +1,7 @@
 export type UserVehicle = 'Road' | 'MTB' | 'E-Bike' | 'Motor';
 
 export interface RiderProfile {
-  id: string; // matches auth.uid
+  id: string; // LocalEats server Rider profile ID; Firebase UID is separate identity linkage.
   name: string;
   full_name?: string;
   phone?: string;
@@ -9,12 +9,12 @@ export interface RiderProfile {
   is_online: boolean;
   status: string; // added this
   vehicle_type: UserVehicle;
-  verification_status: 'pending' | 'verified' | 'rejected';
-  rating: number;
-  total_earnings: number;
-  total_deliveries: number;
-  active_points: number;
-  updated_at: string;
+  verification_status: 'pending' | 'approved' | 'rejected';
+  rating?: number;
+  total_earnings?: number;
+  total_deliveries?: number;
+  active_points?: number;
+  updated_at?: string;
   current_latitude?: number;
   current_longitude?: number;
   onboarding_complete?: boolean;
@@ -22,17 +22,16 @@ export interface RiderProfile {
 }
 
 export interface ShopConnection {
-  id: string;
-  rider_id: string;
-  shop_id: string;
-  expires_at: string;
+  id: string | number;
+  status: 'pending' | 'approved' | 'rejected';
   created_at: string;
-  updated_at?: string;
-  shop_name?: string;
-  connection_code?: string;
+  shop: {
+    id: string | number;
+    name: string | null;
+  };
 }
 
-export type DeliveryStatus = 'finding_rider' | 'rider_assigned' | 'accepted' | 'picked_up' | 'delivering' | 'delivered' | 'cancelled' | 'none';
+export type DeliveryStatus = 'finding_rider' | 'rider_assigned' | 'picked_up' | 'delivering' | 'delivered' | 'cancelled' | 'none';
 
 export interface DeliveryOrder {
   id: string;

@@ -106,21 +106,20 @@ export const DashboardWeather = React.memo(({
   }, [setWeather]);
 
   useEffect(() => {
-    const activeLat = lat || -25.9964;
-    const activeLng = lng || 28.2268;
-    
+    if (lat == null || lng == null) return;
+
     let isMounted = true;
     const checkAndTrigger = () => {
       if (!isMounted) return;
       if (!weather) {
-        fetchWeather(activeLat, activeLng);
+        fetchWeather(lat, lng);
       } else {
         const cached = localStorage.getItem('localeats_cached_weather');
         if (cached) {
           try {
             const parsed = JSON.parse(cached);
             if (Date.now() - parsed.timestamp >= 3600000) {
-              fetchWeather(activeLat, activeLng);
+              fetchWeather(lat, lng);
             }
           } catch (err) {
             console.warn("Cache parsing failed", err);
@@ -258,7 +257,11 @@ export const DashboardWeather = React.memo(({
             </div>
             <button 
               onClick={() => {
-                fetchWeather(lat || -25.9964, lng || 28.2268);
+                if (lat == null || lng == null) {
+                  toast.error('Location unavailable', { description: 'Weather cannot refresh without device coordinates.' });
+                  return;
+                }
+                fetchWeather(lat, lng);
                 toast.success('Syncing high-fidelity meteorological sensors...');
               }}
               className="p-1 px-2 rounded-lg bg-black hover:bg-zinc-800 text-zinc-400 hover:text-white transition-all text-[8px] font-sans uppercase font-bold flex items-center gap-1.5 border border-zinc-800"

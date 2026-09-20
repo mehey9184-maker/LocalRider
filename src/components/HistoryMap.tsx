@@ -5,14 +5,17 @@ import { DeliveryOrder } from '../types';
 import { CARTO_DARK_RASTER, CARTO_LIGHT_RASTER } from '../lib/mapStyles';
 
 export const HistoryMap = React.memo(({ order, highContrast }: { order: DeliveryOrder, highContrast?: boolean }) => {
-  const shopLat = Number(order.shop_lat || -25.9864);
-  const shopLng = Number(order.shop_lng || 28.2198);
-  const dropLat = Number(order.lat || -25.9894);
-  const dropLng = Number(order.lng || 28.2148);
+  const shopLat = Number(order.shop_lat);
+  const shopLng = Number(order.shop_lng);
+  const dropLat = Number(order.lat);
+  const dropLng = Number(order.lng);
+  const hasCoordinates = [order.shop_lat, order.shop_lng, order.lat, order.lng]
+    .every((value) => value != null && Number.isFinite(Number(value)));
 
-  const [routeCoordinates, setRouteCoordinates] = useState<number[][]>([[shopLng, shopLat], [dropLng, dropLat]]);
+  const [routeCoordinates, setRouteCoordinates] = useState<number[][]>(() => hasCoordinates ? [[shopLng, shopLat], [dropLng, dropLat]] : []);
 
   useEffect(() => {
+    if (!hasCoordinates) return;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000); // 6 second timeout
 
@@ -39,7 +42,7 @@ export const HistoryMap = React.memo(({ order, highContrast }: { order: Delivery
       controller.abort();
       clearTimeout(timeoutId);
     };
-  }, [shopLat, shopLng, dropLat, dropLng]);
+  }, [hasCoordinates, shopLat, shopLng, dropLat, dropLng]);
 
   const routeGeoJSON = useMemo(() => {
     return {
@@ -51,6 +54,10 @@ export const HistoryMap = React.memo(({ order, highContrast }: { order: Delivery
       }
     };
   }, [routeCoordinates]);
+
+  if (!hasCoordinates) {
+    return <div className="w-full h-32 rounded-xl border border-zinc-800/40 bg-zinc-950 mt-4 mb-2 flex items-center justify-center text-[10px] font-bold uppercase tracking-wider text-zinc-500">Route coordinates unavailable</div>;
+  }
 
   return (
     <div className="w-full h-32 rounded-xl border border-zinc-800/40 overflow-hidden relative pointer-events-none grayscale opacity-80 mt-4 mb-2">

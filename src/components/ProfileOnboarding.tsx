@@ -63,7 +63,7 @@ const STEPS: StepItem[] = [
     icon: QrCode,
     color: 'text-indigo-400 border-indigo-500/30',
     bgGlow: 'bg-indigo-500/10 shadow-[0_0_25px_rgba(99,102,241,0.15)]',
-    desc: 'Direct dispatch interface requires a store connection. Scan the merchant terminal QR or type their unique 6-digit channel code to import bulk packages instantly and join their priority list.'
+    desc: 'Direct dispatch interface requires a store connection. Scan the merchant terminal QR or type their unique 6-character channel code to import bulk packages instantly and join their priority list.'
   },
   {
     title: 'AUTONOMOUS_SIMULATOR',

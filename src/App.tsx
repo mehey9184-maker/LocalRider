@@ -4896,9 +4896,9 @@ const PairingView = ({
   const activeConn = connections && connections.length > 0 ? connections[0] : null;
 
   const handlePair = async () => {
-    const cleanCode = code.trim();
-    if (!/^\d{6}$/.test(cleanCode)) {
-      toast.error('Enter the six-digit code from the merchant.');
+    const cleanCode = code.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(cleanCode)) {
+      toast.error('Enter the 6-character code from the merchant.');
       return;
     }
     setLoading(true);
@@ -4934,9 +4934,9 @@ const PairingView = ({
   };
 
   const handleScan = useCallback(async (scannedCode: string) => {
-    const cleanCode = scannedCode.trim();
-    if (!/^\d{6}$/.test(cleanCode)) {
-      toast.error('The scanned pairing code must contain exactly six digits.');
+    const cleanCode = scannedCode.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(cleanCode)) {
+      toast.error('The scanned pairing code must contain exactly 6 letters or numbers.');
       return;
     }
     setShowScanner(false);
@@ -5067,19 +5067,19 @@ const PairingView = ({
                 maxLength={6}
                 value={code}
                 disabled={loading}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="123456"
+                onChange={(e) => setCode(e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 6))}
+                placeholder="FH6JJA"
                 className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-4 text-xl sm:text-2xl font-mono font-bold tracking-widest text-center text-white outline-none focus:border-[#f59e0b] transition-all placeholder:tracking-normal placeholder:text-zinc-600 placeholder:text-sm"
               />
               <button 
                 onClick={handlePair}
-                disabled={loading || !/^\d{6}$/.test(code)}
+                disabled={loading || !/^[A-Z0-9]{6}$/.test(code)}
                 className="px-6 py-4 bg-[#f59e0b] text-black rounded-xl font-black uppercase tracking-widest disabled:opacity-50 hover:bg-amber-400 active:scale-95 transition-all"
               >
                 {loading ? '...' : 'REQUEST'}
               </button>
             </div>
-            <p className="mt-4 text-[9px] text-zinc-500 font-bold uppercase text-center leading-tight">Enter the six-digit code from the merchant. The request remains pending until the merchant approves it.</p>
+            <p className="mt-4 text-[9px] text-zinc-500 font-bold uppercase text-center leading-tight">Enter the 6-character code from the merchant. The request remains pending until the merchant approves it.</p>
           </div>
         </div>
       </div>
@@ -6783,8 +6783,8 @@ export function App() {
 
   const handlePair = async (code: string) => {
     if (!user || !profile) return;
-    const cleanCode = code.trim();
-    if (!/^\d{6}$/.test(cleanCode)) throw new Error('Enter the six-digit code from the merchant.');
+    const cleanCode = code.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(cleanCode)) throw new Error('Enter the 6-character code from the merchant.');
     addBootLog(`HANDSHAKE_INIT: CODE_${cleanCode}`);
     setHandshakeVerificationState('pending');
     try {

@@ -176,10 +176,11 @@ export const getRiderConnections = async (): Promise<RiderShopConnection[]> => {
 };
 
 export const requestRiderConnection = async (connectionCode: string): Promise<RiderShopConnection> => {
-  if (!/^\d{6}$/.test(connectionCode)) {
-    throw new RiderAccessError('Enter the six-digit code from the merchant.', 422, 'INVALID_CONNECTION_CODE');
+  const normalizedConnectionCode = connectionCode.trim().toUpperCase();
+  if (!/^[A-Z0-9]{6}$/.test(normalizedConnectionCode)) {
+    throw new RiderAccessError('Enter the 6-character code from the merchant.', 422, 'INVALID_CONNECTION_CODE');
   }
-  const payload = await request('/connections/request', 'POST', { connection_code: connectionCode });
+  const payload = await request('/connections/request', 'POST', { connection_code: normalizedConnectionCode });
   if (!isConnection(payload.connection)) {
     throw new RiderAccessError('LocalEats Rider API did not confirm the connection request.', null, 'INVALID_RESPONSE');
   }

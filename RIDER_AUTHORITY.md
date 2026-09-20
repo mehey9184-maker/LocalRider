@@ -16,7 +16,7 @@ Firebase supplies the signed-in Rider identity and ID token. The browser sends t
 - `POST /api/v1/rider/profile` creates or updates only `full_name`, `phone`, and `vehicle_type`.
 - `PATCH /api/v1/rider/availability` changes `is_online` and must confirm the requested value.
 - `GET /api/v1/rider/connections` returns canonical merchant relationships.
-- `POST /api/v1/rider/connections/request` sends a six-digit invitation code. Sending an invitation is not approval.
+- `POST /api/v1/rider/connections/request` sends a six-character alphanumeric invitation code. Sending an invitation is not approval.
 - Connection states are `pending`, `approved`, or `rejected`. A merchant must approve the Rider; the Rider cannot self-approve or self-disconnect during the pilot.
 - Available missions, mission claims, pickup, delivery start, and delivery completion remain authoritative through `src/services/riderDeliveryBackend.ts` and the LocalEats API.
 

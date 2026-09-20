@@ -57,14 +57,14 @@ export const QRScanner = React.memo(function QRScanner({ onScan, onClose }: QRSc
                 type="text"
                 maxLength={6}
                 value={manualCode}
-                onChange={(e) => setManualCode(e.target.value.replace(/\W/g, '').toUpperCase())}
-                placeholder="LOCAL1"
+                onChange={(e) => setManualCode(e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())}
+                placeholder="FH6JJA"
                 className="w-full bg-black border border-zinc-700 rounded-xl px-4 py-3 text-xl font-mono font-bold tracking-[0.2em] text-center text-white outline-none focus:border-[#f59e0b] transition-all placeholder:tracking-normal"
                 autoFocus
               />
               <button
                 type="submit"
-                disabled={manualCode.length < 3}
+                disabled={!/^[A-Z0-9]{6}$/.test(manualCode)}
                 className="w-full py-3 bg-[#f59e0b] hover:bg-[#d97706] text-black font-black uppercase text-xs tracking-widest rounded-xl transition-all disabled:opacity-40"
               >
                 Submit Pairing Code

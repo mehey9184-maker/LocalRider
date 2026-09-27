@@ -33,7 +33,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     targetId: "dash-online-btn",
     title: "1. COUPLING TO Local Network",
-    desc: "This is your ONLINE PROTOCOL switch. Tap here to start looking for food-dispatch orders. Toggling this signal lets nearby merchants trace your availability.",
+    desc: "This availability switch becomes usable after LocalEats approves your Rider account. Going online does not require a shop link; Rider Pool dispatch is being enabled.",
     view: 'dash',
     arrowDir: 'bottom',
     tapTargetLabel: "Toggle Online"
@@ -49,7 +49,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     targetId: "nav-feed",
     title: "3. DISPATCH MARKETPLACE",
-    desc: "This tab monitors the central order feed. Tap here to check out all un-assigned orders that can be instantly accepted.",
+    desc: "This feed shows connected-shop deliveries where supported. Rider Pool dispatch is not available here yet.",
     view: 'feed',
     arrowDir: 'top',
     tapTargetLabel: "Markets Tab"
@@ -63,12 +63,12 @@ const TOUR_STEPS: TourStep[] = [
     tapTargetLabel: "Active HUD Tab"
   },
   {
-    targetId: "nav-merchant",
-    title: "5. STORE TERMINAL INTEGRATION",
-    desc: "The Store tab handles direct Merchant bindings. Scan QR codes at restaurant registers to fetch order orders, or trigger simulation mechanics.",
-    view: 'merchant',
+    targetId: "preferred-shop-link-btn",
+    title: "5. OPTIONAL PREFERRED SHOP LINK",
+    desc: "Preferred-shop pairing is optional. It does not control your LocalEats platform verification or Go Online eligibility.",
+    view: 'dash',
     arrowDir: 'top',
-    tapTargetLabel: "Store Tab"
+    tapTargetLabel: "Preferred Shop Link"
   },
   {
     targetId: "nav-hub",
@@ -81,7 +81,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     targetId: null,
     title: "Unit Tour Completed",
-    desc: "Connection verified! Your interfaces are calibrated. You have complete mastery of the LocalEats flight modules. Drive safe, and let's capture some orders!",
+    desc: "Tour complete. Refresh your verification status after LocalEats review. Once approved, you may go online; dispatch availability depends on supported mission sources.",
     view: 'dash'
   }
 ];

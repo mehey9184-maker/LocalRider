@@ -29,6 +29,7 @@ import { AnimatedCounter } from './AnimatedCounter';
 import { RiderProfile, DeliveryOrder, AppView, WeatherData } from '../types';
 import { cn } from '../lib/utils';
 import { detectRegion } from '../lib/geoContext';
+import { canToggleRiderAvailability } from '../utils/riderVerification';
 
 interface DashboardProps {
   profile: RiderProfile;
@@ -140,34 +141,23 @@ export const Dashboard = React.memo(({
         </h1>
       </header>
 
-      {connectionCount === 0 && (
-         <motion.div 
+      {profile.verification_status === 'approved' && connectionCount === 0 && (
+         <motion.button
+            type="button"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-red-500/10 border-2 border-red-500/20 text-red-500 p-5 rounded-[2rem] flex items-center gap-4 group cursor-pointer shadow-[0_0_20px_rgba(239,68,68,0.1)]"
+            className="w-full bg-amber-500/10 border-2 border-amber-500/20 text-amber-300 p-5 rounded-[2rem] flex items-center gap-4 group cursor-pointer text-left"
             onClick={() => setView('hub')}
          >
-            <div className="w-12 h-12 rounded-2xl bg-red-500/20 flex items-center justify-center animate-pulse">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 flex items-center justify-center">
                <ShieldAlert className="w-6 h-6" />
             </div>
             <div className="flex-1">
-               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">No Approved Shop Relationship</h4>
-               <p className="text-sm font-bold text-white/70 italic leading-tight">Request a shop relationship or wait for the merchant to approve your pending request.</p>
+               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">Platform verified</h4>
+               <p className="text-sm font-bold text-white/70 italic leading-tight">You can go online without a preferred shop. Rider Pool dispatch is being enabled; connected-shop deliveries remain available where supported. Shop pairing is optional.</p>
             </div>
-            <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-red-500 transition-colors" />
-         </motion.div>
-      )}
-
-      {profile.verification_status !== 'approved' && connectionCount > 0 && (
-        <BentoCard className="bg-orange-500/10 border-orange-500/20 text-orange-500 py-5">
-          <div className="flex items-center gap-4">
-            <ShieldAlert className="w-6 h-6 shrink-0" />
-            <div className="flex flex-col">
-              <span className="text-[11px] font-black uppercase tracking-widest leading-none mb-1">Status: Under Review</span>
-              <span className="text-sm font-bold leading-tight text-white/80 italic">We are reviewing your profile. Some features might be unavailable.</span>
-            </div>
-          </div>
-        </BentoCard>
+            <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-amber-300 transition-colors" />
+         </motion.button>
       )}
 
       {/* Safety Protocol */}
@@ -177,12 +167,13 @@ export const Dashboard = React.memo(({
       <div className="flex flex-col gap-2">
         <button 
           id="dash-online-btn"
+          disabled={!canToggleRiderAvailability(profile.verification_status, profile.is_online)}
           onClick={() => {
             onToggleOnline();
             if (navigator.vibrate) navigator.vibrate([30, 20, 30]);
           }}
           className={cn(
-            "w-full min-h-[76px] px-6 py-4 rounded-3xl flex items-center justify-start gap-5 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/40",
+            "w-full min-h-[76px] px-6 py-4 rounded-3xl flex items-center justify-start gap-5 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/40 disabled:cursor-not-allowed disabled:opacity-50",
             profile.is_online 
               ? "bg-[#0b130e] border border-emerald-500/30 hover:border-emerald-400/50 glow-green shadow-[0_8px_30px_rgba(34,197,94,0.04)]" 
               : "bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-[#121214] shadow-[0_8px_30px_rgba(0,0,0,0.2)]"
@@ -212,7 +203,7 @@ export const Dashboard = React.memo(({
             </div>
             <div className="flex items-center gap-2 mt-1">
               <span className={cn("text-[11px] font-sans font-semibold uppercase tracking-wider transition-colors duration-300", profile.is_online ? "text-emerald-400/80" : "text-zinc-500")}>
-                {profile.is_online ? 'Looking for orders...' : 'Tap to go online'}
+                {profile.is_online ? 'Connected-shop missions where available' : profile.verification_status === 'approved' ? 'Tap to go online' : 'Verification required to go online'}
               </span>
               {profile.verification_status === 'approved' && (
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 backdrop-blur-sm shadow-[0_2px_10px_rgba(16,185,129,0.05)]">
@@ -232,7 +223,7 @@ export const Dashboard = React.memo(({
           >
             <div className="w-2 h-2 mt-1.5 rounded-full bg-green-500 animate-ping shrink-0" />
             <p className="text-[12px] font-sans text-green-400 font-medium leading-relaxed">
-              You're active! New orders will appear here when your linked shops broadcast them.
+              You are online. Connected-shop deliveries remain available where supported; Rider Pool dispatch is being enabled.
             </p>
           </motion.div>
         )}

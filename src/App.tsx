@@ -120,7 +120,8 @@ import {
   onForegroundMessage
 } from './lib/firebase';
 import { User } from '@supabase/supabase-js';
-import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection, AppView, WeatherData } from './types';
+import { RiderProfile, DeliveryOrder, UserVehicle, DeliveryStatus, ShopConnection, AppView, WeatherData, type RiderVerificationStatus } from './types';
+import { canToggleRiderAvailability, getRiderVerificationView } from './utils/riderVerification';
 import { cn } from './lib/utils';
 import { BentoCard } from './components/BentoCard';
 import { DeliveryPinModal } from './components/DeliveryPinModal';
@@ -630,6 +631,7 @@ const OrdersFeed = React.memo(({
   riderLat,
   riderLng,
   onToggleOnline,
+  verificationStatus,
   isHighContrastMode,
   weather
 }: { 
@@ -648,6 +650,7 @@ const OrdersFeed = React.memo(({
   riderLat?: number,
   riderLng?: number,
   onToggleOnline?: () => void,
+  verificationStatus: RiderVerificationStatus,
   isHighContrastMode?: boolean,
   weather?: WeatherData | null
 }) => {
@@ -1020,19 +1023,20 @@ const OrdersFeed = React.memo(({
               "text-[10px] font-black uppercase tracking-[0.4em]",
               !isOnline ? "text-red-500" : connectionCount === 0 ? "text-zinc-500" : "text-[#f59e0b]"
             )}>
-              {!isOnline ? "Network Offline" : connectionCount === 0 ? "No Connection" : "Searching for orders..."}
+              {!isOnline ? 'Offline' : connectionCount === 0 ? 'No connected-shop missions' : 'Searching connected shops...'}
             </h3>
             <p className="text-xs font-black uppercase tracking-widest text-zinc-500 max-w-[280px] leading-relaxed italic">
-              {!isOnline 
-                ? "CONNECTION LOST - GO ONLINE TO SEE ORDERS." 
-                : connectionCount === 0 
-                ? "NO APPROVED SHOP RELATIONSHIP - REQUEST OR WAIT FOR MERCHANT APPROVAL."
-                : "WAITING FOR NEW MISSIONS..."}
+              {!isOnline
+                ? getRiderVerificationView(verificationStatus).message
+                : connectionCount === 0
+                  ? 'Rider Pool dispatch is being enabled. Optional preferred-shop connections may provide deliveries where supported.'
+                  : 'Waiting for connected-shop missions. Rider Pool dispatch is being enabled.'}
             </p>
             {!isOnline && onToggleOnline && (
               <button 
                 onClick={onToggleOnline}
-                className="px-6 py-3.5 bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 hover:border-red-500 text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-200 active:scale-95 shadow-[0_0_15px_rgba(239,68,68,0.15)] flex items-center gap-2"
+                disabled={!canToggleRiderAvailability(verificationStatus, false)}
+                className="px-6 py-3.5 bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 hover:border-red-500 text-red-400 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-200 active:scale-95 shadow-[0_0_15px_rgba(239,68,68,0.15)] flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Power className="w-3.5 h-3.5" />
                 Establish Uplink (Go Online)
@@ -3663,8 +3667,9 @@ const ProfileView = React.memo(({
 
           <button 
             onClick={onToggleOnline}
+            disabled={!canToggleRiderAvailability(profile.verification_status, profile.is_online)}
             className={cn(
-              "absolute -bottom-1 -right-1 text-white text-[10px] font-black italic px-3 py-1 rounded-xl shadow-xl border-2 border-[#050505] transition-colors",
+              "absolute -bottom-1 -right-1 text-white text-[10px] font-black italic px-3 py-1 rounded-xl shadow-xl border-2 border-[#050505] transition-colors disabled:cursor-not-allowed disabled:opacity-50",
               profile.is_online ? "bg-emerald-600" : "bg-red-600"
             )}
           >
@@ -3690,7 +3695,7 @@ const ProfileView = React.memo(({
           {uploadingAvatar ? 'Compressing (<200KB)...' : 'Update Profile Photo'}
         </button>
         <div className="flex items-center gap-3">
-           <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">{profile.verification_status}</p>
+           <p className="text-[10px] text-zinc-500 font-black uppercase tracking-widest">{getRiderVerificationView(profile.verification_status).title}</p>
         </div>
       </header>
 
@@ -3714,29 +3719,6 @@ const ProfileView = React.memo(({
 
       {activeTab === 'overview' && (
         <div className="space-y-6 animate-fade-in">
-          {profile.verification_status !== 'approved' && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-lg"
-            >
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-red-500/20 rounded-xl text-red-500">
-                  <ShieldAlert className="w-5 h-5 animate-pulse" />
-                </div>
-                <div className="text-left">
-                  <h4 className="text-xs font-black text-white uppercase tracking-wider">Account Pending Verification</h4>
-                  <p className="text-[10px] text-zinc-400 mt-0.5 leading-relaxed">
-                    You cannot receive orders or toggle online until your driver credentials are verified.
-                  </p>
-                </div>
-              </div>
-              <span className="w-full sm:w-auto px-4 py-2 bg-zinc-900 text-zinc-300 border border-zinc-700 text-[9px] font-black uppercase tracking-widest rounded-xl text-center">
-                Server review required
-              </span>
-            </motion.div>
-          )}
-
 
 
 
@@ -3913,22 +3895,22 @@ const ProfileView = React.memo(({
       {/* Store Connections */}
       <section className="space-y-4">
         <div className="flex items-center justify-between px-1">
-          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">Store Connections</h3>
+          <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-zinc-500">Preferred Shop Connections (optional)</h3>
           <button 
             onClick={() => onPair()}
             className="flex items-center gap-2 text-[10px] font-black uppercase text-[#f59e0b] border border-[#f59e0b]/30 px-4 py-2 rounded-2xl bg-[#f59e0b]/5 active:scale-95 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
-            Link with Shop
+            Link Preferred Shop
           </button>
         </div>
         
         {connections.length === 0 ? (
           <BentoCard className="p-8 border-dashed border-zinc-800 bg-transparent text-center">
             <Link2 className="w-8 h-8 mx-auto mb-3 text-zinc-650" />
-            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">No active store connections</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">No preferred shop connection</p>
             <p className="text-xs text-zinc-600 max-w-[200px] mx-auto leading-relaxed font-sans">
-              Connect with a store to start receiving mission requests in your sector.
+              Shop pairing is optional for platform verification and going online. Connected-shop deliveries remain available where supported.
             </p>
           </BentoCard>
         ) : (
@@ -4912,7 +4894,7 @@ const PairingView = ({
       console.error("Pairing Error:", err);
       const msg = err instanceof Error ? err.message : 'Connection failed.';
       if (/fetch|network|timeout|timed out|abort/i.test(msg)) {
-        toast.error('You must be online to pair with a store.');
+        toast.error('Connect to the internet to pair with a preferred shop.');
       } else {
         toast.error(msg === 'Connection failed.' ? 'Invalid pairing code. Please check the code with the merchant.' : msg);
       }
@@ -4967,7 +4949,7 @@ const PairingView = ({
             <div className="w-16 h-16 rounded-full bg-[#f59e0b]/10 border border-[#f59e0b]/30 flex items-center justify-center text-[#f59e0b] mb-6 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
               <RefreshCw className="w-8 h-8 animate-spin" />
             </div>
-            <h3 className="text-xl font-black italic uppercase text-white mb-2 tracking-wider">Verification Pending</h3>
+            <h3 className="text-xl font-black italic uppercase text-white mb-2 tracking-wider">Pairing request in progress</h3>
             <p className="text-[10px] text-[#f59e0b] font-black uppercase tracking-[0.2em] mb-4">Securing Handshake Link...</p>
             <p className="text-xs text-zinc-400 max-w-xs leading-relaxed mb-4">
               Establishing a secure connection with the merchant. This ensures data segregation and prevents cross-merchant contamination. Please wait...
@@ -4994,8 +4976,8 @@ const PairingView = ({
         </button>
 
         <div className="text-center mb-8">
-          <h2 className="text-3xl font-black italic uppercase text-white mb-2">Connect to Store</h2>
-          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.2em]">Establish Shop Link with Merchant</p>
+          <h2 className="text-3xl font-black italic uppercase text-white mb-2">Private / Preferred Shop Access</h2>
+          <p className="text-[10px] text-zinc-500 font-black uppercase tracking-[0.2em]">Optional merchant pairing; not required for platform verification or going online</p>
         </div>
 
         {activeConn && (
@@ -5168,6 +5150,7 @@ export function App() {
   const [profile, setProfile] = useState<RiderProfile | null>(null);
   const [profileMissing, setProfileMissing] = useState(false);
   const [profileLoadError, setProfileLoadError] = useState<string | null>(null);
+  const [verificationRefreshing, setVerificationRefreshing] = useState(false);
   const profileRef = useRef<RiderProfile | null>(null);
   useEffect(() => {
     profileRef.current = profile;
@@ -5788,6 +5771,15 @@ export function App() {
     }
   }, [user]);
 
+  const refreshVerification = useCallback(async () => {
+    setVerificationRefreshing(true);
+    try {
+      await fetchProfile();
+    } finally {
+      setVerificationRefreshing(false);
+    }
+  }, [fetchProfile]);
+
   const isFetchingConnRef = useRef(false);
 
   const runConnectionDiagnostics = useCallback(async () => {
@@ -5807,7 +5799,7 @@ export function App() {
       const connectionData = await runConnectionDiagnostics();
       setConnections(connectionData as ShopConnection[]);
 
-      if (!profile?.is_online) {
+      if (!profile?.is_online || profile.verification_status !== 'approved') {
         setAvailableOrders([]);
         return;
       }
@@ -5845,6 +5837,7 @@ export function App() {
   }, [
     user,
     profile?.is_online,
+    profile?.verification_status,
     notificationTitle,
     notificationBody,
     runConnectionDiagnostics,
@@ -6498,7 +6491,7 @@ export function App() {
     };
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, profile?.is_online]);
+  }, [user, profile?.is_online, profile?.verification_status]);
 
   useEffect(() => {
     if (!user) return;
@@ -6700,13 +6693,16 @@ export function App() {
   const confirmOnlineToggle = useCallback(async () => {
     if (!profile) return;
     const newStatus = !profile.is_online;
+    if (!canToggleRiderAvailability(profile.verification_status, profile.is_online)) {
+      toast.error(getRiderVerificationView(profile.verification_status).message);
+      return;
+    }
     try {
       const confirmed = await setRiderAvailability(newStatus);
       setProfile(current => current ? { ...current, ...mapAccessProfile(confirmed) } : mapAccessProfile(confirmed));
       if (newStatus) {
         if (user?.id) subscribeToPushNotifications(user.id).catch(console.warn);
-        toast.success('System Online! Eligible missions will appear here.', { duration: 4000 });
-        await fetchConnectionsAndOrders();
+        toast.success('You are online. Connected-shop deliveries remain available where supported; Rider Pool dispatch is being enabled.', { duration: 5000 });
       } else {
         setAvailableOrders([]);
         toast.success('System Standby. Taking a break.');
@@ -6714,7 +6710,7 @@ export function App() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Availability could not be updated.');
     }
-  }, [profile, user, fetchConnectionsAndOrders, setAvailableOrders]);
+  }, [profile, user, setAvailableOrders]);
 
   const toggleOnline = useCallback(async () => {
     if (!profile) return;
@@ -7190,9 +7186,9 @@ export function App() {
               {/* Shop Handshake Visual Indicator Badge */}
               {(() => {
                 const activeConn = connections && connections.length > 0 ? connections[0] : null;
-                let badgeStyle = "bg-red-500/10 text-red-400 border-red-500/30 hover:bg-red-500/20";
-                let dotStyle = "bg-red-500";
-                let label = "NO HANDSHAKE";
+                let badgeStyle = "bg-zinc-500/10 text-zinc-400 border-zinc-500/30 hover:bg-zinc-500/20";
+                let dotStyle = "bg-zinc-500";
+                let label = "OPTIONAL SHOP LINK";
 
                 if (activeConn) {
                   const shopName = (activeConn.shop.name || 'Merchant Store').toUpperCase();
@@ -7211,17 +7207,18 @@ export function App() {
 
                 return (
                   <button
+                    id="preferred-shop-link-btn"
                     onClick={() => setView('pair')}
                     className={cn(
                       "flex items-center gap-1.5 px-2 py-1 xs:px-2.5 xs:py-1.5 rounded-xl border text-[9px] xs:text-[10px] font-black uppercase tracking-wider transition-all active:scale-95",
                       badgeStyle
                     )}
-                    title="Shop Handshake Status - Click to scan QR code or manage pairing"
+                    title="Optional preferred-shop pairing"
                   >
                     <div className={cn("w-2 h-2 rounded-full shrink-0", dotStyle)} />
                     <span className="hidden xs:inline truncate max-w-[110px] sm:max-w-[150px]">{label}</span>
                     <span className="xs:hidden font-mono text-[9px]">
-                      {activeConn?.status === 'approved' ? "APPROVED" : activeConn?.status === 'pending' ? "PENDING" : "UNLINKED"}
+                      {activeConn?.status === 'approved' ? "APPROVED" : activeConn?.status === 'pending' ? "PENDING" : "OPTIONAL"}
                     </span>
                   </button>
                 );
@@ -7254,6 +7251,16 @@ export function App() {
           ? "brightness-[0.6] saturate-[0.7] contrast-[0.8]" 
           : isEcoMode ? "brightness-[0.82] saturate-[0.88] contrast-[0.95]" : ""
       )}>
+        {profile.verification_status !== 'approved' ? (
+          <section className="pointer-events-auto mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-white" aria-label="Rider verification status">
+            <h2 className="text-sm font-black uppercase tracking-wider text-amber-300">{getRiderVerificationView(profile.verification_status).title}</h2>
+            <p className="mt-2 text-sm leading-relaxed text-zinc-200">{getRiderVerificationView(profile.verification_status).message}</p>
+            <button type="button" disabled={verificationRefreshing} onClick={() => void refreshVerification()}
+              className="mt-4 rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-black uppercase tracking-wider text-amber-200 disabled:cursor-not-allowed disabled:opacity-50">
+              {verificationRefreshing ? 'Refreshing…' : 'Refresh verification status'}
+            </button>
+          </section>
+        ) : null}
         
         {/* Mission Pulse Overlay */}
         <AnimatePresence>
@@ -7467,7 +7474,7 @@ export function App() {
                          <Radar className="w-5 h-5 text-orange-500" />
                       </div>
                       <div>
-                        <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-500 uppercase">GPS & Connection</h4>
+                        <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-500 uppercase">GPS & Optional Shop Link</h4>
                         <div className="flex items-center gap-2">
                            <span className="text-xs font-bold text-white uppercase italic">Live Sync Status</span>
                            <div className="flex items-center gap-0.5">
@@ -7477,7 +7484,7 @@ export function App() {
                            </div>
                         </div>
                         <div className="flex items-center gap-1.5 mt-1">
-                           <span className="text-[9px] font-black tracking-wider text-zinc-500 uppercase">Uplink:</span>
+                           <span className="text-[9px] font-black tracking-wider text-zinc-500 uppercase">Preferred shop:</span>
                            <span className={cn(
                              "text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded flex items-center gap-1",
                              primaryConnectionStatus === 'approved' && "text-[#10b981] bg-[#10b981]/10",
@@ -7488,7 +7495,7 @@ export function App() {
                              {primaryConnectionStatus === 'approved' && "Approved / Connected"}
                              {primaryConnectionStatus === 'pending' && "Waiting for merchant approval"}
                              {primaryConnectionStatus === 'rejected' && "Rejected / Revoked"}
-                             {!primaryConnectionStatus && "Not Connected"}
+                             {!primaryConnectionStatus && "Optional"}
                            </span>
                            <button 
                              type="button"
@@ -7508,7 +7515,7 @@ export function App() {
                          className="bg-[#f59e0b] hover:bg-[#d97706] text-black text-[10px] font-black uppercase px-3 py-2 rounded-lg transition-all border border-[#f59e0b] shadow-[0_0_15px_rgba(245,158,11,0.25)] flex items-center gap-1.5 active:scale-95"
                          title="Scan Pairing Code directly from Store Terminal"
                       >
-                         <QrCode className="w-3.5 h-3.5" /> Scan Code
+                         <QrCode className="w-3.5 h-3.5" /> Optional Shop Code
                       </button>
                       <button 
                          type="button"
@@ -7541,7 +7548,7 @@ export function App() {
                       <HelpCircle className="w-4.5 h-4.5 text-[#f59e0b] shrink-0 mt-0.5 animate-pulse" />
                       <div className="flex-1">
                         <div className="flex items-center justify-between mb-0.5">
-                          <span className="font-black text-[#f59e0b] text-[10px] uppercase tracking-wider">Verification & Handshake Action Steps</span>
+                          <span className="font-black text-[#f59e0b] text-[10px] uppercase tracking-wider">Optional Shop Pairing Help</span>
                           <button onClick={() => setShowHandshakeHelpTooltip(false)} className="text-zinc-500 hover:text-white">
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -7582,7 +7589,7 @@ export function App() {
                     <div className="p-1.5 bg-[#f59e0b] text-black rounded-full animate-pulse">
                       <QrCode className="w-4 h-4" />
                     </div>
-                    <span className="pr-1 font-bold">Scan Pairing Code</span>
+                    <span className="pr-1 font-bold">Preferred Shop Code</span>
                   </motion.button>
                 </div>
               </div>
@@ -7647,6 +7654,7 @@ export function App() {
                   riderLat={profile?.current_latitude}
                   riderLng={profile?.current_longitude}
                   onToggleOnline={toggleOnline}
+                  verificationStatus={profile.verification_status}
                   isHighContrastMode={isHighContrastMode}
                   weather={weather}
                 />

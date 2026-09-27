@@ -1,8 +1,9 @@
 import { getAuth } from 'firebase/auth';
 import { getFirebaseApp } from '../lib/firebase';
-import type { UserVehicle } from '../types';
+import type { RiderVerificationStatus, UserVehicle } from '../types';
+import { isRiderVerificationStatus } from '../utils/riderVerification';
 
-export type RiderVerificationStatus = 'pending' | 'approved' | 'rejected';
+export type { RiderVerificationStatus } from '../types';
 export type RiderConnectionStatus = 'pending' | 'approved' | 'rejected';
 
 export interface RiderAccessProfile {
@@ -52,9 +53,6 @@ const isId = (value: unknown): value is string | number =>
 const isVehicle = (value: unknown): value is UserVehicle =>
   value === 'Road' || value === 'MTB' || value === 'E-Bike' || value === 'Motor';
 
-const isVerificationStatus = (value: unknown): value is RiderVerificationStatus =>
-  value === 'pending' || value === 'approved' || value === 'rejected';
-
 const isConnectionStatus = (value: unknown): value is RiderConnectionStatus =>
   value === 'pending' || value === 'approved' || value === 'rejected';
 
@@ -64,7 +62,7 @@ const isProfile = (value: unknown): value is RiderAccessProfile => {
     typeof value.full_name === 'string' &&
     typeof value.phone === 'string' &&
     isVehicle(value.vehicle_type) &&
-    isVerificationStatus(value.verification_status) &&
+    isRiderVerificationStatus(value.verification_status) &&
     typeof value.is_online === 'boolean' &&
     typeof value.status === 'string';
 };
@@ -161,7 +159,8 @@ export const saveRiderProfile = async (input: RiderProfileInput): Promise<RiderA
 
 export const setRiderAvailability = async (isOnline: boolean): Promise<RiderAccessProfile> => {
   const payload = await request('/availability', 'PATCH', { is_online: isOnline });
-  if (!isProfile(payload.profile) || payload.profile.is_online !== isOnline) {
+  if (!isProfile(payload.profile) || payload.profile.is_online !== isOnline ||
+      (isOnline && payload.profile.verification_status !== 'approved')) {
     throw new RiderAccessError('LocalEats Rider API did not confirm availability.', null, 'INVALID_RESPONSE');
   }
   return payload.profile;

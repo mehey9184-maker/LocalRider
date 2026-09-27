@@ -1,4 +1,5 @@
 export type UserVehicle = 'Road' | 'MTB' | 'E-Bike' | 'Motor';
+export type RiderVerificationStatus = 'pending' | 'approved' | 'rejected' | 'suspended';
 
 export interface RiderProfile {
   id: string; // LocalEats server Rider profile ID; Firebase UID is separate identity linkage.
@@ -9,7 +10,7 @@ export interface RiderProfile {
   is_online: boolean;
   status: string; // added this
   vehicle_type: UserVehicle;
-  verification_status: 'pending' | 'approved' | 'rejected';
+  verification_status: RiderVerificationStatus;
   rating?: number;
   total_earnings?: number;
   total_deliveries?: number;

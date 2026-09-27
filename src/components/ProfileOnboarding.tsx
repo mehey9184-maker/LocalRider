@@ -31,11 +31,11 @@ interface StepItem {
 
 const STEPS: StepItem[] = [
   {
-    title: 'VECTOR_SCAN_SECTORS',
-    icon: Radar,
+    title: 'RIDER_POOL_VERIFICATION',
+    icon: ShieldCheck,
     color: 'text-orange-500 border-orange-500/30',
     bgGlow: 'bg-orange-500/10 shadow-[0_0_25px_rgba(249,115,22,0.15)]',
-    desc: 'The central hub for local food-dispatch detection. When online, the system monitors sectors to triangulate available contracts for delivery within your active network.'
+    desc: 'LocalEats reviews new Rider accounts before they can go online. Shop pairing is optional. Rider Pool dispatch is being enabled; connected-shop deliveries remain available where supported.'
   },
   {
     title: 'DISPATCH_ACCEPTANCE',
@@ -59,11 +59,11 @@ const STEPS: StepItem[] = [
     desc: 'Deploy hands-free commands when driving. Trigger voice control to say "picked up" or "delivered" to adjust the order status without taking your hands off the vehicle bars.'
   },
   {
-    title: 'CRYPTOGRAPHIC_QR_PAIR',
+    title: 'OPTIONAL_SHOP_PAIRING',
     icon: QrCode,
     color: 'text-indigo-400 border-indigo-500/30',
     bgGlow: 'bg-indigo-500/10 shadow-[0_0_25px_rgba(99,102,241,0.15)]',
-    desc: 'Direct dispatch interface requires a store connection. Scan the merchant terminal QR or type their unique 6-character channel code to import bulk packages instantly and join their priority list.'
+    desc: 'For private or preferred shop access, you may scan a merchant QR or enter its 6-character code. This is optional and does not replace LocalEats platform verification.'
   },
   {
     title: 'AUTONOMOUS_SIMULATOR',

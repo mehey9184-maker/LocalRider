@@ -5,7 +5,6 @@ import { toast } from 'sonner';
 import { 
   Power, 
   ShieldAlert, 
-  ChevronRight, 
   ShieldCheck, 
   Download, 
   Eye, 
@@ -29,7 +28,7 @@ import { AnimatedCounter } from './AnimatedCounter';
 import { RiderProfile, DeliveryOrder, AppView, WeatherData } from '../types';
 import { cn } from '../lib/utils';
 import { detectRegion } from '../lib/geoContext';
-import { canToggleRiderAvailability } from '../utils/riderVerification';
+import { canToggleRiderAvailability, getRiderVerificationView } from '../utils/riderVerification';
 
 interface DashboardProps {
   profile: RiderProfile;
@@ -141,27 +140,24 @@ export const Dashboard = React.memo(({
         </h1>
       </header>
 
-      {profile.verification_status === 'approved' && connectionCount === 0 && (
-         <motion.button
-            type="button"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="w-full bg-amber-500/10 border-2 border-amber-500/20 text-amber-300 p-5 rounded-[2rem] flex items-center gap-4 group cursor-pointer text-left"
-            onClick={() => setView('hub')}
-         >
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 flex items-center justify-center">
-               <ShieldAlert className="w-6 h-6" />
-            </div>
-            <div className="flex-1">
-               <h4 className="text-[11px] font-black uppercase tracking-[0.1em] mb-1">Platform verified</h4>
-               <p className="text-sm font-bold text-white/70 italic leading-tight">You can go online without a preferred shop. Rider Pool dispatch is being enabled; connected-shop deliveries remain available where supported. Shop pairing is optional.</p>
-            </div>
-            <ChevronRight className="w-5 h-5 text-zinc-700 group-hover:text-amber-300 transition-colors" />
-         </motion.button>
-      )}
-
-      {/* Safety Protocol */}
-      <SOSButton riderName={profile.name} />
+      <section className={cn(
+        'rounded-2xl border p-4 sm:p-5',
+        profile.verification_status === 'approved' ? 'border-emerald-500/40 bg-emerald-500/10' :
+        profile.verification_status === 'pending' ? 'border-amber-500/40 bg-amber-500/10' :
+        'border-red-500/40 bg-red-500/10'
+      )} aria-label="Platform verification">
+        <div className="flex items-center gap-3">
+          <ShieldCheck aria-hidden="true" className={cn('h-6 w-6 shrink-0',
+            profile.verification_status === 'approved' ? 'text-emerald-400' :
+            profile.verification_status === 'pending' ? 'text-amber-400' : 'text-red-400')} />
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-widest text-zinc-300">Platform verification</p>
+            <h2 className="mt-0.5 text-lg font-black text-white">{getRiderVerificationView(profile.verification_status).title}</h2>
+          </div>
+        </div>
+        <p className="mt-3 text-sm leading-6 text-zinc-200">{getRiderVerificationView(profile.verification_status).message}</p>
+        <p className="mt-2 text-xs text-zinc-400">{connectionCount > 0 ? 'Preferred shop connected · optional for platform access' : 'Preferred shop pairing is optional.'}</p>
+      </section>
 
       {/* Power Toggle */}
       <div className="flex flex-col gap-2">
@@ -176,41 +172,29 @@ export const Dashboard = React.memo(({
             "w-full min-h-[76px] px-6 py-4 rounded-3xl flex items-center justify-start gap-5 transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/40 disabled:cursor-not-allowed disabled:opacity-50",
             profile.is_online 
               ? "bg-[#0b130e] border border-emerald-500/30 hover:border-emerald-400/50 glow-green shadow-[0_8px_30px_rgba(34,197,94,0.04)]" 
-              : "bg-zinc-900 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-[#121214] shadow-[0_8px_30px_rgba(0,0,0,0.2)]"
+              : profile.verification_status === 'approved'
+                ? "bg-[#f59e0b] border border-[#f59e0b] text-black hover:bg-[#ffb132] shadow-[0_8px_30px_rgba(245,158,11,0.18)]"
+                : "bg-zinc-900 border border-zinc-800/80 text-zinc-400"
           )}
         >
           <div className={cn(
             "w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300",
             profile.is_online 
               ? "text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/25 shadow-[0_0_20px_rgba(16,185,129,0.3)]" 
-              : "text-zinc-500 bg-zinc-800/60"
+              : profile.verification_status === 'approved' ? "text-black bg-black/10" : "text-zinc-500 bg-zinc-800/60"
           )}>
             <Power className={cn("w-5 h-5 transition-all duration-300", profile.is_online && "scale-110")} />
           </div>
           <div className="flex flex-col items-start leading-tight">
             <div className="flex items-center gap-3">
-              <span className={cn("text-[17px] font-headline font-black uppercase tracking-wider italic transition-colors duration-300", profile.is_online ? "text-white text-glow" : "text-zinc-400")}>
-                {profile.is_online ? 'You are Online' : 'You are Offline'}
+              <span className={cn("text-[17px] font-headline font-black uppercase tracking-wider transition-colors duration-300", profile.is_online ? "text-white" : profile.verification_status === 'approved' ? "text-black" : "text-zinc-400")}>
+                {profile.is_online ? 'ONLINE · GO OFFLINE' : profile.verification_status === 'approved' ? 'GO ONLINE' : 'OFFLINE'}
               </span>
-              {profile.is_online && (
-                <div className="flex items-center gap-0.5">
-                   <div className="w-1 h-3 bg-emerald-500/20 rounded-full" />
-                   <div className="w-1 h-2 bg-emerald-500/40 rounded-full" />
-                   <div className="w-1 h-4 bg-emerald-500/60 rounded-full animate-pulse" />
-                   <div className="w-1 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
-                </div>
-              )}
             </div>
             <div className="flex items-center gap-2 mt-1">
-              <span className={cn("text-[11px] font-sans font-semibold uppercase tracking-wider transition-colors duration-300", profile.is_online ? "text-emerald-400/80" : "text-zinc-500")}>
-                {profile.is_online ? 'Connected-shop missions where available' : profile.verification_status === 'approved' ? 'Tap to go online' : 'Verification required to go online'}
+              <span className={cn("text-[11px] font-sans font-semibold uppercase tracking-wider transition-colors duration-300", profile.is_online ? "text-emerald-300" : profile.verification_status === 'approved' ? "text-black/80" : "text-zinc-500")}>
+                {profile.is_online ? 'Tap to go offline' : profile.verification_status === 'approved' ? 'Available for supported work' : 'Verification required to go online'}
               </span>
-              {profile.verification_status === 'approved' && (
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/25 backdrop-blur-sm shadow-[0_2px_10px_rgba(16,185,129,0.05)]">
-                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                  <span className="text-[8px] font-black text-emerald-400 tracking-wider">VERIFIED</span>
-                </div>
-              )}
             </div>
           </div>
         </button>
@@ -229,10 +213,13 @@ export const Dashboard = React.memo(({
         )}
       </div>
 
+      {/* Keep emergency access visible without competing with the primary availability action. */}
+      <SOSButton riderName={profile.name} />
+
       {/* Stats Bento */}
       <div className="space-y-4 relative">
         <div className="flex items-center justify-between px-1">
-          <span className="text-[10px] font-black tracking-widest text-zinc-500 uppercase">UPLINK METRICS</span>
+          <span className="text-xs font-black tracking-widest text-zinc-400 uppercase">Your activity</span>
           <div className="flex items-center gap-2">
             <button
               id="export-stats-btn"

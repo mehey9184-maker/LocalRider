@@ -7173,7 +7173,7 @@ export function App() {
             <div className="flex items-center gap-2.5">
               <div className={cn(
                 "w-2.5 h-2.5 rounded-full transition-all shrink-0",
-                profile.is_online ? "bg-[#f59e0b] shadow-[0_0_10px_#f59e0b] animate-pulse" : "bg-zinc-800"
+                profile.is_online ? "bg-emerald-500" : "bg-zinc-700"
               )} />
               <div className="flex items-center gap-2">
                 <h1 className="font-headline font-black italic text-lg sm:text-xl uppercase tracking-tighter leading-none cursor-pointer" onClick={() => setView('feed')}>
@@ -7194,11 +7194,11 @@ export function App() {
                   const shopName = (activeConn.shop.name || 'Merchant Store').toUpperCase();
                   if (activeConn.status === 'approved') {
                     badgeStyle = "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20";
-                    dotStyle = "bg-emerald-500 animate-pulse";
+                    dotStyle = "bg-emerald-500";
                     label = `${shopName} • APPROVED`;
                   } else if (activeConn.status === 'pending') {
                     badgeStyle = "bg-amber-500/10 text-amber-400 border-amber-500/30 hover:bg-amber-500/20";
-                    dotStyle = "bg-amber-500 animate-pulse";
+                    dotStyle = "bg-amber-500";
                     label = `${shopName} • PENDING`;
                   } else {
                     label = `${shopName} • REJECTED`;
@@ -7251,12 +7251,13 @@ export function App() {
           ? "brightness-[0.6] saturate-[0.7] contrast-[0.8]" 
           : isEcoMode ? "brightness-[0.82] saturate-[0.88] contrast-[0.95]" : ""
       )}>
-        {profile.verification_status !== 'approved' ? (
-          <section className="pointer-events-auto mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-white" aria-label="Rider verification status">
-            <h2 className="text-sm font-black uppercase tracking-wider text-amber-300">{getRiderVerificationView(profile.verification_status).title}</h2>
+        {view !== 'dash' && profile.verification_status !== 'approved' ? (
+          <section className={cn('pointer-events-auto mt-4 rounded-2xl border p-4 text-white',
+            profile.verification_status === 'pending' ? 'border-amber-500/30 bg-amber-500/10' : 'border-red-500/30 bg-red-500/10')} aria-label="Rider verification status">
+            <h2 className={cn('text-sm font-black uppercase tracking-wider', profile.verification_status === 'pending' ? 'text-amber-300' : 'text-red-300')}>{getRiderVerificationView(profile.verification_status).title}</h2>
             <p className="mt-2 text-sm leading-relaxed text-zinc-200">{getRiderVerificationView(profile.verification_status).message}</p>
             <button type="button" disabled={verificationRefreshing} onClick={() => void refreshVerification()}
-              className="mt-4 rounded-xl border border-amber-500/40 px-4 py-2 text-xs font-black uppercase tracking-wider text-amber-200 disabled:cursor-not-allowed disabled:opacity-50">
+              className="mt-4 min-h-11 rounded-xl border border-white/30 px-4 py-2 text-xs font-black uppercase tracking-wider text-white disabled:cursor-not-allowed disabled:opacity-50">
               {verificationRefreshing ? 'Refreshing…' : 'Refresh verification status'}
             </button>
           </section>
@@ -7403,8 +7404,26 @@ export function App() {
                     </motion.div>
                   )}
                 </AnimatePresence>
+
+                <Dashboard
+                  profile={profile}
+                  todayEarnings={history
+                    .filter(o => isTodayLocal(o.updated_at))
+                    .reduce((acc, curr) => acc + Number(curr.delivery_fee || 0), 0)}
+                  totalDeliveries={profile.total_deliveries}
+                  history={history}
+                  onToggleOnline={toggleOnline}
+                  setView={setView}
+                  connectionCount={approvedConnectionCount}
+                  isListening={isListening}
+                  onStartListening={startListening}
+                  weather={weather}
+                  setWeather={setWeather}
+                  cashOnHand={cashOnHand}
+                  setCashOnHand={setCashOnHand}
+                />
                 
-                {/* Active Linked Merchant Store Card */}
+                {/* Optional preferred-shop relationship follows platform availability. */}
                 {connections && connections.length > 0 && (() => {
                   const activeConn = connections[0];
                   const sName = activeConn.shop.name || 'Merchant Store';
@@ -7416,15 +7435,15 @@ export function App() {
                       : 'Rejected / Revoked';
 
                   return (
-                    <BentoCard className="bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-black border-zinc-800 p-4 sm:p-5 relative overflow-hidden shadow-xl">
+                    <BentoCard className="bg-zinc-900/60 border-zinc-800 p-4 sm:p-5 relative overflow-hidden">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
                         <div className="flex items-start sm:items-center gap-3.5">
                           <div className="w-12 h-12 rounded-2xl bg-[#f59e0b]/10 border border-[#f59e0b]/30 flex items-center justify-center text-[#f59e0b] shrink-0 shadow-[0_0_15px_rgba(245,158,11,0.15)]">
-                            <Globe className="w-6 h-6 animate-pulse" />
+                            <Globe className="w-6 h-6" />
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#f59e0b]">Merchant relationship</span>
+                              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Preferred shop · optional</span>
                               <span className={cn(
                                 "text-[9px] font-black uppercase px-2 py-0.5 rounded-full border",
                                 activeConn.status === 'approved' ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" : activeConn.status === 'pending' ? "bg-amber-500/10 text-amber-400 border-amber-500/30" : "bg-red-500/10 text-red-400 border-red-500/30"
@@ -7466,7 +7485,9 @@ export function App() {
                   );
                 })()}
 
-                {/* App & Server Sync Status */}
+                {/* Secondary connection tools; availability remains the primary action. */}
+                <details className="rounded-2xl border border-zinc-800 bg-zinc-900/30">
+                  <summary className="min-h-11 cursor-pointer px-4 py-3 text-sm font-semibold text-zinc-300">Connection and offline tools</summary>
                 <BentoCard className="bg-zinc-900/40 border-zinc-800/60 p-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -7474,15 +7495,8 @@ export function App() {
                          <Radar className="w-5 h-5 text-orange-500" />
                       </div>
                       <div>
-                        <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-500 uppercase">GPS & Optional Shop Link</h4>
-                        <div className="flex items-center gap-2">
-                           <span className="text-xs font-bold text-white uppercase italic">Live Sync Status</span>
-                           <div className="flex items-center gap-0.5">
-                              {[1,2,3,4].map(b => (
-                                <div key={b} className={cn("w-1 h-3 rounded-full bg-zinc-800", b <= 3 && "bg-orange-500")} />
-                              ))}
-                           </div>
-                        </div>
+                        <h4 className="text-[10px] font-black tracking-[0.2em] text-zinc-400 uppercase">Connection details</h4>
+                        <p className="text-xs font-medium text-zinc-300">Connection status and troubleshooting</p>
                         <div className="flex items-center gap-1.5 mt-1">
                            <span className="text-[9px] font-black tracking-wider text-zinc-500 uppercase">Preferred shop:</span>
                            <span className={cn(
@@ -7558,40 +7572,7 @@ export function App() {
                     </div>
                   )}
                 </BentoCard>
-
-                <Dashboard 
-                  profile={profile} 
-                  todayEarnings={history
-                    .filter(o => isTodayLocal(o.updated_at))
-                    .reduce((acc, curr) => acc + Number(curr.delivery_fee || 0), 0)}
-                  totalDeliveries={profile.total_deliveries}
-                  history={history}
-                  onToggleOnline={toggleOnline} 
-                  setView={setView}
-                  connectionCount={approvedConnectionCount}
-                  isListening={isListening}
-                  onStartListening={startListening}
-                  weather={weather}
-                  setWeather={setWeather}
-                  cashOnHand={cashOnHand}
-                  setCashOnHand={setCashOnHand}
-                />
-
-                {/* Floating Scan Pairing Code FAB on Dashboard */}
-                <div className="fixed bottom-24 right-4 sm:right-6 z-[80] pointer-events-auto">
-                  <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setShowDashboardScanner(true)}
-                    className="flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-zinc-900 via-black to-zinc-900 border-2 border-[#f59e0b] text-white font-black uppercase tracking-wider text-xs rounded-full shadow-[0_0_30px_rgba(245,158,11,0.35)] hover:shadow-[0_0_40px_rgba(245,158,11,0.5)] transition-all"
-                    title="Scan Pairing Code directly from Store Terminal"
-                  >
-                    <div className="p-1.5 bg-[#f59e0b] text-black rounded-full animate-pulse">
-                      <QrCode className="w-4 h-4" />
-                    </div>
-                    <span className="pr-1 font-bold">Preferred Shop Code</span>
-                  </motion.button>
-                </div>
+                </details>
               </div>
             )}
             {view === 'feed' && (
